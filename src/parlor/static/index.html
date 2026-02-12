@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parlor</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/vendor/highlight-github-dark.min.css">
+    <link rel="stylesheet" href="/vendor/katex.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <button class="btn-new-chat" id="btn-new-chat" title="New conversation (Ctrl+Shift+N)">
+                    + New Chat
+                </button>
+            </div>
+            <div class="sidebar-search">
+                <input type="text" id="search-input" placeholder="Search conversations..." autocomplete="off">
+            </div>
+            <div class="conversation-list" id="conversation-list">
+                <!-- Conversation items populated by JS -->
+            </div>
+            <div class="sidebar-footer" id="sidebar-footer">
+                <button class="btn-settings" id="btn-settings" title="Settings">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+                    </svg>
+                    <span>Settings</span>
+                </button>
+                <span class="mcp-status" id="mcp-status"></span>
+            </div>
+        </aside>
+
+        <!-- Settings Modal -->
+        <div class="modal-overlay" id="settings-modal" style="display:none">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>Settings</h3>
+                    <button class="modal-close" id="settings-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="setting-group">
+                        <label for="setting-model">Model</label>
+                        <input type="text" id="setting-model" placeholder="e.g. gpt-4o or your-custom-model" autocomplete="off">
+                        <div class="model-suggestions" id="model-suggestions"></div>
+                        <span class="setting-hint">Type a custom model name or pick from available models below</span>
+                    </div>
+                    <div class="setting-group">
+                        <label for="setting-system-prompt">System Prompt</label>
+                        <textarea id="setting-system-prompt" rows="5" placeholder="You are a helpful assistant."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-modal-cancel" id="settings-cancel">Cancel</button>
+                    <button class="btn-modal-save" id="settings-save">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Chat Area -->
+        <main class="chat-main">
+            <!-- Setup banner (hidden by default) -->
+            <div class="setup-banner" id="setup-banner" style="display:none">
+                <p>AI service not configured. Please set up your <code>~/.ai-chat/config.yaml</code>.</p>
+            </div>
+
+            <!-- Messages container -->
+            <div class="messages-container" id="messages-container">
+                <div class="welcome-message" id="welcome-message">
+                    <h2>Welcome to AI Chat</h2>
+                    <p>Start a conversation by typing a message below.</p>
+                    <div class="welcome-tips">
+                        <p>Tips:</p>
+                        <ul>
+                            <li><strong>Enter</strong> to send, <strong>Shift+Enter</strong> for new line</li>
+                            <li><strong>Ctrl+Shift+N</strong> for new conversation</li>
+                            <li><strong>Escape</strong> to stop AI response</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input area -->
+            <div class="input-area" id="input-area">
+                <div class="attachment-previews" id="attachment-previews">
+                    <!-- File previews shown here before sending -->
+                </div>
+                <div class="input-row">
+                    <button class="btn-attach" id="btn-attach" title="Attach file">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+                        </svg>
+                    </button>
+                    <textarea id="message-input" placeholder="Type a message..." rows="1" autofocus></textarea>
+                    <button class="btn-send" id="btn-send" title="Send message">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"/>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                        </svg>
+                    </button>
+                    <button class="btn-stop" id="btn-stop" title="Stop generating (Escape)" style="display:none">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="6" y="6" width="12" height="12" rx="2"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <input type="file" id="file-input" multiple style="display:none">
+        </main>
+    </div>
+
+    <script src="/vendor/marked.min.js"></script>
+    <script src="/vendor/highlight.min.js"></script>
+    <script src="/vendor/katex.min.js"></script>
+    <script src="/vendor/katex-auto-render.min.js"></script>
+    <script src="/js/app.js"></script>
+    <script src="/js/chat.js"></script>
+    <script src="/js/sidebar.js"></script>
+    <script src="/js/attachments.js"></script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+"""Configuration loader: YAML file with environment variable fallbacks."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+@dataclass
+class AIConfig:
+    base_url: str
+    api_key: str
+    model: str = "gpt-4"
+    system_prompt: str = "You are a helpful assistant."
+
+
+@dataclass
+class McpServerConfig:
+    name: str
+    transport: str  # "stdio" or "sse"
+    command: str | None = None
+    args: list[str] = field(default_factory=list)
+    url: str | None = None
+
+
+@dataclass
+class AppSettings:
+    host: str = "127.0.0.1"
+    port: int = 8080
+    data_dir: Path = field(default_factory=lambda: Path.home() / ".ai-chat")
+
+
+@dataclass
+class AppConfig:
+    ai: AIConfig
+    app: AppSettings = field(default_factory=AppSettings)
+    mcp_servers: list[McpServerConfig] = field(default_factory=list)
+
+
+def _get_config_path(data_dir: Path | None = None) -> Path:
+    if data_dir:
+        return data_dir / "config.yaml"
+    return Path.home() / ".ai-chat" / "config.yaml"
+
+
+def load_config(config_path: Path | None = None) -> AppConfig:
+    raw: dict[str, Any] = {}
+    path = config_path or _get_config_path()
+
+    if path.exists():
+        with open(path) as f:
+            raw = yaml.safe_load(f) or {}
+
+    ai_raw = raw.get("ai", {})
+    base_url = ai_raw.get("base_url") or os.environ.get("AI_CHAT_BASE_URL", "")
+    api_key = ai_raw.get("api_key") or os.environ.get("AI_CHAT_API_KEY", "")
+    model = ai_raw.get("model") or os.environ.get("AI_CHAT_MODEL", "gpt-4")
+    system_prompt = ai_raw.get("system_prompt") or os.environ.get(
+        "AI_CHAT_SYSTEM_PROMPT", "You are a helpful assistant."
+    )
+
+    if not base_url:
+        raise ValueError(
+            "AI base_url is required. Set 'ai.base_url' in config.yaml "
+            f"({path}) or AI_CHAT_BASE_URL environment variable."
+        )
+    if not api_key:
+        raise ValueError(
+            "AI api_key is required. Set 'ai.api_key' in config.yaml "
+            f"({path}) or AI_CHAT_API_KEY environment variable."
+        )
+
+    ai = AIConfig(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        system_prompt=system_prompt,
+    )
+
+    app_raw = raw.get("app", {})
+    data_dir = Path(os.path.expanduser(app_raw.get("data_dir", "~/.ai-chat")))
+    app_settings = AppSettings(
+        host=app_raw.get("host", "127.0.0.1"),
+        port=int(app_raw.get("port", 8080)),
+        data_dir=data_dir,
+    )
+
+    mcp_servers: list[McpServerConfig] = []
+    for srv in raw.get("mcp_servers", []):
+        mcp_servers.append(
+            McpServerConfig(
+                name=srv["name"],
+                transport=srv.get("transport", "stdio"),
+                command=srv.get("command"),
+                args=srv.get("args", []),
+                url=srv.get("url"),
+            )
+        )
+
+    app_settings.data_dir.mkdir(parents=True, exist_ok=True)
+
+    return AppConfig(ai=ai, app=app_settings, mcp_servers=mcp_servers)
