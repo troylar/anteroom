@@ -16,13 +16,13 @@ Install with pip. Run locally. Own your data.
 
 ## Why Parlor?
 
-Your company's AI UI is clunky. Cloud-hosted alternatives see your data. Parlor gives you a fast, private, locally-run chat interface that connects to **any** OpenAI-compatible endpoint --- your company's internal API, OpenAI, Azure, Ollama, LM Studio, or anything else that speaks the OpenAI protocol.
+Parlor is a **security-first**, locally-run chat interface built to [OWASP ASVS L1](SECURITY.md) standards. It connects to **any** OpenAI-compatible endpoint --- your company's internal API, OpenAI, Azure, Ollama, LM Studio, or anything else that speaks the OpenAI protocol.
 
+- **Enterprise security** --- OWASP ASVS L1 compliant: CSRF protection, session management, CSP, rate limiting, MIME verification, input sanitization ([full matrix](SECURITY.md))
 - **One command install** --- `pip install parlor`
 - **Zero cloud dependency** --- everything runs on your machine
 - **Conversations persist** --- SQLite database, local filesystem
 - **MCP tool support** --- extend your AI with external tools
-- **Enterprise security** --- CSP, CSRF protection, rate limiting, input sanitization
 
 ---
 
