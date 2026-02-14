@@ -8,6 +8,7 @@ import logging
 import os
 import platform
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -107,6 +108,45 @@ async def _watch_for_escape(cancel_event: asyncio.Event) -> None:
         await loop.run_in_executor(None, _poll)
     except asyncio.CancelledError:
         pass
+
+
+_MAX_PASTE_DISPLAY_LINES = 6
+
+
+def _collapse_long_input(user_input: str) -> None:
+    """Collapse long pasted input for terminal readability.
+
+    Replaces the displayed multi-line input with the first few lines
+    plus a "... (N more lines)" indicator. The actual content is
+    preserved; only the visual display is truncated.
+    """
+    if not sys.stdout.isatty():
+        return
+
+    lines = user_input.split("\n")
+    if len(lines) <= _MAX_PASTE_DISPLAY_LINES:
+        return
+
+    term_cols = shutil.get_terminal_size((80, 24)).columns
+    usable = max(term_cols - 5, 10)  # 5 = "you> " / continuation indent
+
+    # Estimate terminal rows the prompt_toolkit input occupied
+    total_rows = sum(
+        max(1, (len(ln) + usable - 1) // usable) if ln else 1
+        for ln in lines
+    )
+
+    show = 3
+    hidden = len(lines) - show
+
+    # Move cursor up to input start and clear to end of screen
+    sys.stdout.write(f"\033[{total_rows}A\033[J")
+    # Reprint truncated with styled prompt
+    sys.stdout.write(f"\033[1;96myou>\033[0m {lines[0]}\n")
+    for ln in lines[1:show]:
+        sys.stdout.write(f"     {ln}\n")
+    sys.stdout.write(f"     \033[90m... ({hidden} more lines)\033[0m\n")
+    sys.stdout.flush()
 
 
 _FILE_REF_RE = re.compile(r"@((?:[^\s\"']+|\"[^\"]+\"|'[^']+'))")
@@ -623,6 +663,7 @@ async def _run_repl(
         if _exit_flag[0]:
             break
 
+        _collapse_long_input(user_input)
         user_input = user_input.strip()
         if not user_input:
             continue
