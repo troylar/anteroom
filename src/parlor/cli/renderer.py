@@ -151,6 +151,7 @@ def render_help() -> None:
     console.print("  /skills     - List available skills")
     console.print("  /model NAME - Switch to a different model")
     console.print("  /quit       - Exit")
+    console.print("  Escape      - Cancel current response")
     console.print("  Ctrl+C      - Cancel current response")
     console.print("  Ctrl+D      - Exit")
     console.print("\n[bold]Input:[/bold]")

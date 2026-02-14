@@ -10,6 +10,8 @@ import platform
 import re
 import signal
 import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +49,65 @@ def _remove_signal_handler(loop: asyncio.AbstractEventLoop, sig: int) -> None:
         loop.remove_signal_handler(sig)
     except NotImplementedError:
         pass
+
+async def _watch_for_escape(cancel_event: asyncio.Event) -> None:
+    """Watch for Escape key press during AI generation to cancel."""
+    loop = asyncio.get_event_loop()
+
+    if _IS_WINDOWS:
+        import msvcrt
+
+        def _poll() -> None:
+            while not cancel_event.is_set():
+                if msvcrt.kbhit():
+                    ch = msvcrt.getch()
+                    if ch == b"\x1b":
+                        # Distinguish bare Escape from escape sequences (arrow keys, etc.)
+                        time.sleep(0.05)
+                        if not msvcrt.kbhit():
+                            cancel_event.set()
+                            return
+                        # Consume the rest of the escape sequence
+                        while msvcrt.kbhit():
+                            msvcrt.getch()
+                time.sleep(0.05)
+    else:
+        import select
+        import termios
+        import tty
+
+        def _poll() -> None:
+            fd = sys.stdin.fileno()
+            if not os.isatty(fd):
+                return
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setcbreak(fd)
+                while not cancel_event.is_set():
+                    ready, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if ready:
+                        ch = sys.stdin.read(1)
+                        if ch == "\x1b":
+                            # Distinguish bare Escape from escape sequences
+                            more, _, _ = select.select([sys.stdin], [], [], 0.05)
+                            if not more:
+                                cancel_event.set()
+                                return
+                            # Consume the rest of the escape sequence
+                            while True:
+                                more, _, _ = select.select([sys.stdin], [], [], 0.01)
+                                if more:
+                                    sys.stdin.read(1)
+                                else:
+                                    break
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    try:
+        await loop.run_in_executor(None, _poll)
+    except asyncio.CancelledError:
+        pass
+
 
 _FILE_REF_RE = re.compile(r"@((?:[^\s\"']+|\"[^\"]+\"|'[^']+'))")
 
@@ -356,6 +417,7 @@ async def _run_one_shot(
 
     loop = asyncio.get_event_loop()
     _add_signal_handler(loop, signal.SIGINT, cancel_event.set)
+    escape_task = asyncio.create_task(_watch_for_escape(cancel_event))
 
     thinking = False
     try:
@@ -409,6 +471,8 @@ async def _run_one_shot(
             thinking = False
         renderer.render_response_end()
     finally:
+        cancel_event.set()
+        escape_task.cancel()
         _remove_signal_handler(loop, signal.SIGINT)
 
 
@@ -682,6 +746,7 @@ async def _run_repl(
         loop = asyncio.get_event_loop()
         original_handler = signal.getsignal(signal.SIGINT)
         _add_signal_handler(loop, signal.SIGINT, cancel_event.set)
+        escape_task = asyncio.create_task(_watch_for_escape(cancel_event))
 
         thinking = False
         try:
@@ -755,6 +820,8 @@ async def _run_repl(
                 renderer.stop_thinking()
             renderer.render_response_end()
         finally:
+            cancel_event.set()
+            escape_task.cancel()
             _remove_signal_handler(loop, signal.SIGINT)
             if not _IS_WINDOWS:
                 signal.signal(signal.SIGINT, original_handler)

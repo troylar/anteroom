@@ -496,7 +496,8 @@ The new model applies to all subsequent turns in the current session. The conver
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+C` | Clear current input. If input is empty, exit the REPL. During AI generation, cancels the current response. |
+| `Escape` | Cancel the current AI response |
+| `Ctrl+C` | Clear current input. If input is empty, exit the REPL. During AI generation, also cancels. |
 | `Ctrl+D` | Exit the REPL (EOF) |
 | `Alt+Enter` | Insert a newline (multiline input) |
 | `Tab` | Autocomplete (see below) |
