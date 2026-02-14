@@ -96,28 +96,57 @@ parlor chat --no-tools          # Disable built-in tools
 
 ### How It Works
 
-1. You type a prompt (or pass one as an argument)
-2. A **thinking spinner** with elapsed timer shows while the AI works
-3. Tool calls (file reads, bash commands, etc.) display inline as they execute
-4. The complete response renders with **Rich Markdown** --- syntax-highlighted code blocks, headers, lists, and more
-5. A **context footer** shows token usage, response tokens, elapsed time, and remaining space before auto-compact
+1. You type a prompt at the `you>` prompt (or pass one as a CLI argument for one-shot mode)
+2. A **thinking spinner** with elapsed timer appears while the AI generates a response
+3. When the AI calls tools (file reads, bash commands, etc.), the spinner pauses and tool calls display inline with their arguments and results
+4. Once complete, the full response renders as **Rich Markdown** --- syntax-highlighted code blocks, tables, headers, lists, bold/italic, and more
+5. A **context footer** shows a color-coded progress bar, token usage, response size, elapsed time, and remaining headroom before auto-compact
 
-The AI runs in an **agentic loop**: it can call tools, inspect results, and continue reasoning --- up to 50 iterations per response by default. This means it can tackle multi-step tasks like "find and fix the bug in auth.py" autonomously.
+The AI runs in an **agentic loop**: it can call tools, inspect results, call more tools, and continue reasoning --- up to 50 iterations per turn by default. This means it can tackle multi-step tasks like "find and fix the bug in auth.py" or "add tests for the user service" autonomously, without you needing to intervene between steps.
+
+### Welcome Banner
+
+On startup, the REPL displays:
+
+```
+Parlor CLI - /path/to/your/project
+  Model: gpt-4 | Tools: 6 | Instructions: loaded | Branch: main
+  Type /help for commands, Ctrl+D to exit
+```
+
+- **Model**: The active AI model from your config
+- **Tools**: Total count of available tools (built-in + MCP)
+- **Instructions**: Whether a `PARLOR.md` file was found and loaded
+- **Branch**: Current git branch (auto-detected, shown only inside a git repo)
 
 ### Built-in Tools
 
 Six tools ship out of the box (no MCP server required):
 
-| Tool | What it does |
-|---|---|
-| `read_file` | Read file contents with line numbers. Supports `offset` and `limit` for partial reads. Output truncated at 100KB. |
-| `write_file` | Create or overwrite files. Parent directories are created automatically. |
-| `edit_file` | Exact string replacement. The `old_text` must appear exactly once (unique match required). Use `replace_all=true` for global replacement. |
-| `bash` | Run shell commands with configurable timeout (default 120s, max 600s). Returns stdout, stderr, and exit code. Output truncated at 100KB. |
-| `glob_files` | Find files matching a glob pattern (e.g., `**/*.py`). Results sorted by modification time. |
-| `grep` | Regex search across files with optional context lines and file-type filtering. |
+| Tool | What it does | Key parameters |
+|---|---|---|
+| `read_file` | Read file contents with line numbers | `path`, `offset` (1-based start line), `limit` (max lines). Output truncated at 100KB. |
+| `write_file` | Create or overwrite files. Parent directories created automatically. | `path`, `content`. Returns bytes written. |
+| `edit_file` | Exact string replacement. `old_text` must match exactly once (unique) or use `replace_all=true`. | `path`, `old_text`, `new_text`, `replace_all`. |
+| `bash` | Run shell commands. Returns stdout, stderr, and exit code. | `command`, `timeout` (default 120s, max 600s). Output truncated at 100KB. |
+| `glob_files` | Find files matching a glob pattern. Results sorted by modification time (newest first). | `pattern` (e.g., `**/*.py`), `path` (search root). Max 500 results. |
+| `grep` | Regex search across files with context lines and file-type filtering. | `pattern`, `path`, `glob` filter, `context` lines, `case_insensitive`. Max 200 matches, skips files over 5MB. |
 
-**Safety**: Destructive commands (`rm`, `git push --force`, `git reset --hard`, `drop table`, `chmod 777`, etc.) prompt for confirmation before executing. Path validation blocks access to sensitive system files (`/etc/shadow`, `/proc/`, etc.).
+All file tools resolve paths relative to the working directory (or accept absolute paths). Every tool returns structured JSON that the AI uses to inform its next action.
+
+### Tool Safety
+
+Two layers of protection prevent accidental damage:
+
+**Destructive command confirmation** --- The following patterns in bash commands trigger an interactive `Proceed? [y/N]` prompt before execution:
+
+`rm`, `rmdir`, `git push --force`, `git push -f`, `git reset --hard`, `git clean`, `git checkout .`, `drop table`, `drop database`, `truncate`, `> /dev/`, `chmod 777`, `kill -9`
+
+**Path and command blocking** --- Hardcoded blocks that cannot be bypassed:
+
+- **Blocked paths**: `/etc/shadow`, `/etc/passwd`, `/etc/sudoers`, and anything under `/proc/`, `/sys/`, `/dev/` (follows symlinks)
+- **Blocked commands**: `rm -rf /`, `mkfs`, `dd if=/dev/zero`, fork bombs
+- **Null byte injection**: Rejected in all paths, commands, and glob patterns
 
 ### File References
 
@@ -130,23 +159,115 @@ you> compare @old.py and @new.py
 you> review @"path with spaces/file.py"
 ```
 
-- `@file.py` --- inlines the full file contents (truncated at 100KB)
-- `@directory/` --- inlines a listing of the directory contents (up to 200 entries)
-- `@"quoted path"` --- handles paths with spaces
+| Syntax | What it does |
+|---|---|
+| `@file.py` | Inlines the full file contents wrapped in `<file path="...">` tags (truncated at 100KB) |
+| `@directory/` | Inlines a listing of directory contents wrapped in `<directory>` tags (up to 200 entries, with `/` suffix for subdirectories) |
+| `@"quoted path"` | Handles paths containing spaces (single or double quotes) |
+
+Paths are resolved relative to the working directory. Absolute paths are also supported. If a path doesn't exist, the `@reference` is left as-is in the prompt.
+
+### Thinking Spinner
+
+While the AI generates a response, a **Rich Status spinner** (animated dots) displays on stderr with an elapsed timer that updates every second:
+
+```
+⠋ Thinking... (3s)
+```
+
+When the AI pauses to execute tool calls, the spinner stops and tool call output appears. The spinner resumes when the AI starts generating again. Total elapsed time accumulates across all thinking segments and is reported in the context footer.
+
+### Rich Markdown Rendering
+
+Responses are buffered silently (no streaming flicker), then rendered in full using Rich's Markdown engine. This gives you:
+
+- **Syntax-highlighted code blocks** with language detection
+- **Tables**, **headers**, **bold/italic**, **lists**, **blockquotes**
+- **Padded layout** with breathing room (2-character indent on both sides)
+
+Output goes to stdout (for piping/redirecting), while chrome (spinner, tool calls, context footer) goes to stderr.
 
 ### Context Management
 
-Parlor tracks token usage across the conversation using **tiktoken** (with a char-estimate fallback):
+Parlor tracks token usage across the conversation using **tiktoken** (`cl100k_base` encoding) with a character-estimate fallback (1 token per 4 chars) when tiktoken is unavailable:
 
-- **Warning** at 80K tokens --- a hint to `/compact`
-- **Auto-compact** at 100K tokens --- automatically summarizes the conversation history to free space
-- **Context footer** after each response shows a progress bar, token counts, and remaining headroom
+| Threshold | What happens |
+|---|---|
+| **80,000 tokens** | Yellow warning: "Use `/compact` to free space" |
+| **100,000 tokens** | Auto-compact triggers automatically before the next prompt |
+| **128,000 tokens** | Effective context window ceiling |
+
+The **context footer** after each response shows:
 
 ```
   [====----------------] 12,340/128,000 tokens (10%) | response: 482 | 3.2s | 87,660 until auto-compact
 ```
 
-Use `/compact` at any time to manually summarize and free up context space.
+- Progress bar with color coding: **green** (<50%), **yellow** (50-75%), **red** (>75%)
+- Current token count / max context window
+- Response token count for the current turn
+- Total elapsed thinking time
+- Remaining tokens until auto-compact fires
+
+### Compact
+
+`/compact` (or auto-compact at 100K tokens) sends the full conversation history to the AI with a summarization prompt. The AI generates a concise summary preserving:
+
+- Key decisions and conclusions
+- File paths that were read, written, or edited
+- Important code changes and their purpose
+- Current task state
+- Errors encountered and how they were resolved
+
+Tool call outputs are truncated to 500 characters each in the summary prompt to keep it focused. After compacting, the message history is replaced with a single system message containing the summary. Token savings are reported:
+
+```
+  Compacted 47 messages -> 1 messages
+  ~32,140 -> ~890 tokens
+```
+
+Minimum 4 messages required to compact (prevents compacting a nearly-empty conversation).
+
+### Conversation Management
+
+Every conversation is persisted to SQLite. The REPL provides several ways to navigate them:
+
+| Command | Behavior |
+|---|---|
+| `/new` | Creates a new conversation and clears message history |
+| `/last` | Loads the most recent conversation (by creation time) with all its messages |
+| `/list` | Shows the 20 most recent conversations with title, message count, and truncated ID |
+| `/resume 3` | Resume by list number (from `/list` output) |
+| `/resume a1b2c3d4...` | Resume by full conversation ID |
+
+```
+Recent conversations:
+  1. Fix auth middleware bug (12 msgs) a1b2c3d4...
+  2. Add user settings page (8 msgs) e5f6a7b8...
+  3. Refactor database layer (23 msgs) c9d0e1f2...
+  Use /resume <number> or /resume <id>
+```
+
+On startup with `-c`, the most recent conversation is loaded automatically. With `-r <id>`, a specific conversation is loaded.
+
+### Auto-Title Generation
+
+After the first exchange in a new conversation, Parlor sends your prompt to the AI to generate a short, descriptive title. This title appears in `/list`, the web UI sidebar, and is stored in the database. Titles are generated asynchronously and silently --- failures are ignored.
+
+### Model Switching
+
+Switch models mid-session without restarting:
+
+```
+you> /model gpt-4-turbo
+  Switched to model: gpt-4-turbo
+
+you> /model
+  Current model: gpt-4-turbo
+  Usage: /model <model_name>
+```
+
+The new model applies to all subsequent turns in the current session. The conversation history carries over.
 
 ### REPL Commands
 
@@ -154,23 +275,48 @@ Use `/compact` at any time to manually summarize and free up context space.
 |---|---|
 | `/new` | Start a new conversation |
 | `/last` | Resume the most recent conversation |
-| `/list` | Show 20 most recent conversations |
-| `/resume N` | Resume by list number or conversation ID |
+| `/list` | Show 20 most recent conversations with message counts |
+| `/resume N` | Resume by list number or full conversation ID |
 | `/compact` | Summarize and compact message history to free context |
-| `/model NAME` | Switch to a different model mid-session |
-| `/tools` | List all available tools (built-in + MCP) |
-| `/skills` | List available skills with descriptions |
-| `/help` | Show all commands and input syntax |
+| `/model NAME` | Switch to a different model mid-session (omit NAME to see current) |
+| `/tools` | List all available tools (built-in + MCP), sorted alphabetically |
+| `/skills` | List available skills with descriptions and source (default/global/project) |
+| `/help` | Show all commands, input syntax, and keyboard shortcuts |
 | `/quit`, `/exit` | Exit the REPL |
 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+C` | Clear current input. If input is empty, exit. |
-| `Ctrl+D` | Exit the REPL |
+| `Ctrl+C` | Clear current input. If input is empty, exit the REPL. During AI generation, cancels the current response. |
+| `Ctrl+D` | Exit the REPL (EOF) |
 | `Alt+Enter` | Insert a newline (multiline input) |
-| `Tab` | Autocomplete `/commands`, skill names, and `@file` paths |
+| `Tab` | Autocomplete (see below) |
+
+### Tab Completion
+
+Tab completion works for three categories:
+
+- **Commands**: Type `/` then `Tab` to see all slash commands (`/new`, `/list`, `/compact`, etc.)
+- **Skills**: Type `/` then `Tab` to also see skill names (`/commit`, `/review`, `/explain`, and any custom skills)
+- **File paths**: Type `@` then `Tab` to browse files and directories from the working directory. Subdirectories show with a `/` suffix. Hidden files (starting with `.`) are excluded. Supports nested path completion (`@src/` then `Tab`).
+
+### Command History
+
+Input history is persisted to `~/.ai-chat/cli_history` using prompt_toolkit's `FileHistory`. Previous commands are available with the up/down arrow keys across sessions.
+
+### One-Shot Mode
+
+Pass a prompt as an argument to run a single turn and exit:
+
+```bash
+parlor chat "list all Python files in src/"
+parlor chat "explain the auth middleware"
+parlor chat -c "now add rate limiting to it"    # Continue last conversation
+parlor chat -r a1b2c3d4 "fix the failing test"  # Continue specific conversation
+```
+
+One-shot mode creates a conversation in the database (visible in the web UI), generates a title, and exits after the response completes. The AI still has access to all tools and can run multiple agentic iterations --- the "one-shot" refers to a single user turn, not a single AI action.
 
 ### Skills
 
@@ -178,11 +324,19 @@ Skills are reusable prompt templates invoked with `/name`. Three ship by default
 
 | Skill | What it does |
 |---|---|
-| `/commit` | Inspects `git diff`, stages relevant files, creates a conventional commit (`type(scope): description`) |
-| `/review` | Reviews current changes for bugs, security issues, performance concerns, and missing tests |
-| `/explain` | Reads referenced code and explains architecture, data flow, and design patterns |
+| `/commit` | Runs `git diff`, stages relevant files, creates a conventional commit (`type(scope): description`) |
+| `/review` | Reviews `git diff` for bugs, security issues, performance concerns, missing error handling, and missing tests. Returns structured findings with severity levels. |
+| `/explain` | Reads referenced code and explains architecture, data flow, components, and design patterns |
 
-**Custom skills**: Add YAML files to `~/.parlor/skills/` (global) or `.parlor/skills/` (per-project). Project skills override global skills with the same name.
+**Skill arguments**: Append extra context after the skill name. It gets appended to the skill's prompt template:
+
+```
+you> /commit
+you> /review just the auth changes
+you> /explain @src/services/agent_loop.py focus on the event system
+```
+
+**Custom skills**: Add YAML files to `~/.parlor/skills/` (global) or `.parlor/skills/` (per-project):
 
 ```yaml
 name: test
@@ -202,6 +356,8 @@ prompt: |
   4. Verify the deployment is healthy
 ```
 
+**Precedence**: Project skills (`.parlor/skills/`) override global skills (`~/.parlor/skills/`), which override default built-in skills. Parlor walks up from the working directory to find the nearest `.parlor/skills/` directory, similar to how `PARLOR.md` is discovered.
+
 ### Project Instructions (PARLOR.md)
 
 Create a `PARLOR.md` in your project root to inject context into every conversation:
@@ -219,11 +375,36 @@ Create a `PARLOR.md` in your project root to inject context into every conversat
 - Tests required for all new features
 ```
 
-Parlor searches up from the current directory for the nearest `PARLOR.md`. A global `~/.parlor/PARLOR.md` applies to all projects. Both are loaded if found (global first, then project-specific).
+**Discovery**: Parlor walks up from the current working directory to find the nearest `PARLOR.md`. A global `~/.parlor/PARLOR.md` applies to all projects. Both are loaded if found --- global instructions come first, then project-specific ones.
+
+**System prompt construction**: The CLI builds a system prompt from three sources, concatenated in this order:
+
+1. Working directory context: `"You are an AI coding assistant working in: /path/to/project"` + tool usage guidance
+2. `PARLOR.md` instructions (global + project, if found)
+3. The `system_prompt` from `config.yaml`
 
 ### Shared Database
 
-CLI and web UI share the same SQLite database (`~/.ai-chat/chat.db`). Conversations created in the terminal show up in the web sidebar, and vice versa. Titles are auto-generated after the first exchange.
+CLI and web UI share the same SQLite database (`~/.ai-chat/chat.db`). Conversations created in the terminal show up in the web sidebar, and vice versa. Every user message, assistant response, and tool call is persisted with the same schema used by the web UI.
+
+Titles are auto-generated after the first exchange. Tool calls are stored with their inputs and outputs, so the web UI can render expandable tool call panels for conversations that originated in the CLI.
+
+### Unified Tool Executor
+
+Built-in tools and MCP tools work side by side. When the AI calls a tool:
+
+1. **Built-in tools are checked first** --- if the tool name matches a registered built-in (`read_file`, `write_file`, etc.), it executes locally with no network overhead
+2. **MCP tools are checked second** --- if no built-in matches, the call is forwarded to the appropriate MCP server
+
+This means a single conversation can use `read_file` (built-in) and `query_database` (MCP) in the same agentic loop. Use `/tools` to see the full list of available tools from both sources.
+
+### Cross-Platform Support
+
+The CLI works on **macOS**, **Linux**, and **Windows**:
+
+- Signal handling (Ctrl+C to cancel generation) uses `asyncio.add_signal_handler` on Unix and falls back gracefully on Windows where async signal handlers aren't supported
+- Path resolution uses `os.path.realpath` for consistent behavior across platforms
+- The prompt toolkit input handles platform-specific terminal differences
 
 ### CLI Configuration
 
@@ -235,7 +416,10 @@ cli:
   max_tool_iterations: 50 # Max agentic loop iterations per response (default: 50)
 ```
 
-MCP servers configured in the same `config.yaml` are available in both CLI and web UI. Built-in tools and MCP tools work together --- the AI can use both in the same response.
+- **`builtin_tools: false`** disables all six built-in tools. MCP tools (if configured) still work. Same effect as `--no-tools` on the command line.
+- **`max_tool_iterations`** caps how many tool-call rounds the AI can make per turn. Set lower for simpler tasks, higher for complex multi-step operations.
+
+MCP servers configured in the same `config.yaml` are available in both CLI and web UI.
 
 ---
 
