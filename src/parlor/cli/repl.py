@@ -492,6 +492,7 @@ async def _run_repl(
     from prompt_toolkit import PromptSession
     from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.document import Document
+    from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.key_binding import KeyBindings
 
@@ -556,6 +557,11 @@ async def _run_repl(
     # Key bindings
     kb = KeyBindings()
 
+    # Enter submits; Alt+Enter / Escape+Enter inserts newline
+    @kb.add("enter")
+    def _submit(event: Any) -> None:
+        event.current_buffer.validate_and_handle()
+
     @kb.add("escape", "enter")
     def _newline(event: Any) -> None:
         event.current_buffer.insert_text("\n")
@@ -572,10 +578,15 @@ async def _run_repl(
             _exit_flag[0] = True
             buf.validate_and_handle()
 
+    # Styled prompt: colored "you>" with continuation indent
+    _prompt = HTML("<ansibrightcyan><b>you&gt;</b></ansibrightcyan> ")
+    _continuation = "     "  # 5 chars to align with "you> "
+
     session: PromptSession[str] = PromptSession(
         history=FileHistory(str(history_path)),
         key_bindings=kb,
-        multiline=False,
+        multiline=True,
+        prompt_continuation=_continuation,
         completer=completer,
     )
 
@@ -603,7 +614,7 @@ async def _run_repl(
     while True:
         _exit_flag[0] = False
         try:
-            user_input = await session.prompt_async("you> ", multiline=False)
+            user_input = await session.prompt_async(_prompt)
         except EOFError:
             break
         except KeyboardInterrupt:
@@ -721,6 +732,9 @@ async def _run_repl(
             is_skill, skill_prompt = skill_registry.resolve_input(user_input)
             if is_skill:
                 user_input = skill_prompt
+
+        # Visual separation between input and response
+        renderer.render_newline()
 
         # Expand file references
         expanded = _expand_file_references(user_input, working_dir)
