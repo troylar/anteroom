@@ -19,11 +19,11 @@
 </p>
 
 <p align="center">
-  <a href="#-quick-start">Quick Start</a> &bull;
-  <a href="#-features">Features</a> &bull;
-  <a href="#-themes">Themes</a> &bull;
-  <a href="#-security">Security</a> &bull;
-  <a href="#-api-reference">API</a>
+  <a href="#rocket-quick-start">Quick Start</a> &bull;
+  <a href="#sparkles-features">Features</a> &bull;
+  <a href="#palette-themes">Themes</a> &bull;
+  <a href="#shield-security">Security</a> &bull;
+  <a href="#books-api-reference">API</a>
 </p>
 
 <p align="center">
