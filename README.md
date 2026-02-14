@@ -20,9 +20,10 @@
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#web-ui">Web UI</a> &bull;
   <a href="#cli-chat-mode">CLI Chat</a> &bull;
-  <a href="#features">Features</a> &bull;
   <a href="#themes">Themes</a> &bull;
+  <a href="#configuration">Config</a> &bull;
   <a href="#security">Security</a> &bull;
   <a href="#api-reference">API</a>
 </p>
@@ -78,6 +79,213 @@ parlor chat     # Terminal CLI
 ```
 
 Your browser opens to `http://127.0.0.1:8080`. That's it.
+
+---
+
+## Web UI
+
+<p align="center">
+  <img src="docs/screenshots/theme-midnight.png" alt="Parlor - Midnight Theme" width="800">
+</p>
+
+### Conversations
+
+| | |
+|---|---|
+| **Create, rename, search, delete** | Full conversation lifecycle with double-click rename |
+| **Full-text search** | FTS5-powered instant search across all messages and titles |
+| **Fork at any message** | Branch a conversation into a new thread from any point |
+| **Edit & regenerate** | Edit any user message, all subsequent messages are deleted, AI regenerates from there |
+| **Export to Markdown** | One-click download of any conversation as `.md` |
+| **Auto-titles** | AI generates a title from your first message |
+| **Per-conversation model** | Switch models mid-conversation from the top bar dropdown |
+| **Copy between databases** | Duplicate an entire conversation (with messages + tool calls) to another database |
+
+### Projects
+
+Group conversations under projects with **custom system prompts** and **per-project model selection**. Your coding project uses Claude with a developer prompt. Your writing project uses GPT-4 with an editorial voice. Each project is its own world.
+
+- Project-scoped system prompt overrides the global default
+- Per-project model override (or "use global default")
+- Project-scoped folders --- each project gets its own folder hierarchy
+- Deleting a project preserves its conversations (they become unlinked, not deleted)
+- "All Conversations" view to see everything across projects
+
+### Organization
+
+<table>
+<tr>
+<td width="50%">
+
+**Folders**
+- Nested folder hierarchy with unlimited depth
+- Add subfolders from the folder context menu
+- Collapse/expand state persists to the database
+- Depth-based indentation in the sidebar
+- Rename and delete (conversations are preserved, not deleted)
+- Project-scoped: each project gets its own folder tree
+
+</td>
+<td width="50%">
+
+**Tags**
+- Color-coded labels on conversations (hex color picker)
+- Create tags inline from any conversation's tag dropdown
+- Filter the sidebar by tag
+- Visual badges with color indicators
+- Delete a tag and it's cleanly removed from all conversations
+
+</td>
+</tr>
+</table>
+
+### Shared Databases
+
+Connect **multiple SQLite databases** for team or topic-based separation. Each database is fully independent --- its own conversations, attachments, and history.
+
+- **Visual file browser** with directory navigation for selecting `.db`/`.sqlite`/`.sqlite3` files
+- **Copy conversations** between databases (full message + tool call history)
+- **Switch databases** from the sidebar --- active database is visually indicated
+- Database names: letters, numbers, hyphens, underscores only
+- "personal" database always exists and can't be removed
+- Paths restricted to your home directory for security
+
+### Rich Rendering
+
+| Format | Support |
+|---|---|
+| **Markdown** | Full GFM --- tables, lists, blockquotes, strikethrough, task lists |
+| **Code blocks** | Syntax highlighting via highlight.js with language label + one-click copy button |
+| **LaTeX math** | Inline `$x^2$` / `\(x^2\)` and display `$$\int$$` / `\[\int\]` via KaTeX |
+| **Images** | Inline previews for attached images |
+| **HTML subset** | `<kbd>`, `<sup>`, `<sub>`, `<dl>`/`<dt>`/`<dd>` via DOMPurify allowlist |
+
+### File Attachments
+
+Drag-and-drop or click to attach. **35+ file types** supported. Up to **10 files per message**, **10 MB each**. Every file is verified with magic-byte detection --- a renamed `.exe` won't sneak through as a `.png`.
+
+| Category | Extensions |
+|---|---|
+| **Code** | `.py` `.js` `.ts` `.java` `.c` `.cpp` `.h` `.hpp` `.rs` `.go` `.rb` `.php` `.sh` `.bat` `.ps1` `.sql` `.css` |
+| **Data** | `.json` `.yaml` `.yml` `.csv` `.xml` `.toml` `.ini` `.cfg` `.log` |
+| **Documents** | `.txt` `.md` `.pdf` |
+| **Images** | `.png` `.jpg` `.jpeg` `.gif` `.webp` |
+
+- Image attachments show inline thumbnails with file size
+- Non-image files force-download (never rendered in-browser)
+- Filenames are sanitized: path components stripped, special characters replaced
+
+### MCP Tool Integration
+
+Connect **stdio** or **SSE-based** MCP servers. Your AI gains access to external tools --- databases, APIs, file systems, anything with an MCP adapter.
+
+- Tool calls render as **expandable detail panels** --- see input during execution, output + status when complete
+- Spinner animation while tools execute
+- Connected server count and total tool count shown in sidebar footer
+- SSRF protection with DNS resolution and shell metacharacter rejection on tool args
+
+```yaml
+mcp_servers:
+  - name: "my-tools"
+    transport: "stdio"
+    command: "npx"
+    args: ["-y", "@my-org/mcp-tools"]
+
+  - name: "remote-tools"
+    transport: "sse"
+    url: "https://mcp-server.example.com/sse"
+```
+
+### Streaming
+
+Real-time **token-by-token streaming** via Server-Sent Events.
+
+- Markdown and math render live as tokens arrive
+- **Raw mode toggle** (eye icon in top bar) --- view unprocessed text during streaming, persists across sessions
+- Stop generation mid-response with `Escape` or the stop button
+- Animated thinking indicator with pulsing dots while AI processes
+- Error messages show inline with a **Retry** button
+
+### Command Palette
+
+**`Cmd+K`** / **`Ctrl+K`** opens a Raycast-style command palette with fuzzy matching.
+
+| Command type | What it does |
+|---|---|
+| **New Chat** | Create a fresh conversation |
+| **Theme: Midnight / Dawn / Aurora / Ember** | Switch themes instantly |
+| **Model names** | Switch the current model (all available models listed) |
+| **Project names** | Jump to a project |
+| **Recent conversations** | Quick-jump to your 10 most recent chats |
+
+Arrow keys to navigate, `Enter` to select, `Escape` to dismiss.
+
+### Web UI Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Cmd/Ctrl + K` | Open command palette |
+| `Ctrl + Shift + N` | New conversation |
+| `Escape` | Stop generation / close palette / close modal |
+| `Enter` | Send message |
+| `Shift + Enter` | Newline in message input |
+
+### Settings UI
+
+Click the gear icon in the sidebar to open the settings modal:
+
+- **Model selector** --- dropdown populated live from your API
+- **System prompt editor** --- change at runtime, persists to `config.yaml`
+- **Theme picker** --- visual cards showing each theme's color palette
+- Changes take effect immediately, no restart needed
+
+### Themes
+
+Four built-in themes, each with a distinct visual identity. Switch instantly via settings or command palette (`Cmd+K`).
+
+**Midnight** `Default` --- Premium tech dark. Deep navy-charcoal with electric blue accents. Glassmorphic sidebar.
+
+<p align="center">
+  <img src="docs/screenshots/theme-midnight.png" alt="Midnight Theme" width="800">
+</p>
+
+**Dawn** `Light` --- Warm editorial light. Cream backgrounds, soft indigo-violet accents, subtle paper texture.
+
+<p align="center">
+  <img src="docs/screenshots/theme-dawn.png" alt="Dawn Theme" width="800">
+</p>
+
+**Aurora** `Showstopper` --- Living gradient dark with animated CSS aurora (purple/teal/emerald). Gradient borders, animated input focus rings.
+
+<p align="center">
+  <img src="docs/screenshots/theme-aurora.png" alt="Aurora Theme" width="800">
+</p>
+
+**Ember** `Cozy` --- Warm luxury dark. Amber by firelight. Brown-charcoal backgrounds, rich amber glow on focus states.
+
+<p align="center">
+  <img src="docs/screenshots/theme-ember.png" alt="Ember Theme" width="800">
+</p>
+
+**Visual details:**
+- Glassmorphism with `backdrop-filter: blur(20px)` on sidebar
+- Multi-layered shadows for depth: `0 1px 2px` + `0 4px 12px`
+- Micro-animations: sidebar items shift on hover, buttons glow, modals spring in
+- Gradient text effect on welcome heading
+- Smooth 0.5s cross-fade transition between themes
+- Code block copy button fades in on hover
+- Theme persists in localStorage across sessions --- no flash on reload
+
+### Responsive Design
+
+| Breakpoint | Target | Behavior |
+|---|---|---|
+| **1400px+** | Large desktop | Wider messages (900px), expanded sidebar (300px) |
+| **769-1399px** | Desktop | Default layout |
+| **768-1024px** | Tablet | Compact sidebar (240px), full-width messages |
+| **0-767px** | Mobile | Slide-over sidebar with hamburger menu + dark overlay |
+
+Mobile sidebar slides in with `transform` animation. Tap the overlay or hamburger to dismiss.
 
 ---
 
@@ -420,221 +628,6 @@ cli:
 - **`max_tool_iterations`** caps how many tool-call rounds the AI can make per turn. Set lower for simpler tasks, higher for complex multi-step operations.
 
 MCP servers configured in the same `config.yaml` are available in both CLI and web UI.
-
----
-
-## Features
-
-### Conversations
-
-| | |
-|---|---|
-| **Create, rename, search, delete** | Full conversation lifecycle with double-click rename |
-| **Full-text search** | FTS5-powered instant search across all messages and titles |
-| **Fork at any message** | Branch a conversation into a new thread from any point |
-| **Edit & regenerate** | Edit any user message, all subsequent messages are deleted, AI regenerates from there |
-| **Export to Markdown** | One-click download of any conversation as `.md` |
-| **Auto-titles** | AI generates a title from your first message |
-| **Per-conversation model** | Switch models mid-conversation from the top bar dropdown |
-| **Copy between databases** | Duplicate an entire conversation (with messages + tool calls) to another database |
-
-### Projects
-
-Group conversations under projects with **custom system prompts** and **per-project model selection**. Your coding project uses Claude with a developer prompt. Your writing project uses GPT-4 with an editorial voice. Each project is its own world.
-
-- Project-scoped system prompt overrides the global default
-- Per-project model override (or "use global default")
-- Project-scoped folders --- each project gets its own folder hierarchy
-- Deleting a project preserves its conversations (they become unlinked, not deleted)
-- "All Conversations" view to see everything across projects
-
-### Organization
-
-<table>
-<tr>
-<td width="50%">
-
-**Folders**
-- Nested folder hierarchy with unlimited depth
-- Add subfolders from the folder context menu
-- Collapse/expand state persists to the database
-- Depth-based indentation in the sidebar
-- Rename and delete (conversations are preserved, not deleted)
-- Project-scoped: each project gets its own folder tree
-
-</td>
-<td width="50%">
-
-**Tags**
-- Color-coded labels on conversations (hex color picker)
-- Create tags inline from any conversation's tag dropdown
-- Filter the sidebar by tag
-- Visual badges with color indicators
-- Delete a tag and it's cleanly removed from all conversations
-
-</td>
-</tr>
-</table>
-
-### Shared Databases
-
-Connect **multiple SQLite databases** for team or topic-based separation. Each database is fully independent --- its own conversations, attachments, and history.
-
-- **Visual file browser** with directory navigation for selecting `.db`/`.sqlite`/`.sqlite3` files
-- **Copy conversations** between databases (full message + tool call history)
-- **Switch databases** from the sidebar --- active database is visually indicated
-- Database names: letters, numbers, hyphens, underscores only
-- "personal" database always exists and can't be removed
-- Paths restricted to your home directory for security
-
-### Rich Rendering
-
-| Format | Support |
-|---|---|
-| **Markdown** | Full GFM --- tables, lists, blockquotes, strikethrough, task lists |
-| **Code blocks** | Syntax highlighting via highlight.js with language label + one-click copy button |
-| **LaTeX math** | Inline `$x^2$` / `\(x^2\)` and display `$$\int$$` / `\[\int\]` via KaTeX |
-| **Images** | Inline previews for attached images |
-| **HTML subset** | `<kbd>`, `<sup>`, `<sub>`, `<dl>`/`<dt>`/`<dd>` via DOMPurify allowlist |
-
-### File Attachments
-
-Drag-and-drop or click to attach. **35+ file types** supported. Up to **10 files per message**, **10 MB each**. Every file is verified with magic-byte detection --- a renamed `.exe` won't sneak through as a `.png`.
-
-| Category | Extensions |
-|---|---|
-| **Code** | `.py` `.js` `.ts` `.java` `.c` `.cpp` `.h` `.hpp` `.rs` `.go` `.rb` `.php` `.sh` `.bat` `.ps1` `.sql` `.css` |
-| **Data** | `.json` `.yaml` `.yml` `.csv` `.xml` `.toml` `.ini` `.cfg` `.log` |
-| **Documents** | `.txt` `.md` `.pdf` |
-| **Images** | `.png` `.jpg` `.jpeg` `.gif` `.webp` |
-
-- Image attachments show inline thumbnails with file size
-- Non-image files force-download (never rendered in-browser)
-- Filenames are sanitized: path components stripped, special characters replaced
-
-### MCP Tool Integration
-
-Connect **stdio** or **SSE-based** MCP servers. Your AI gains access to external tools --- databases, APIs, file systems, anything with an MCP adapter.
-
-- Tool calls render as **expandable detail panels** --- see input during execution, output + status when complete
-- Spinner animation while tools execute
-- Connected server count and total tool count shown in sidebar footer
-- SSRF protection with DNS resolution and shell metacharacter rejection on tool args
-
-```yaml
-mcp_servers:
-  - name: "my-tools"
-    transport: "stdio"
-    command: "npx"
-    args: ["-y", "@my-org/mcp-tools"]
-
-  - name: "remote-tools"
-    transport: "sse"
-    url: "https://mcp-server.example.com/sse"
-```
-
-### Streaming
-
-Real-time **token-by-token streaming** via Server-Sent Events.
-
-- Markdown and math render live as tokens arrive
-- **Raw mode toggle** (eye icon in top bar) --- view unprocessed text during streaming, persists across sessions
-- Stop generation mid-response with `Escape` or the stop button
-- Animated thinking indicator with pulsing dots while AI processes
-- Error messages show inline with a **Retry** button
-
-### Command Palette
-
-**`Cmd+K`** / **`Ctrl+K`** opens a Raycast-style command palette with fuzzy matching.
-
-| Command type | What it does |
-|---|---|
-| **New Chat** | Create a fresh conversation |
-| **Theme: Midnight / Dawn / Aurora / Ember** | Switch themes instantly |
-| **Model names** | Switch the current model (all available models listed) |
-| **Project names** | Jump to a project |
-| **Recent conversations** | Quick-jump to your 10 most recent chats |
-
-Arrow keys to navigate, `Enter` to select, `Escape` to dismiss.
-
-### Web UI Keyboard Shortcuts
-
-| Shortcut | Action |
-|---|---|
-| `Cmd/Ctrl + K` | Open command palette |
-| `Ctrl + Shift + N` | New conversation |
-| `Escape` | Stop generation / close palette / close modal |
-| `Enter` | Send message |
-| `Shift + Enter` | Newline in message input |
-
-### Settings UI
-
-Click the gear icon in the sidebar to open the settings modal:
-
-- **Model selector** --- dropdown populated live from your API
-- **System prompt editor** --- change at runtime, persists to `config.yaml`
-- **Theme picker** --- visual cards showing each theme's color palette
-- Changes take effect immediately, no restart needed
-
----
-
-## Themes
-
-Four built-in themes, each with a distinct visual identity. Switch instantly via settings or command palette (`Cmd+K`).
-
-### Midnight `Default`
-
-Premium tech dark --- think Linear, Raycast, Vercel. Deep navy-charcoal with electric blue accents. Glassmorphic sidebar.
-
-<p align="center">
-  <img src="docs/screenshots/theme-midnight.png" alt="Midnight Theme" width="800">
-</p>
-
-### Dawn `Light`
-
-Warm editorial light --- think Notion in sunlight. Cream backgrounds, soft indigo-violet accents, subtle paper texture.
-
-<p align="center">
-  <img src="docs/screenshots/theme-dawn.png" alt="Dawn Theme" width="800">
-</p>
-
-### Aurora `Showstopper`
-
-Living gradient dark with animated CSS aurora (purple/teal/emerald). Gradient borders, animated input focus rings.
-
-<p align="center">
-  <img src="docs/screenshots/theme-aurora.png" alt="Aurora Theme" width="800">
-</p>
-
-### Ember `Cozy`
-
-Warm luxury dark --- amber by firelight. Brown-charcoal backgrounds, rich amber glow on focus states.
-
-<p align="center">
-  <img src="docs/screenshots/theme-ember.png" alt="Ember Theme" width="800">
-</p>
-
-**Visual details:**
-- Glassmorphism with `backdrop-filter: blur(20px)` on sidebar
-- Multi-layered shadows for depth: `0 1px 2px` + `0 4px 12px`
-- Micro-animations: sidebar items shift on hover, buttons glow, modals spring in
-- Gradient text effect on welcome heading
-- Smooth 0.5s cross-fade transition between themes
-- Code block copy button fades in on hover
-- Theme persists in localStorage across sessions --- no flash on reload
-
----
-
-## Responsive Design
-
-| Breakpoint | Target | Behavior |
-|---|---|---|
-| **1400px+** | Large desktop | Wider messages (900px), expanded sidebar (300px) |
-| **769-1399px** | Desktop | Default layout |
-| **768-1024px** | Tablet | Compact sidebar (240px), full-width messages |
-| **0-767px** | Mobile | Slide-over sidebar with hamburger menu + dark overlay |
-
-Mobile sidebar slides in with `transform` animation. Tap the overlay or hamburger to dismiss.
 
 ---
 
