@@ -27,8 +27,7 @@ _thinking_start: float = 0
 _spinner: Status | None = None
 _last_spinner_update: float = 0
 
-# Active tool call spinner (shows while tool is executing)
-_tool_spinner: Status | None = None
+# Tool call timing
 _tool_start: float = 0
 
 
@@ -275,8 +274,8 @@ def render_newline() -> None:
 
 
 def render_tool_call_start(tool_name: str, arguments: dict[str, Any]) -> None:
-    """Show tool call breadcrumb. In verbose mode, also show raw args."""
-    global _tool_spinner, _tool_start
+    """Show tool call breadcrumb. Static print (no live spinner) for terminal compatibility."""
+    global _tool_start
 
     summary = _humanize_tool(tool_name, arguments)
 
@@ -291,28 +290,21 @@ def render_tool_call_start(tool_name: str, arguments: dict[str, Any]) -> None:
         }
     )
 
+    _tool_start = time.monotonic()
+
     if _verbosity == Verbosity.VERBOSE:
-        # Legacy-style full output
+        # Full output: tool name + raw args
         args_str = json.dumps(arguments, indent=None, default=str)
         if len(args_str) > 200:
             args_str = args_str[:200] + "..."
         console.print(f"  [grey62]> {escape(tool_name)}({escape(args_str)})[/grey62]")
     else:
-        # Compact/detailed: show spinner on active tool
-        _tool_start = time.monotonic()
-        _tool_spinner = Status(
-            f"  [dim]●[/dim] {escape(summary)}",
-            console=console,
-            spinner="dots",
-            spinner_style="dim",
-        )
-        _tool_spinner.start()
+        # Compact/detailed: print dim breadcrumb immediately (no spinner)
+        console.print(f"  [dim]● {escape(summary)} ...[/dim]", highlight=False)
 
 
 def render_tool_call_end(tool_name: str, status: str, output: Any) -> None:
     """Show tool call result. Style depends on verbosity."""
-    global _tool_spinner
-
     elapsed = time.monotonic() - _tool_start if _tool_start else 0
 
     # Update history
@@ -347,32 +339,23 @@ def render_tool_call_end(tool_name: str, status: str, output: Any) -> None:
         console.print(text)
         return
 
-    # Stop the tool spinner
-    if _tool_spinner:
-        _tool_spinner.stop()
-        _tool_spinner = None
-
     # Build the result line
-    status_icon = "[green]✓[/green]" if status == "success" else "[red]✗[/red]"
+    status_icon = "[green]  ✓[/green]" if status == "success" else "[red]  ✗[/red]"
     elapsed_str = f" {elapsed:.1f}s" if elapsed >= 0.1 else ""
 
     if status != "success":
-        # Show error: icon + summary + error on next line
-        console.print(f"  [dim]●[/dim] {escape(summary)}  {status_icon}{elapsed_str}")
+        console.print(f"{status_icon} {escape(summary)}{elapsed_str}")
         err = _error_summary(output)
         if err:
             console.print(f"    [red]{escape(err)}[/red]")
     elif _verbosity == Verbosity.DETAILED:
-        # Show summary + brief output
         detail = _output_summary(output)
+        console.print(f"{status_icon} {escape(summary)}{elapsed_str}")
         if detail:
-            console.print(f"  [dim]●[/dim] {escape(summary)}  {status_icon}{elapsed_str}")
             console.print(f"    [grey62]{escape(detail)}[/grey62]")
-        else:
-            console.print(f"  [dim]●[/dim] {escape(summary)}  {status_icon}{elapsed_str}")
     else:
-        # Compact: just breadcrumb + checkmark
-        console.print(f"  [dim]●[/dim] {escape(summary)}  {status_icon}{elapsed_str}")
+        # Compact: just result line
+        console.print(f"{status_icon} {escape(summary)}{elapsed_str}")
 
 
 # ---------------------------------------------------------------------------
