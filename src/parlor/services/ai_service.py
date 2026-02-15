@@ -36,7 +36,8 @@ class AIService:
             "api_key": api_key,
         }
         if not self.config.verify_ssl:
-            kwargs["http_client"] = httpx.AsyncClient(verify=False)
+            # SECURITY-REVIEW: intentional — user explicitly set verify_ssl: false in config for local/dev endpoints
+            kwargs["http_client"] = httpx.AsyncClient(verify=False)  # noqa: S501
         self.client = AsyncOpenAI(**kwargs)
 
     def _resolve_api_key(self) -> str:

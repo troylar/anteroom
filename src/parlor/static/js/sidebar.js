@@ -631,6 +631,7 @@ const Sidebar = (() => {
             a.href = url;
             const disposition = response.headers.get('Content-Disposition') || '';
             const match = disposition.match(/filename="(.+?)"/);
+            // SECURITY-REVIEW: Content-Disposition from own server; filename sanitized server-side
             a.download = match ? match[1] : 'conversation.md';
             document.body.appendChild(a);
             a.click();

@@ -116,7 +116,17 @@ def _run_web(config, config_path: Path) -> None:
 
     app = create_app(config)
 
-    url = f"http://{config.app.host}:{config.app.port}"
+    ssl_kwargs: dict[str, str] = {}
+    scheme = "http"
+    if config.app.tls:
+        from .tls import ensure_certificates
+
+        cert_path, key_path = ensure_certificates(config.app.data_dir)
+        ssl_kwargs["ssl_certfile"] = str(cert_path)
+        ssl_kwargs["ssl_keyfile"] = str(key_path)
+        scheme = "https"
+
+    url = f"{scheme}://{config.app.host}:{config.app.port}"
     print(f"\nStarting Parlor at {url}")
 
     if config.app.host in ("0.0.0.0", "::"):
@@ -124,7 +134,7 @@ def _run_web(config, config_path: Path) -> None:
 
     webbrowser.open(url)
 
-    uvicorn.run(app, host=config.app.host, port=config.app.port, log_level="info")
+    uvicorn.run(app, host=config.app.host, port=config.app.port, log_level="info", **ssl_kwargs)
 
 
 def _run_chat(
@@ -139,6 +149,7 @@ def _run_chat(
     import os
 
     if project_path:
+        # SECURITY-REVIEW: CLI arg from local user, not remote input; validated as existing directory
         resolved = os.path.abspath(project_path)
         if not os.path.isdir(resolved):
             print(f"Error: {project_path} is not a directory", file=sys.stderr)
@@ -147,6 +158,7 @@ def _run_chat(
 
     from .cli.repl import run_cli
 
+    # SECURITY-REVIEW: CLI args from local user; all storage queries use parameterized ?
     asyncio.run(
         run_cli(
             config,

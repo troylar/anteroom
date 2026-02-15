@@ -227,6 +227,7 @@ async def add_database(body: DatabaseAdd, request: Request):
         pass
 
     try:
+        # SECURITY-REVIEW: path validated below — extension allowlist + is_relative_to(home)
         db_path = Path(os.path.expanduser(body.path)).resolve()
         # Only allow .db/.sqlite/.sqlite3 extensions
         if db_path.suffix.lower() not in (".db", ".sqlite", ".sqlite3"):

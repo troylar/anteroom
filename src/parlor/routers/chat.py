@@ -288,6 +288,7 @@ async def get_attachment(attachment_id: str, request: Request):
 
     media_type = att["mime_type"]
     disposition = "inline" if media_type in SAFE_INLINE_TYPES else "attachment"
+    # SECURITY-REVIEW: file_path checked with is_relative_to(data_dir) above; filename sanitized on upload
     return FileResponse(
         str(file_path),
         media_type=media_type,

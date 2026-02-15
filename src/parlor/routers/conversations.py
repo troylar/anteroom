@@ -99,6 +99,7 @@ async def delete_conversation(conversation_id: str, request: Request):
     _validate_uuid(conversation_id)
     db = _get_db(request)
     data_dir = request.app.state.config.app.data_dir
+    # SECURITY-REVIEW: conversation_id is UUID-validated above; path is data_dir/attachments/<uuid>
     deleted = storage.delete_conversation(db, conversation_id, data_dir)
     if not deleted:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -142,6 +143,7 @@ async def delete_messages_after(conversation_id: str, request: Request, after_po
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
     data_dir = request.app.state.config.app.data_dir
+    # SECURITY-REVIEW: after_position is int via Query(ge=0); all queries use parameterized ?
     storage.delete_messages_after_position(db, conversation_id, after_position, data_dir)
     return Response(status_code=204)
 
@@ -160,6 +162,7 @@ async def rewind_conversation(conversation_id: str, body: RewindRequest, request
         raise HTTPException(status_code=400, detail="Invalid position")
 
     data_dir = request.app.state.config.app.data_dir
+    # SECURITY-REVIEW: to_position validated against known positions; parameterized queries throughout
     result = await rewind_service(
         db=db,
         conversation_id=conversation_id,
@@ -220,6 +223,7 @@ async def update_folder(folder_id: str, body: FolderUpdate, request: Request):
 async def delete_folder(folder_id: str, request: Request):
     _validate_uuid(folder_id)
     db = _get_db(request)
+    # SECURITY-REVIEW: folder_id is UUID-validated above; parameterized queries in storage
     deleted = storage.delete_folder(db, folder_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Folder not found")
