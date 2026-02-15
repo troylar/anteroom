@@ -139,6 +139,9 @@ async def run_agent_loop(
         assistant_content = ""
         got_context_error = False
 
+        if iteration > 1:
+            yield AgentEvent(kind="thinking", data={})
+
         async for event in ai_service.stream_chat(
             messages,
             tools=tools_openai,

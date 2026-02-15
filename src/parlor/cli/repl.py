@@ -488,7 +488,11 @@ async def _run_one_shot(
             extra_system_prompt=extra_system_prompt,
             max_iterations=config.cli.max_tool_iterations,
         ):
-            if event.kind == "token":
+            if event.kind == "thinking":
+                if not thinking:
+                    renderer.start_thinking()
+                    thinking = True
+            elif event.kind == "token":
                 if not thinking:
                     renderer.start_thinking()
                     thinking = True
@@ -1015,7 +1019,11 @@ async def _run_repl(
                 extra_system_prompt=extra_system_prompt,
                 max_iterations=config.cli.max_tool_iterations,
             ):
-                if event.kind == "token":
+                if event.kind == "thinking":
+                    if not thinking:
+                        renderer.start_thinking()
+                        thinking = True
+                elif event.kind == "token":
                     if not thinking:
                         renderer.start_thinking()
                         thinking = True

@@ -80,13 +80,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all responses."""
 
+    def __init__(self, app: FastAPI, tls_enabled: bool = True) -> None:
+        super().__init__(app)
+        self.tls_enabled = tls_enabled
+
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        if self.tls_enabled:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "script-src 'self' 'sha256-XOZ/E5zGhh3+pD1xPPme298VAabSp0Pt7SmU0EdZqKY='; "
@@ -244,16 +249,21 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         security_logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
         return JSONResponse(status_code=500, content={"detail": "An internal error occurred"})
 
-    origin = f"http://{config.app.host}:{config.app.port}"
+    scheme = "https" if config.app.tls else "http"
+    origin = f"{scheme}://{config.app.host}:{config.app.port}"
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[origin, "http://127.0.0.1:" + str(config.app.port), "http://localhost:" + str(config.app.port)],
+        allow_origins=[
+            origin,
+            f"{scheme}://127.0.0.1:{config.app.port}",
+            f"{scheme}://localhost:{config.app.port}",
+        ],
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
         allow_credentials=True,
     )
 
-    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware, tls_enabled=config.app.tls)
     app.add_middleware(MaxBodySizeMiddleware)
     app.add_middleware(RateLimitMiddleware, max_requests=120, window_seconds=60)
 
@@ -281,7 +291,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         return response
 
     static_dir = Path(__file__).parent / "static"
-    is_localhost = config.app.host in ("127.0.0.1", "localhost", "::1")
+    secure_cookies = config.app.tls
 
     @app.get("/")
     async def index():
@@ -307,7 +317,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             key="parlor_session",
             value=auth_token,
             httponly=True,
-            secure=not is_localhost,
+            secure=secure_cookies,
             samesite="strict",
             path="/api/",
         )
@@ -315,7 +325,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             key="parlor_csrf",
             value=csrf_token,
             httponly=False,
-            secure=not is_localhost,
+            secure=secure_cookies,
             samesite="strict",
             path="/",
         )
