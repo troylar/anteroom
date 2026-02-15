@@ -18,7 +18,7 @@ parlor chat                         # CLI REPL
 parlor --test                       # Validate AI connection
 
 # Testing
-pytest tests/ -v                    # All tests (~166 tests)
+pytest tests/ -v                    # All tests (~270 tests)
 pytest tests/unit/ -v               # Unit tests only
 pytest tests/unit/test_tools.py -v  # Single test file
 pytest tests/unit/test_tools.py::test_name -v  # Single test
@@ -47,13 +47,14 @@ CLI (cli/repl.py) ──┘         │
 
 ### Key Modules
 
-- **`app.py`** — FastAPI app factory, middleware stack (auth, rate limiting, CSRF, security headers, body size limit)
-- **`config.py`** — YAML config loading with env var overrides, dataclass hierarchy (`AppConfig` → `AIConfig`, `AppSettings`, `CliConfig`, `McpServerConfig`)
-- **`services/agent_loop.py`** — Shared agentic loop: streams responses, parses tool calls, executes tools, loops up to `max_tool_iterations` (50). Auto-compacts at 100K tokens
+- **`app.py`** — FastAPI app factory, middleware stack (auth, rate limiting, CSRF, security headers with conditional HSTS based on TLS config, body size limit)
+- **`config.py`** — YAML config loading with env var overrides, dataclass hierarchy (`AppConfig` → `AIConfig`, `AppSettings`, `CliConfig`, `McpServerConfig`). `AppSettings.tls` controls HTTPS, HSTS, and secure cookies
+- **`services/agent_loop.py`** — Shared agentic loop: streams responses, parses tool calls, executes tools, loops up to `max_tool_iterations` (50). Auto-compacts at 100K tokens. Emits `"thinking"` event between tool execution and next API call for UI spinners
 - **`services/ai_service.py`** — OpenAI SDK wrapper with streaming and transparent token refresh on 401
 - **`services/storage.py`** — SQLite DAL with column-allowlisted SQL builder, parameterized queries, UUID-based IDs
 - **`tools/`** — ToolRegistry pattern: `_handlers` (async callables) + `_definitions` (OpenAI function schemas). Built-in tools: read_file, write_file, edit_file, bash, glob_files, grep
 - **`cli/repl.py`** — REPL with prompt_toolkit, skills system, @file references, /commands
+- **`tls.py`** — Self-signed certificate generation for localhost HTTPS using `cryptography` package
 - **`routers/`** — FastAPI endpoints: conversations CRUD, SSE chat streaming, config, projects
 
 ### Security Model
@@ -66,7 +67,11 @@ SQLite with WAL journaling, FTS5 for search, foreign keys enforced. Schema defin
 
 ### Configuration
 
-Config file at `~/.parlor/config.yaml`. Environment variables override config values with `AI_CHAT_` prefix (e.g., `AI_CHAT_BASE_URL`, `AI_CHAT_API_KEY`, `AI_CHAT_MODEL`). Token provider pattern (`api_key_command`) enables dynamic API key refresh via external commands.
+Config file at `~/.parlor/config.yaml`. Environment variables override config values with `AI_CHAT_` prefix (e.g., `AI_CHAT_BASE_URL`, `AI_CHAT_API_KEY`, `AI_CHAT_MODEL`). Token provider pattern (`api_key_command`) enables dynamic API key refresh via external commands. TLS is enabled by default (`app.tls: true`); set to `false` for plain HTTP.
+
+### Deployment
+
+PyPI package: `parlor`. Deploy via `/deploy` Claude Code skill which handles: merge PR, wait for CI, version bump, build, and `twine upload`. Requires `build` and `twine` installed. Credentials via `~/.pypirc` or `TWINE_USERNAME`/`TWINE_PASSWORD` env vars.
 
 ## Testing Patterns
 
