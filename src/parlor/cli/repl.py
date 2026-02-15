@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..config import AppConfig
+from ..config import AppConfig, build_runtime_context
 from ..db import init_db
 from ..services import storage
 from ..services.agent_loop import run_agent_loop
@@ -340,8 +340,22 @@ def _expand_file_references(text: str, working_dir: str) -> str:
     return _FILE_REF_RE.sub(_replace, text)
 
 
-def _build_system_prompt(config: AppConfig, working_dir: str, instructions: str | None) -> str:
+def _build_system_prompt(
+    config: AppConfig,
+    working_dir: str,
+    instructions: str | None,
+    builtin_tools: list[str] | None = None,
+    mcp_servers: dict[str, Any] | None = None,
+) -> str:
+    runtime_ctx = build_runtime_context(
+        model=config.ai.model,
+        builtin_tools=builtin_tools,
+        mcp_servers=mcp_servers,
+        interface="cli",
+        working_dir=working_dir,
+    )
     parts = [
+        runtime_ctx,
         f"You are an AI coding assistant working in: {working_dir}",
         "You have tools to read, write, and edit files, run shell commands, and search the codebase.",
         "When given a task, break it down and execute it step by step using your tools.",
@@ -419,7 +433,14 @@ async def run_cli(
 
     # Load PARLOR.md instructions
     instructions = load_instructions(working_dir)
-    extra_system_prompt = _build_system_prompt(config, working_dir, instructions)
+    mcp_statuses = mcp_manager.get_server_statuses() if mcp_manager else None
+    extra_system_prompt = _build_system_prompt(
+        config,
+        working_dir,
+        instructions,
+        builtin_tools=tool_registry.list_tools(),
+        mcp_servers=mcp_statuses,
+    )
 
     ai_service = create_ai_service(config.ai)
 
@@ -684,6 +705,16 @@ async def _run_repl(
 
     history_path = config.app.data_dir / "cli_history"
 
+    # Map Shift+Enter (CSI u: \x1b[13;2u) to Ctrl+J for terminals that
+    # support the kitty keyboard protocol (iTerm2, kitty, WezTerm, foot).
+    # Terminal.app doesn't send this sequence — Shift+Enter = Enter there.
+    try:
+        from prompt_toolkit.input import vt100_parser
+
+        vt100_parser.ANSI_SEQUENCES["\x1b[13;2u"] = "c-j"
+    except Exception:
+        pass
+
     # Key bindings
     kb = KeyBindings()
 
@@ -691,7 +722,7 @@ async def _run_repl(
     # Pasted characters arrive in < 5ms bursts; human typing is > 50ms apart.
     _last_text_change: list[float] = [0.0]
 
-    # Enter submits; Alt+Enter / Escape+Enter inserts newline
+    # Enter submits; Alt+Enter / Shift+Enter / Ctrl+J inserts newline
     @kb.add("enter")
     def _submit(event: Any) -> None:
         if _is_paste(_last_text_change[0]):
@@ -701,6 +732,7 @@ async def _run_repl(
             event.current_buffer.validate_and_handle()
 
     @kb.add("escape", "enter")
+    @kb.add("c-j")
     def _newline(event: Any) -> None:
         event.current_buffer.insert_text("\n")
 
@@ -716,9 +748,13 @@ async def _run_repl(
             _exit_flag[0] = True
             buf.validate_and_handle()
 
-    # Styled prompt
-    _prompt = HTML("<style fg='#C5A059'>guest</style> <style fg='#334155'>›</style> ")
-    _continuation = "        "  # align with "guest › "
+    # Styled prompt — dim while agent is working to signal "you can type to queue"
+    _prompt_text = HTML("<style fg='#C5A059'>❯</style> ")
+    _prompt_dim = HTML("<style fg='#475569'>❯</style> ")
+    _continuation = "  "  # align with "❯ "
+
+    def _prompt() -> HTML:
+        return _prompt_dim if agent_busy.is_set() else _prompt_text
 
     session: PromptSession[str] = PromptSession(
         history=FileHistory(str(history_path)),
@@ -804,6 +840,11 @@ async def _run_repl(
                 renderer.console.print("[grey62]Message queued[/grey62]")
 
             await input_queue.put(text)
+            agent_busy.set()
+
+    def _has_pending_work() -> bool:
+        """Check if there's more work queued."""
+        return not input_queue.empty() and not exit_flag.is_set()
 
     async def _agent_runner() -> None:
         """Process messages from input_queue, run commands and agent loop."""
@@ -811,6 +852,12 @@ async def _run_repl(
         nonlocal current_model, ai_service
 
         while not exit_flag.is_set():
+            # If agent_busy was set (by _collect_input) but we're back here waiting
+            # for input, clear it so the prompt renders as gold (idle).
+            if agent_busy.is_set() and not _has_pending_work():
+                agent_busy.clear()
+                session.app.invalidate()
+
             try:
                 user_input = await asyncio.wait_for(input_queue.get(), timeout=0.5)
             except asyncio.TimeoutError:
@@ -1187,7 +1234,6 @@ async def _run_repl(
                             total_elapsed += renderer.stop_thinking()
                             thinking = False
                         renderer.save_turn_history()
-                        renderer.render_newline()
                         renderer.render_response_end()
                         renderer.render_newline()
                         context_tokens = _estimate_tokens(ai_messages)
@@ -1197,7 +1243,6 @@ async def _run_repl(
                             response_tokens=response_token_count,
                             elapsed=total_elapsed,
                         )
-                        renderer.render_newline()
                         renderer.render_newline()
 
                 # Generate title on first exchange
@@ -1214,7 +1259,9 @@ async def _run_repl(
                     renderer.stop_thinking()
                 renderer.render_response_end()
             finally:
-                agent_busy.clear()
+                if not _has_pending_work():
+                    agent_busy.clear()
+                    session.app.invalidate()
                 _current_cancel_event[0] = None
                 cancel_event.set()
                 _remove_signal_handler(loop, signal.SIGINT)
@@ -1224,6 +1271,7 @@ async def _run_repl(
     from prompt_toolkit.patch_stdout import patch_stdout as _patch_stdout
 
     with _patch_stdout():
+        renderer.use_stdout_console()
         input_task = asyncio.create_task(_collect_input())
         runner_task = asyncio.create_task(_agent_runner())
 
