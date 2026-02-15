@@ -5,13 +5,13 @@
   <img src="https://img.shields.io/github/license/troylar/parlor?style=for-the-badge&color=e8913a&labelColor=0f1117" alt="License">
 </p>
 
-<h1 align="center">
-  <br>
-  Parlor
-  <br>
-</h1>
+<p align="center">
+  <img src="docs/logo.svg" alt="Parlor Logo" width="120" height="120">
+</p>
 
-<h3 align="center">A private parlor for AI conversation.</h3>
+<h1 align="center">Parlor</h1>
+
+<h3 align="center">The secure digital speakeasy for AI conversation.</h3>
 
 <p align="center">
   Self-hosted ChatGPT-style web UI <strong>and</strong> agentic CLI that connects to any OpenAI-compatible API.<br>
@@ -19,6 +19,7 @@
 </p>
 
 <p align="center">
+  <a href="https://parlor.readthedocs.io">Documentation</a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#web-ui">Web UI</a> &bull;
   <a href="#cli-chat-mode">CLI Chat</a> &bull;
@@ -36,9 +37,11 @@
 
 ## Why Parlor?
 
-Parlor connects to **any** OpenAI-compatible endpoint --- your company's internal API, OpenAI, Azure, Ollama, LM Studio, or anything else that speaks the OpenAI protocol. Built to [OWASP ASVS L1](SECURITY.md) standards because your conversations deserve real security, not security theater.
+Step inside. Parlor connects to **any** OpenAI-compatible endpoint --- your company's internal API, OpenAI, Azure, Ollama, LM Studio, or anything else that speaks the OpenAI protocol. Built to [OWASP ASVS L1](SECURITY.md) standards because your conversations deserve real security, not security theater.
 
 > **One command. No cloud. No telemetry. No compromise.**
+
+For full documentation, visit [parlor.readthedocs.io](https://parlor.readthedocs.io).
 
 ```bash
 pip install parlor
@@ -917,5 +920,6 @@ ruff format src/ tests/   # Format
 
 <p align="center">
   <strong>MIT License</strong><br>
-  Built for people who care about their conversations.
+  Built for people who care about their conversations.<br>
+  <a href="https://parlor.readthedocs.io">parlor.readthedocs.io</a>
 </p>
