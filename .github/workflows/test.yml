@@ -94,6 +94,7 @@ jobs:
           node-version: "20"
 
       - name: Run Snyk Open Source (SCA)
+        id: snyk-sca
         uses: snyk/actions/python-3.10@master
         continue-on-error: true
         env:
@@ -102,6 +103,7 @@ jobs:
           args: --severity-threshold=medium --json-file-output=snyk-sca.json --sarif-file-output=snyk-sca.sarif
 
       - name: Run Snyk Code (SAST)
+        id: snyk-code
         uses: snyk/actions/python-3.10@master
         continue-on-error: true
         env:
@@ -135,6 +137,14 @@ jobs:
             snyk-sca.json
             snyk-code.json
           retention-days: 30
+
+      - name: Fail if Snyk found vulnerabilities
+        if: always()
+        run: |
+          if [ "${{ steps.snyk-sca.outcome }}" = "failure" ] || [ "${{ steps.snyk-code.outcome }}" = "failure" ]; then
+            echo "::error::Snyk found security vulnerabilities. Check the Snyk dashboard and uploaded SARIF for details."
+            exit 1
+          fi
 
   build:
     name: Build package
