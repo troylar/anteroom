@@ -192,7 +192,10 @@ async def chat(conversation_id: str, request: Request) -> EventSourceResponse:
                 kind = agent_event.kind
                 data = agent_event.data
 
-                if kind == "token":
+                if kind == "thinking":
+                    yield {"event": "thinking", "data": json.dumps({})}
+
+                elif kind == "token":
                     yield {"event": "token", "data": json.dumps(data)}
 
                 elif kind == "tool_call_start":
