@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Any
 
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.markup import escape
 from rich.status import Status
 from rich.text import Text
@@ -18,6 +19,27 @@ console = Console(stderr=True)
 # Separate console for stdout markdown rendering (not stderr)
 _stdout_console = Console()
 _stdout = sys.stdout
+
+
+def use_stdout_console() -> None:
+    """Switch renderer to REPL-compatible mode.
+
+    - Opens a duplicate of the real stderr file descriptor so Rich output
+      bypasses prompt_toolkit's ``patch_stdout`` proxy entirely.  The proxy
+      corrupts ANSI escape bytes; a raw fd duplicate does not.
+    - Disables the animated spinner (Rich Live/Status) whose cursor
+      manipulation conflicts with prompt_toolkit's terminal management.
+      A static "Thinking..." line is printed instead.
+
+    Call from inside ``patch_stdout()`` context.
+    """
+    global console, _stdout_console, _stdout, _repl_mode
+    _real_stderr = os.fdopen(os.dup(sys.stderr.fileno()), "w")
+    console = Console(file=_real_stderr, force_terminal=True)
+    _stdout_console = Console(file=_real_stderr, force_terminal=True)
+    _stdout = _real_stderr
+    _repl_mode = True
+
 
 # Response buffer (tokens collected silently, rendered on completion)
 _streaming_buffer: list[str] = []
@@ -211,13 +233,34 @@ def _output_summary(output: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
+_repl_mode: bool = False
+
+
 def start_thinking() -> None:
     """Show a spinner with timer while AI is generating."""
     global _thinking_start, _spinner, _last_spinner_update
     _thinking_start = time.monotonic()
     _last_spinner_update = _thinking_start
-    _spinner = Status("[#C5A059]Thinking...[/]", console=console, spinner="dots12")
-    _spinner.start()
+    if _repl_mode:
+        # Rich Status conflicts with prompt_toolkit's patch_stdout, so
+        # we write a plain "Thinking..." line and overwrite it in-place
+        # via ANSI escape codes as the timer ticks.
+        _write_thinking_line(0.0)
+        _spinner = None
+    else:
+        _spinner = Status("[#C5A059]Thinking...[/]", console=console, spinner="dots12")
+        _spinner.start()
+
+
+def _write_thinking_line(elapsed: float) -> None:
+    """Overwrite the current line with Thinking + elapsed timer."""
+    if elapsed < 0.5:
+        text = "\r\033[2K\033[38;2;197;160;89mThinking...\033[0m"
+    else:
+        text = f"\r\033[2K\033[38;2;197;160;89mThinking...\033[0m \033[38;2;71;85;105m{elapsed:.0f}s\033[0m"
+    if _stdout:
+        _stdout.write(text)
+        _stdout.flush()
 
 
 def update_thinking() -> None:
@@ -229,6 +272,12 @@ def update_thinking() -> None:
             elapsed = now - _thinking_start
             _spinner.update(f"[#C5A059]Thinking...[/] [grey62]{elapsed:.0f}s[/grey62]")
             _last_spinner_update = now
+    elif _repl_mode:
+        now = time.monotonic()
+        if now - _last_spinner_update >= 1.0:
+            elapsed = now - _thinking_start
+            _write_thinking_line(elapsed)
+            _last_spinner_update = now
 
 
 def stop_thinking() -> float:
@@ -239,12 +288,43 @@ def stop_thinking() -> float:
         elapsed = time.monotonic() - _thinking_start
         _spinner.stop()
         _spinner = None
+    else:
+        elapsed = time.monotonic() - _thinking_start
+        if _repl_mode and _stdout:
+            _stdout.write("\r\033[2K")
+            _stdout.flush()
     return elapsed
 
 
 # ---------------------------------------------------------------------------
 # Token / response rendering
 # ---------------------------------------------------------------------------
+
+
+def _make_markdown(text: str) -> Markdown:
+    """Create a Markdown renderable with left-aligned headings."""
+    _patch_heading_left()
+    return Markdown(text)
+
+
+_heading_patched = False
+
+
+def _patch_heading_left() -> None:
+    """Monkey-patch Rich's Heading to render left-aligned instead of centered."""
+    global _heading_patched
+    if _heading_patched:
+        return
+    from rich.markdown import Heading
+
+    def _left_aligned(self, console, options):
+        self.text.justify = "left"
+        if self.tag == "h2":
+            yield Text("")
+        yield self.text
+
+    Heading.__rich_console__ = _left_aligned
+    _heading_patched = True
 
 
 def flush_buffered_text() -> None:
@@ -258,10 +338,9 @@ def flush_buffered_text() -> None:
     _streaming_buffer = []
     if not text.strip():
         return
-    from rich.markdown import Markdown
     from rich.padding import Padding
 
-    _stdout_console.print(Padding(Markdown(text), (0, 2, 0, 2)))
+    _stdout_console.print(Padding(_make_markdown(text), (0, 2, 0, 2)))
 
 
 def _flush_dedup() -> None:
@@ -288,10 +367,9 @@ def render_response_end() -> None:
     if not full_text.strip():
         return
 
-    from rich.markdown import Markdown
     from rich.padding import Padding
 
-    _stdout_console.print(Padding(Markdown(full_text), (0, 2, 0, 2)))
+    _stdout_console.print(Padding(_make_markdown(full_text), (0, 2, 0, 2)))
 
 
 def render_newline() -> None:

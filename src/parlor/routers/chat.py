@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
+from ..config import build_runtime_context
 from ..models import ChatRequest
 from ..services import storage
 from ..services.ai_service import AIService, create_ai_service
@@ -176,6 +177,16 @@ async def chat(conversation_id: str, request: Request):
     tool_registry = request.app.state.tool_registry
     mcp_manager = request.app.state.mcp_manager
 
+    # Build runtime context for self-awareness
+    runtime_ctx = build_runtime_context(
+        model=ai_service.config.model,
+        builtin_tools=list(tool_registry.list_tools()),
+        mcp_servers=mcp_manager.get_server_statuses() if mcp_manager else None,
+        interface="web",
+        tls_enabled=request.app.state.config.app.tls,
+    )
+    extra_system_prompt = runtime_ctx + ("\n\n" + project_instructions if project_instructions else "")
+
     tools_openai: list[dict[str, Any]] = list(tool_registry.get_openai_tools())
     if mcp_manager:
         mcp_tools = mcp_manager.get_openai_tools()
@@ -206,7 +217,7 @@ async def chat(conversation_id: str, request: Request):
                 tool_executor=_tool_executor,
                 tools_openai=tools,
                 cancel_event=cancel_event,
-                extra_system_prompt=project_instructions,
+                extra_system_prompt=extra_system_prompt,
                 message_queue=_message_queues.get(conversation_id),
             ):
                 kind = agent_event.kind
