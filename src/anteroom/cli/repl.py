@@ -1104,9 +1104,56 @@ async def _run_repl(
                 elif cmd == "/search":
                     parts = user_input.split(maxsplit=1)
                     if len(parts) < 2 or not parts[1].strip():
-                        renderer.console.print("[grey62]Usage: /search <query>[/grey62]\n")
+                        renderer.console.print("[grey62]Usage: /search <query> | /search --keyword <query>[/grey62]\n")
                         continue
-                    query = parts[1].strip()
+                    search_arg = parts[1].strip()
+
+                    # Check for --keyword flag
+                    force_keyword = False
+                    if search_arg.startswith("--keyword "):
+                        force_keyword = True
+                        search_arg = search_arg[len("--keyword ") :].strip()
+                        if not search_arg:
+                            renderer.console.print("[grey62]Usage: /search --keyword <query>[/grey62]\n")
+                            continue
+
+                    query = search_arg
+
+                    # Try semantic search if vec is available
+                    use_semantic = False
+                    if not force_keyword:
+                        try:
+                            from ..db import has_vec_support as _has_vec
+                            from ..services.embeddings import create_embedding_service as _create_emb
+
+                            raw_conn = db._conn if hasattr(db, "_conn") else None
+                            if raw_conn and _has_vec(raw_conn):
+                                _emb_svc = _create_emb(config)
+                                if _emb_svc:
+                                    use_semantic = True
+                        except Exception:
+                            pass
+
+                    if use_semantic:
+                        try:
+                            query_emb = await _emb_svc.embed(query)
+                            if query_emb:
+                                sem_results = storage.search_similar_messages(db, query_emb, limit=20)
+                                if sem_results:
+                                    renderer.console.print(f"\n[bold]Semantic search results for '{query}':[/bold]")
+                                    for i, r in enumerate(sem_results):
+                                        snippet = r["content"][:80].replace("\n", " ")
+                                        dist = r.get("distance", 0)
+                                        relevance = max(0, 100 - int(dist * 100))
+                                        renderer.console.print(
+                                            f"  {i + 1}. [{r['role']}] {snippet}... "
+                                            f"[grey62]({relevance}% match, {r['conversation_id'][:8]}...)[/grey62]"
+                                        )
+                                    renderer.console.print()
+                                    continue
+                        except Exception:
+                            pass  # Fall through to keyword search
+
                     results = storage.list_conversations(db, search=query, limit=20)
                     if results:
                         renderer.console.print(f"\n[bold]Search results for '{query}':[/bold]")

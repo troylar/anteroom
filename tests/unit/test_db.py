@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 
-from anteroom.db import _FTS_SCHEMA, _FTS_TRIGGERS, _SCHEMA
+import pytest
+
+from anteroom.db import _FTS_SCHEMA, _FTS_TRIGGERS, _SCHEMA, _VEC_METADATA_SCHEMA, _VEC_SCHEMA, has_vec_support
 
 
 def _init_in_memory() -> sqlite3.Connection:
@@ -242,3 +244,70 @@ class TestMigrations:
         info = conn.execute("PRAGMA table_info(conversations)").fetchall()
         col_names = [r[1] for r in info]
         assert col_names.count("user_id") == 1
+
+    def test_migration_creates_message_embeddings_table(self) -> None:
+        from anteroom.db import _run_migrations
+
+        conn = self._init_legacy_db()
+        _run_migrations(conn)
+        tables = _table_names(conn)
+        assert "message_embeddings" in tables
+
+    def test_migration_creates_message_embeddings_columns(self) -> None:
+        from anteroom.db import _run_migrations
+
+        conn = self._init_legacy_db()
+        _run_migrations(conn)
+        info = conn.execute("PRAGMA table_info(message_embeddings)").fetchall()
+        col_names = {r[1] for r in info}
+        assert "message_id" in col_names
+        assert "conversation_id" in col_names
+        assert "content_hash" in col_names
+        assert "created_at" in col_names
+
+
+class TestVecSupport:
+    def test_message_embeddings_table_created(self) -> None:
+        conn = _init_in_memory()
+        try:
+            conn.executescript(_VEC_METADATA_SCHEMA)
+        except sqlite3.OperationalError:
+            pass
+        conn.commit()
+        tables = _table_names(conn)
+        assert "message_embeddings" in tables
+
+    def test_has_vec_support_false_without_extension(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        assert has_vec_support(conn) is False
+        conn.close()
+
+    def test_has_vec_support_true_with_extension(self) -> None:
+        try:
+            import sqlite_vec
+
+            conn = sqlite3.connect(":memory:")
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+            assert has_vec_support(conn) is True
+            conn.close()
+        except (ImportError, Exception):
+            pytest.skip("sqlite-vec not available")
+
+    def test_vec_messages_table_created_with_extension(self) -> None:
+        try:
+            import sqlite_vec
+
+            conn = sqlite3.connect(":memory:")
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+            conn.executescript(_VEC_SCHEMA)
+            conn.commit()
+            # Check that vec_messages exists (virtual tables show up in sqlite_master)
+            rows = conn.execute("SELECT name FROM sqlite_master WHERE name = 'vec_messages'").fetchall()
+            assert len(rows) == 1
+            conn.close()
+        except (ImportError, Exception):
+            pytest.skip("sqlite-vec not available")

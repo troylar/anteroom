@@ -169,6 +169,12 @@ async def delete_conversation(conversation_id: str, request: Request):
     _validate_uuid(conversation_id)
     db = _get_db(request)
     data_dir = request.app.state.config.app.data_dir
+    # Clean up embeddings before deleting conversation
+    try:
+        storage.delete_embeddings_for_conversation(db, conversation_id)
+    except Exception:
+        pass  # Non-critical; table may not exist
+
     # SECURITY-REVIEW: conversation_id is UUID-validated above; path is data_dir/attachments/<uuid>
     deleted = storage.delete_conversation(db, conversation_id, data_dir)
     if not deleted:

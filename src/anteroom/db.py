@@ -132,6 +132,25 @@ CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(
 );
 """
 
+_VEC_METADATA_SCHEMA = """
+CREATE TABLE IF NOT EXISTS message_embeddings (
+    message_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL DEFAULT 0,
+    content_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+);
+"""
+
+_VEC_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_messages USING vec0(
+    embedding float[1536],
+    +message_id TEXT,
+    conversation_id TEXT
+);
+"""
+
 _FTS_TRIGGERS = """
 CREATE TRIGGER IF NOT EXISTS fts_conversations_insert
 AFTER INSERT ON conversations
@@ -245,6 +264,16 @@ def init_db(db_path: Path) -> ThreadSafeConnection:
     if is_new:
         _restrict_file_permissions(db_path)
 
+    # Load sqlite-vec extension if available
+    try:
+        import sqlite_vec
+
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+    except (ImportError, Exception):
+        pass  # sqlite-vec not available; vector search disabled
+
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -256,6 +285,16 @@ def init_db(db_path: Path) -> ThreadSafeConnection:
         conn.executescript(_FTS_TRIGGERS)
     except sqlite3.OperationalError:
         pass
+
+    # Create vec tables (metadata + virtual table)
+    try:
+        conn.executescript(_VEC_METADATA_SCHEMA)
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.executescript(_VEC_SCHEMA)
+    except sqlite3.OperationalError:
+        pass  # sqlite-vec not loaded
 
     _run_migrations(conn)
 
@@ -357,6 +396,27 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
         )"""
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_change_log_id ON change_log(id)")
+
+    # Ensure message_embeddings metadata table exists
+    try:
+        conn.executescript(_VEC_METADATA_SCHEMA)
+    except sqlite3.OperationalError:
+        pass
+
+    # Ensure vec_messages virtual table exists (requires sqlite-vec)
+    try:
+        conn.executescript(_VEC_SCHEMA)
+    except sqlite3.OperationalError:
+        pass
+
+
+def has_vec_support(conn: sqlite3.Connection) -> bool:
+    """Check if sqlite-vec extension is loaded and available."""
+    try:
+        conn.execute("SELECT vec_version()")
+        return True
+    except sqlite3.OperationalError:
+        return False
 
 
 def get_db(db_path: Path) -> ThreadSafeConnection:

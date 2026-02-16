@@ -25,13 +25,18 @@ Deploy the current branch to PyPI after merging, CI verification, and version bu
 2. Find the open PR for this branch: `gh pr view --json number,title,state,mergeable`
 3. If no PR exists, abort with message
 4. Show the PR title and number, confirm with user before proceeding
+5. **Verify every commit references a GitHub issue.** Run:
+   ```bash
+   gh pr view --json commits --jq '.commits[].messageHeadline'
+   ```
+   Every commit message MUST contain a `(#NNN)` issue reference. If any commit is missing one, warn the user and ask them to fix it before proceeding.
 
 ### Step 2: Verify Documentation
 
 Before merging, ensure `CLAUDE.md` is accurate and up to date:
 
 1. **Test count** — run `grep -r "def test_" tests/ | wc -l` and compare to the count in CLAUDE.md. Update if stale.
-2. **New modules** — check for any new `.py` files under `src/parlor/` not mentioned in the "Key Modules" section. Add them.
+2. **New modules** — check for any new `.py` files under `src/anteroom/` not mentioned in the "Key Modules" section. Add them.
 3. **New config fields** — check `config.py` dataclasses for fields not documented in the "Configuration" section. Add them.
 4. **New agent events** — check `agent_loop.py` for any `AgentEvent(kind=...)` values not mentioned. Document them.
 5. **Architecture changes** — if the PR added middleware, new routers, or changed the security model, update those sections.
@@ -40,7 +45,7 @@ Before merging, ensure `CLAUDE.md` is accurate and up to date:
 If any updates are needed, commit them as part of the PR before merging:
 ```bash
 git add CLAUDE.md
-git commit -m "docs: update CLAUDE.md for vX.Y.Z release"
+git commit -m "docs: update CLAUDE.md for vX.Y.Z release (#NN)"
 git push
 ```
 
@@ -105,12 +110,83 @@ git push origin main --tags
    ```
    This uses credentials from `~/.pypirc` or `TWINE_USERNAME`/`TWINE_PASSWORD` env vars.
 
-### Step 8: Verify
+### Step 8: Create GitHub Release
+
+Generate release notes from the PR and all referenced issues. The release notes should be **user-friendly** — written for someone who uses Anteroom, not just developers.
+
+#### Gathering information
+
+1. Get all issues closed by this PR and any issues referenced in commits:
+   ```bash
+   gh pr view <PR_NUMBER> --json closingIssuesReferences --jq '.closingIssuesReferences[].number'
+   git log <PREVIOUS_TAG>..HEAD --oneline
+   ```
+2. For each referenced issue, get its title and labels:
+   ```bash
+   gh issue view <ISSUE_NUMBER> --json title,labels
+   ```
+3. Categorize issues by their labels or commit type prefix:
+   - `feat:` or label `enhancement` → **New Features**
+   - `fix:` or label `bug` → **Bug Fixes**
+   - Everything else (docs, chore, refactor, test) → only include if user-visible
+
+#### Writing the release notes
+
+Use this structure:
+
+```markdown
+## New Features
+
+### Feature Name
+User-friendly description of what this does and why they'd care.
+- Key detail with issue reference (#NN)
+- Another detail (#NN)
+
+### Another Feature
+...
+
+## Bug Fixes
+
+- Description of what was broken and that it's fixed now (#NN)
+- Another fix (#NN)
+
+## Other Improvements
+
+- User-visible improvements that aren't features or fixes (#NN)
+
+## For Developers
+
+- Technical changes: new modules, API changes, schema changes
+- New environment variables or config fields
+- Test count changes
+
+## Upgrading
+
+\`\`\`bash
+pip install --upgrade anteroom
+\`\`\`
+
+Note any manual steps needed (usually none — migrations are automatic).
+```
+
+**Rules:**
+- EVERY bullet point that corresponds to a GitHub issue MUST include the issue reference as `(#NN)`
+- Omit empty sections (e.g., if no bug fixes, skip that section)
+- Lead with what users care about, put developer details at the bottom
+- Write feature descriptions in plain language, not commit-message-speak
+
+#### Creating the release
+
+```bash
+gh release create vX.Y.Z --title "vX.Y.Z" --notes "<generated notes>"
+```
+
+### Step 9: Verify
 
 1. Wait 30 seconds for PyPI to index
 2. Check the package is available:
    ```bash
-   pip index versions parlor 2>/dev/null || pip install parlor== 2>&1 | head -5
+   pip install anteroom==X.Y.Z --dry-run 2>&1 | head -5
    ```
 3. Report success with the new version number and PyPI URL
 
@@ -121,13 +197,15 @@ git push origin main --tags
 - If build fails: show error, do not proceed
 - If upload fails: the tag and version commit are already pushed; show error and suggest manual `twine upload dist/*`
 - Never force-push or amend commits on main
+- If commits are missing issue references: warn the user, do not proceed until fixed
 
 ## Output
 
 On success:
 ```
-Deployed parlor vX.Y.Z to PyPI
+Deployed anteroom vX.Y.Z to PyPI
   PR: #NN (merged)
   CI: passed
-  PyPI: https://pypi.org/project/parlor/X.Y.Z/
+  PyPI: https://pypi.org/project/anteroom/X.Y.Z/
+  Release: https://github.com/troylar/anteroom/releases/tag/vX.Y.Z
 ```
