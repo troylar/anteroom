@@ -120,7 +120,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Broadcast a UI event and wait for response.
         approval_id = await approval_manager.request(message)
         event_bus.publish(
-            f"global:{config.app.db_name}",
+            "global:personal",
             "destructive_approval_requested",
             {"approval_id": approval_id, "message": message},
         )
