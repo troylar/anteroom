@@ -20,7 +20,9 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import AppConfig, ensure_identity, load_config
-from .db import DatabaseManager, init_db
+from .db import DatabaseManager, has_vec_support, init_db
+from .services.embedding_worker import EmbeddingWorker
+from .services.embeddings import create_embedding_service
 from .services.event_bus import EventBus
 from .services.mcp_manager import McpManager
 from .tools import ToolRegistry, register_default_tools
@@ -108,8 +110,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.tool_registry = tool_registry
     logger.info(f"Built-in tools: {len(tool_registry.list_tools())} registered (cwd: {working_dir})")
 
+    # Expose vec support flag
+    raw_conn = app.state.db._conn if hasattr(app.state.db, "_conn") else None
+    app.state.vec_enabled = has_vec_support(raw_conn) if raw_conn else False
+
+    # Start embedding service and background worker
+    app.state.embedding_service = None
+    app.state.embedding_worker = None
+    embedding_service = create_embedding_service(config)
+    if embedding_service:
+        app.state.embedding_service = embedding_service
+        if app.state.vec_enabled:
+            worker = EmbeddingWorker(app.state.db, embedding_service)
+            worker.start()
+            app.state.embedding_worker = worker
+            logger.info("Embedding worker started")
+        else:
+            logger.info("Embedding service available but sqlite-vec not loaded; vector search disabled")
+    else:
+        logger.info("Embedding service not configured; vector search disabled")
+
     yield
 
+    if hasattr(app.state, "embedding_worker") and app.state.embedding_worker:
+        app.state.embedding_worker.stop()
     if hasattr(app.state, "event_bus"):
         app.state.event_bus.stop_polling()
     if app.state.db:
@@ -319,7 +343,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.state.csrf_token = csrf_token
     cache_bust = str(int(time.time()))
 
-    from .routers import chat, config_api, conversations, databases, events, projects
+    from .routers import chat, config_api, conversations, databases, events, projects, search
 
     app.include_router(conversations.router, prefix="/api")
     app.include_router(chat.router, prefix="/api")
@@ -327,6 +351,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(projects.router, prefix="/api")
     app.include_router(databases.router, prefix="/api")
     app.include_router(events.router, prefix="/api")
+    app.include_router(search.router, prefix="/api")
 
     @app.post("/api/logout")
     async def logout():

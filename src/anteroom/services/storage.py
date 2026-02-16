@@ -949,3 +949,156 @@ def list_tool_calls(db: sqlite3.Connection, message_id: str) -> list[dict[str, A
         d["output"] = json.loads(output) if output else None
         result.append(d)
     return result
+
+
+# --- Embeddings ---
+
+_MAX_EMBEDDING_DIMENSIONS = 4096
+_MAX_SEARCH_LIMIT = 1000
+
+
+def _validate_embedding(embedding: list[float]) -> bytes:
+    """Validate embedding vector and convert to bytes for sqlite-vec."""
+    import math
+    import struct
+
+    if not embedding or len(embedding) > _MAX_EMBEDDING_DIMENSIONS:
+        raise ValueError(f"Embedding must have 1-{_MAX_EMBEDDING_DIMENSIONS} dimensions, got {len(embedding)}")
+    for i, val in enumerate(embedding):
+        if not isinstance(val, (int, float)) or (isinstance(val, float) and not math.isfinite(val)):
+            raise ValueError(f"Embedding dimension {i} is not a finite number")
+    return struct.pack(f"{len(embedding)}f", *embedding)
+
+
+def store_embedding(
+    db: sqlite3.Connection,
+    message_id: str,
+    conversation_id: str,
+    embedding: list[float],
+    content_hash: str,
+) -> None:
+    """Store a message embedding in both metadata and vec0 tables."""
+    from ..db import has_vec_support
+
+    raw_conn = db._conn if hasattr(db, "_conn") else db
+    if not has_vec_support(raw_conn):
+        return
+
+    now = _now()
+    embedding_bytes = _validate_embedding(embedding)
+
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO message_embeddings (message_id, conversation_id, chunk_index, content_hash,"
+            " created_at) VALUES (?, ?, 0, ?, ?)",
+            (message_id, conversation_id, content_hash, now),
+        )
+        # Delete existing vec entry for this message before inserting
+        conn.execute("DELETE FROM vec_messages WHERE message_id = ?", (message_id,))
+        conn.execute(
+            "INSERT INTO vec_messages (embedding, message_id, conversation_id) VALUES (?, ?, ?)",
+            (embedding_bytes, message_id, conversation_id),
+        )
+
+
+def search_similar_messages(
+    db: sqlite3.Connection,
+    embedding: list[float],
+    limit: int = 20,
+    conversation_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Search for semantically similar messages using vec0 cosine similarity."""
+    from ..db import has_vec_support
+
+    raw_conn = db._conn if hasattr(db, "_conn") else db
+    if not has_vec_support(raw_conn):
+        return []
+
+    limit = max(1, min(limit, _MAX_SEARCH_LIMIT))
+    embedding_bytes = _validate_embedding(embedding)
+
+    if conversation_id:
+        rows = db.execute_fetchall(
+            """
+            WITH knn AS (
+                SELECT message_id, conversation_id, distance
+                FROM vec_messages
+                WHERE embedding MATCH ? AND k = ? AND conversation_id = ?
+            )
+            SELECT knn.message_id, knn.conversation_id, knn.distance, m.content, m.role
+            FROM knn
+            LEFT JOIN messages m ON m.id = knn.message_id
+            """,
+            (embedding_bytes, limit, conversation_id),
+        )
+    else:
+        rows = db.execute_fetchall(
+            """
+            WITH knn AS (
+                SELECT message_id, conversation_id, distance
+                FROM vec_messages
+                WHERE embedding MATCH ? AND k = ?
+            )
+            SELECT knn.message_id, knn.conversation_id, knn.distance, m.content, m.role
+            FROM knn
+            LEFT JOIN messages m ON m.id = knn.message_id
+            """,
+            (embedding_bytes, limit),
+        )
+
+    return [
+        {
+            "message_id": dict(r)["message_id"],
+            "conversation_id": dict(r)["conversation_id"],
+            "content": dict(r)["content"],
+            "role": dict(r)["role"],
+            "distance": dict(r)["distance"],
+        }
+        for r in rows
+    ]
+
+
+def get_unembedded_messages(db: sqlite3.Connection, limit: int = 100) -> list[dict[str, Any]]:
+    """Get messages that don't have embeddings yet."""
+    rows = db.execute_fetchall(
+        """
+        SELECT m.id, m.conversation_id, m.content, m.role
+        FROM messages m
+        LEFT JOIN message_embeddings me ON me.message_id = m.id
+        WHERE me.message_id IS NULL AND m.role IN ('user', 'assistant')
+        ORDER BY m.created_at
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    return [dict(r) for r in rows]
+
+
+def delete_embeddings_for_conversation(db: sqlite3.Connection, conversation_id: str) -> None:
+    """Delete all embeddings for a conversation."""
+    from ..db import has_vec_support
+
+    raw_conn = db._conn if hasattr(db, "_conn") else db
+    if not has_vec_support(raw_conn):
+        db.execute("DELETE FROM message_embeddings WHERE conversation_id = ?", (conversation_id,))
+        db.commit()
+        return
+
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM vec_messages WHERE conversation_id = ?", (conversation_id,))
+        conn.execute("DELETE FROM message_embeddings WHERE conversation_id = ?", (conversation_id,))
+
+
+def get_embedding_stats(db: sqlite3.Connection) -> dict[str, Any]:
+    """Get embedding statistics."""
+    total_row = db.execute_fetchone("SELECT COUNT(*) FROM messages WHERE role IN ('user', 'assistant')")
+    total_messages = total_row[0] if total_row else 0
+
+    embedded_row = db.execute_fetchone("SELECT COUNT(*) FROM message_embeddings")
+    embedded_messages = embedded_row[0] if embedded_row else 0
+
+    return {
+        "total_messages": total_messages,
+        "embedded_messages": embedded_messages,
+        "pending_messages": total_messages - embedded_messages,
+    }

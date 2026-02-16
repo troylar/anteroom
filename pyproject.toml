@@ -30,6 +30,7 @@ dependencies = [
     "tiktoken>=0.7.0",
     "cryptography>=42.0.0",
     "argon2-cffi>=23.1.0",
+    "sqlite-vec>=0.1.6",
 ]
 
 [project.optional-dependencies]

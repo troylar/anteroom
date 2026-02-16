@@ -244,6 +244,119 @@ class TestLoadConfig:
         assert "Anteroom" in config.ai.system_prompt
 
 
+class TestEmbeddingsConfig:
+    def test_default_embeddings_config(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {
+                    "base_url": "https://api.example.com",
+                    "api_key": "sk-test-key",
+                },
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.embeddings.enabled is True
+        assert config.embeddings.model == "text-embedding-3-small"
+        assert config.embeddings.dimensions == 1536
+        assert config.embeddings.base_url == ""
+        assert config.embeddings.api_key == ""
+
+    def test_embeddings_from_config(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {
+                    "base_url": "https://api.example.com",
+                    "api_key": "sk-test-key",
+                },
+                "embeddings": {
+                    "enabled": True,
+                    "model": "custom-embed",
+                    "dimensions": 768,
+                    "base_url": "https://embed.example.com",
+                    "api_key": "sk-embed-key",
+                },
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.embeddings.model == "custom-embed"
+        assert config.embeddings.dimensions == 768
+        assert config.embeddings.base_url == "https://embed.example.com"
+        assert config.embeddings.api_key == "sk-embed-key"
+
+    def test_embeddings_disabled(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {
+                    "base_url": "https://api.example.com",
+                    "api_key": "sk-test-key",
+                },
+                "embeddings": {
+                    "enabled": False,
+                },
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.embeddings.enabled is False
+
+    def test_embeddings_env_var_overrides(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AI_CHAT_BASE_URL", "https://api.example.com")
+        monkeypatch.setenv("AI_CHAT_API_KEY", "sk-test-key")
+        monkeypatch.setenv("AI_CHAT_EMBEDDINGS_ENABLED", "false")
+        monkeypatch.setenv("AI_CHAT_EMBEDDINGS_MODEL", "text-embedding-ada-002")
+        monkeypatch.setenv("AI_CHAT_EMBEDDINGS_DIMENSIONS", "512")
+        monkeypatch.setenv("AI_CHAT_EMBEDDINGS_BASE_URL", "https://embed.env.com")
+        monkeypatch.setenv("AI_CHAT_EMBEDDINGS_API_KEY", "sk-embed-env")
+        cfg_file = _write_config(tmp_path, {})
+        config = load_config(cfg_file)
+        assert config.embeddings.enabled is False
+        assert config.embeddings.model == "text-embedding-ada-002"
+        assert config.embeddings.dimensions == 512
+        assert config.embeddings.base_url == "https://embed.env.com"
+        assert config.embeddings.api_key == "sk-embed-env"
+
+    def test_embeddings_config_precedence_over_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AI_CHAT_EMBEDDINGS_MODEL", "env-model")
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {
+                    "base_url": "https://api.example.com",
+                    "api_key": "sk-test-key",
+                },
+                "embeddings": {
+                    "model": "config-model",
+                },
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.embeddings.model == "config-model"
+
+    def test_embeddings_dimensions_clamped_to_max(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "https://api.example.com", "api_key": "sk-test-key"},
+                "embeddings": {"dimensions": 99999},
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.embeddings.dimensions == 4096
+
+    def test_embeddings_dimensions_clamped_to_min(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "https://api.example.com", "api_key": "sk-test-key"},
+                "embeddings": {"dimensions": -5},
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.embeddings.dimensions == 1
+
+
 class TestIdentityConfig:
     def test_identity_none_when_missing(self, tmp_path: Path) -> None:
         cfg_file = _write_config(

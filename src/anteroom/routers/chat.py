@@ -151,6 +151,11 @@ async def chat(conversation_id: str, request: Request):
             db, conversation_id, "user", message_text, user_id=uid, user_display_name=uname
         )
 
+        # Trigger async embedding for user message
+        _embedding_worker = getattr(request.app.state, "embedding_worker", None)
+        if _embedding_worker and user_msg:
+            asyncio.ensure_future(_embedding_worker.embed_message(user_msg["id"], message_text, conversation_id))
+
         if event_bus and user_msg:
             asyncio.ensure_future(
                 event_bus.publish(
@@ -349,6 +354,17 @@ async def chat(conversation_id: str, request: Request):
                         user_id=uid,
                         user_display_name=uname,
                     )
+
+                    # Trigger async embedding for assistant message
+                    _emb_worker = getattr(request.app.state, "embedding_worker", None)
+                    if _emb_worker and current_assistant_msg:
+                        asyncio.ensure_future(
+                            _emb_worker.embed_message(
+                                current_assistant_msg["id"],
+                                data["content"],
+                                conversation_id,
+                            )
+                        )
 
                     if event_bus and current_assistant_msg:
                         await event_bus.publish(
