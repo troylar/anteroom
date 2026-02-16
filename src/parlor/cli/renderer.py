@@ -560,18 +560,9 @@ def render_update_available(current: str, latest: str) -> None:
 
 def render_help() -> None:
     console.print()
-    console.print(" [bold]Conversations[/bold]")
-    console.print("   /new                  New conversation          /search <query>  Search by content")
-    console.print("   /last                 Resume most recent        /resume <N|id>   Resume by # or ID")
-    console.print("   /list [N]             Show recent (default 20)  /delete <N|id>   Delete conversation")
-    console.print("   /rewind               Roll back to earlier message")
-    console.print(" [bold]Session[/bold]")
-    console.print("   /compact              Summarize history         /model <name>    Switch AI model")
-    console.print("   /tools                List tools                /skills          List skills")
-    console.print("   /mcp                  MCP server status         /verbose         Cycle verbosity")
-    console.print("   /detail               Replay last tool calls")
-    console.print(" [bold]Input[/bold]")
-    console.print("   @<path>  Include file    Alt+Enter  Newline    Escape  Cancel    /quit · Ctrl+D  Exit")
+    console.print("  /new  /last  /list [N]  /resume <N|id>  /search <query>  /delete <N|id>  /rewind")
+    console.print("  /compact  /model <name>  /tools  /skills  /mcp  /verbose  /detail")
+    console.print("  @<path> [dim]include file[/]  Alt+Enter [dim]newline[/]  Escape [dim]cancel[/]  /quit · Ctrl+D")
     console.print()
 
 

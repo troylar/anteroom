@@ -855,6 +855,45 @@ async def _run_repl(
         ai_messages: list[dict[str, Any]] = []
         is_first_message = True
 
+    async def _show_help_dialog() -> None:
+        """Show help in a floating dialog that doesn't disturb scrollback."""
+        from prompt_toolkit.formatted_text import FormattedText
+        from prompt_toolkit.shortcuts import message_dialog
+        from prompt_toolkit.styles import Style
+
+        help_text = FormattedText(
+            [
+                ("bold", "Conversations\n"),
+                ("", "  /new  /last  /list [N]  /resume <N|id>\n"),
+                ("", "  /search <query>  /delete <N|id>  /rewind\n"),
+                ("", "\n"),
+                ("bold", "Session\n"),
+                ("", "  /compact  /model <name>  /tools  /skills\n"),
+                ("", "  /mcp  /verbose  /detail\n"),
+                ("", "\n"),
+                ("bold", "Input\n"),
+                ("", "  @<path>  Include file contents\n"),
+                ("", "  Alt+Enter  Newline  ·  Escape  Cancel\n"),
+                ("", "  /quit  ·  Ctrl+D  Exit\n"),
+            ]
+        )
+        dialog_style = Style.from_dict(
+            {
+                "dialog": "bg:#1a1a2e",
+                "dialog frame.label": "bg:#1a1a2e #C5A059 bold",
+                "dialog.body": "bg:#1a1a2e #e0e0e0",
+                "dialog shadow": "bg:#0a0a15",
+                "button": "bg:#C5A059 #1a1a2e",
+                "button.focused": "bg:#e0c070 #1a1a2e bold",
+            }
+        )
+        await message_dialog(
+            title="Help",
+            text=help_text,
+            ok_text="Close",
+            style=dialog_style,
+        ).run_async()
+
     # -- Concurrent input/output architecture --
     # Instead of blocking on prompt_async then running agent loop sequentially,
     # we use two coroutines: one collects input, one processes agent responses.
@@ -942,7 +981,7 @@ async def _run_repl(
                     renderer.render_tools(all_tool_names)
                     continue
                 elif cmd == "/help":
-                    renderer.render_help()
+                    await _show_help_dialog()
                     continue
                 elif cmd == "/compact":
                     await _compact_messages(ai_service, ai_messages, db, conv["id"])
