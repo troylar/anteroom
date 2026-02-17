@@ -234,7 +234,7 @@ class SafetyToolConfig:
 @dataclass
 class SafetyConfig:
     enabled: bool = True
-    approval_mode: str = "ask_for_dangerous"
+    approval_mode: str = "ask_for_writes"
     approval_timeout: int = 120
     bash: SafetyToolConfig = field(default_factory=SafetyToolConfig)
     write_file: SafetyToolConfig = field(default_factory=SafetyToolConfig)
@@ -438,7 +438,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     wf_raw = safety_raw.get("write_file", {})
     wf_safety_enabled = str(wf_raw.get("enabled", "true")).lower() not in ("false", "0", "no")
     safety_approval_mode = str(
-        safety_raw.get("approval_mode", os.environ.get("AI_CHAT_SAFETY_APPROVAL_MODE", "ask_for_dangerous"))
+        safety_raw.get("approval_mode", os.environ.get("AI_CHAT_SAFETY_APPROVAL_MODE", "ask_for_writes"))
     ).strip()
     safety_custom_patterns = safety_raw.get("custom_patterns", [])
     if not isinstance(safety_custom_patterns, list):

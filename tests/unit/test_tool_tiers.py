@@ -61,9 +61,9 @@ class TestParseApprovalMode:
     def test_whitespace_stripped(self) -> None:
         assert parse_approval_mode("  auto  ") == ApprovalMode.AUTO
 
-    def test_invalid_defaults_to_ask_for_dangerous(self) -> None:
-        assert parse_approval_mode("invalid") == ApprovalMode.ASK_FOR_DANGEROUS
-        assert parse_approval_mode("") == ApprovalMode.ASK_FOR_DANGEROUS
+    def test_invalid_defaults_to_ask_for_writes(self) -> None:
+        assert parse_approval_mode("invalid") == ApprovalMode.ASK_FOR_WRITES
+        assert parse_approval_mode("") == ApprovalMode.ASK_FOR_WRITES
 
 
 class TestShouldRequireApproval:

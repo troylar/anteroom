@@ -71,8 +71,8 @@ def get_tool_tier(
 
 
 def parse_approval_mode(raw: str) -> ApprovalMode:
-    """Parse an approval mode string. Returns ASK_FOR_DANGEROUS on invalid input."""
-    return APPROVAL_MODE_NAMES.get(raw.lower().strip(), ApprovalMode.ASK_FOR_DANGEROUS)
+    """Parse an approval mode string. Returns ASK_FOR_WRITES on invalid input."""
+    return APPROVAL_MODE_NAMES.get(raw.lower().strip(), ApprovalMode.ASK_FOR_WRITES)
 
 
 def should_require_approval(

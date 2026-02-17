@@ -119,7 +119,7 @@ class TestSafetyConfig:
 
     def test_default_approval_mode(self) -> None:
         cfg = SafetyConfig()
-        assert cfg.approval_mode == "ask_for_dangerous"
+        assert cfg.approval_mode == "ask_for_writes"
 
     def test_approval_mode_parsed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -277,7 +277,7 @@ class TestCliSafetyOverrides:
 
     def test_approval_mode_override(self) -> None:
         cfg = SafetyConfig()
-        assert cfg.approval_mode == "ask_for_dangerous"
+        assert cfg.approval_mode == "ask_for_writes"
         cfg.approval_mode = "auto"
         assert cfg.approval_mode == "auto"
 
