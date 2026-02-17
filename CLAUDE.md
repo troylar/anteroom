@@ -24,7 +24,7 @@ aroom --allowed-tools bash,write_file       # Pre-allow tools
 aroom --approval-mode auto chat     # Works with subcommands too
 
 # Testing
-pytest tests/ -v                    # All tests (~990 tests)
+pytest tests/ -v                    # All tests (~1038 tests)
 pytest tests/unit/ -v               # Unit tests only
 pytest tests/unit/test_tools.py -v  # Single test file
 pytest tests/unit/test_tools.py::test_name -v  # Single test

@@ -1,10 +1,46 @@
 # Tool Safety
 
-Two layers of protection prevent accidental damage from AI tool use.
+A multi-layered safety system prevents accidental damage from AI tool use. Tools are assigned risk tiers, and an approval mode determines which tiers require user confirmation before execution.
 
-## Destructive Command Confirmation
+## Risk Tiers
 
-The following patterns in bash commands trigger an interactive `Proceed? [y/N]` prompt before execution:
+Every tool is assigned one of four risk tiers:
+
+| Tier | Level | Description | Examples |
+|------|-------|-------------|----------|
+| `read` | 0 | Read-only operations | `read_file`, `glob_files`, `grep` |
+| `write` | 1 | Modifies files or state | `write_file`, `edit_file` |
+| `execute` | 2 | Runs arbitrary code | `bash`, unknown/MCP tools |
+| `destructive` | 3 | Irreversible or dangerous | (promoted by pattern detection) |
+
+Unknown tools and MCP tools default to the `execute` tier. Override per-tool tiers in config via `safety.tool_tiers`.
+
+## Approval Modes
+
+The approval mode controls which tiers require user confirmation:
+
+| Mode | Requires Approval For | Use Case |
+|------|----------------------|----------|
+| `auto` | Nothing | Fully autonomous, no prompts |
+| `ask_for_dangerous` | Destructive only | Trust most tools, catch dangerous ones |
+| `ask_for_writes` (default) | Write + Execute + Destructive | Balanced safety |
+| `ask` | Same as `ask_for_writes` | Alias |
+
+Set the mode in config (`safety.approval_mode`), via environment variable (`AI_CHAT_SAFETY_APPROVAL_MODE`), or CLI flag (`--approval-mode`).
+
+## Permission Scopes
+
+When approving a tool, three scopes are available:
+
+- **Allow Once** — approve this single invocation
+- **Allow for Session** — approve this tool for the rest of the session (in-memory)
+- **Allow Always** — persist approval to `config.yaml` via the `allowed_tools` list
+
+Tools in the `allowed_tools` config list always skip approval. Tools in the `denied_tools` list are hard-blocked and never execute.
+
+## Destructive Command Detection
+
+The following patterns in bash commands trigger confirmation regardless of approval mode (except `auto`):
 
 - `rm`, `rmdir`
 - `git push --force`, `git push -f`
@@ -62,7 +98,7 @@ The user responds by clicking Approve or Deny, which sends:
 POST /api/approvals/{approval_id}/respond
 Content-Type: application/json
 
-{"approved": true}
+{"approved": true, "scope": "once"}
 ```
 
 The approval ID is regex-validated on receipt. The handler uses an atomic `dict.pop()` on the in-memory `pending_approvals` store (capped at 100 entries) to prevent TOCTOU races — a second response to the same ID is silently ignored.

@@ -120,6 +120,28 @@ Cycles through three verbosity levels for tool call output:
 
 Replays the last turn's tool calls with full input arguments and output. Useful for debugging when compact mode hides too much.
 
+## CLI Flags
+
+### --approval-mode
+
+Override the safety approval mode for this session:
+
+```bash
+aroom --approval-mode auto                 # Skip all approvals
+aroom --approval-mode ask_for_dangerous    # Only prompt for destructive commands
+aroom --approval-mode ask_for_writes       # Prompt for write+execute+destructive (default)
+aroom --approval-mode auto chat            # Works with subcommands
+```
+
+### --allowed-tools
+
+Pre-allow specific tools to skip approval prompts for this session:
+
+```bash
+aroom --allowed-tools bash,write_file      # Auto-approve bash and write_file
+aroom --allowed-tools bash chat            # Works with subcommands
+```
+
 ## Input
 
 | Action | Key |

@@ -47,11 +47,15 @@ mcp_servers:
 
 safety:
   enabled: true
+  approval_mode: "ask_for_writes"    # auto | ask_for_dangerous | ask_for_writes | ask
   approval_timeout: 120
   bash:
     enabled: true
   write_file:
     enabled: true
+  allowed_tools: []                  # Tools that skip approval (always auto-approved)
+  denied_tools: []                   # Tools that are hard-blocked (never execute)
+  tool_tiers: {}                     # Per-tool tier overrides, e.g. {my_mcp_tool: "read"}
   custom_patterns: []
   sensitive_paths: []
 
@@ -122,14 +126,18 @@ A list of MCP tool servers. See [MCP Servers](mcp-servers.md).
 
 ### safety
 
-Controls the tool safety approval gate. When enabled, destructive bash commands and writes to sensitive paths require explicit user confirmation before execution.
+Controls the tool safety approval gate. Tools are assigned risk tiers (read, write, execute, destructive) and the approval mode determines which tiers require user confirmation before execution.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | boolean | `true` | Enable the safety gate globally |
-| `approval_timeout` | integer | `120` | Seconds to wait for approval before blocking the operation |
-| `bash.enabled` | boolean | `true` | Apply safety checks to `bash` tool calls |
-| `write_file.enabled` | boolean | `true` | Apply safety checks to `write_file` tool calls |
+| `approval_mode` | string | `ask_for_writes` | Which tiers require approval: `auto` (none), `ask_for_dangerous` (destructive only), `ask_for_writes` (write+execute+destructive), `ask` (same as ask_for_writes) |
+| `approval_timeout` | integer | `120` | Seconds to wait for approval before blocking the operation (clamped 10–600) |
+| `bash.enabled` | boolean | `true` | Enable `bash` tool (set false to hard-block) |
+| `write_file.enabled` | boolean | `true` | Enable `write_file` tool (set false to hard-block) |
+| `allowed_tools` | list | `[]` | Tools that always skip approval regardless of tier |
+| `denied_tools` | list | `[]` | Tools that are hard-blocked and never execute |
+| `tool_tiers` | dict | `{}` | Per-tool tier overrides, e.g. `{my_mcp_tool: "read"}`. Valid tiers: `read`, `write`, `execute`, `destructive` |
 | `custom_patterns` | list | `[]` | Additional regex patterns that trigger confirmation for bash commands |
 | `sensitive_paths` | list | `[]` | Additional path prefixes that trigger confirmation for file writes |
 
