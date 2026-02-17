@@ -16,8 +16,12 @@ router = APIRouter(tags=["approvals"])
 _APPROVAL_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
 
 
+_VALID_SCOPES = {"once", "session", "always"}
+
+
 class ApprovalRequest(BaseModel):
     approved: bool = False
+    scope: str = "once"
 
 
 @router.post("/approvals/{approval_id}/respond")
@@ -30,6 +34,8 @@ async def respond_approval(approval_id: str, body: ApprovalRequest, request: Req
         logger.warning("Invalid approval ID format: %r", approval_id[:80])
         raise HTTPException(status_code=400, detail="Invalid approval ID format")
 
+    scope = body.scope if body.scope in _VALID_SCOPES else "once"
+
     pending = getattr(request.app.state, "pending_approvals", {})
     # Atomic pop to prevent TOCTOU: only the first responder gets the entry
     entry = pending.pop(approval_id, None)
@@ -38,8 +44,9 @@ async def respond_approval(approval_id: str, body: ApprovalRequest, request: Req
         raise HTTPException(status_code=404, detail="Approval not found or expired")
 
     action = "approved" if body.approved else "denied"
-    logger.info("Safety approval %s: id=%s", action, approval_id)
+    logger.info("Safety approval %s (scope=%s): id=%s", action, scope, approval_id)
 
     entry["approved"] = body.approved
+    entry["scope"] = scope
     entry["event"].set()
-    return {"status": "ok", "approved": body.approved}
+    return {"status": "ok", "approved": body.approved, "scope": scope}

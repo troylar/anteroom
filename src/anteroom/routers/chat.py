@@ -428,8 +428,12 @@ async def chat(conversation_id: str, request: Request):
     safety_config = getattr(request.app.state.config, "safety", None)
     approval_timeout = safety_config.approval_timeout if safety_config else 120
 
+    _last_approval_scope: list[str] = ["once"]  # mutable container for nonlocal access
+
     async def _web_confirm(verdict: SafetyVerdict) -> bool:
         import secrets as _secrets
+
+        _last_approval_scope[0] = "once"
 
         # Cap pending approvals to prevent unbounded memory growth on client disconnects
         max_pending = 100
@@ -439,7 +443,7 @@ async def chat(conversation_id: str, request: Request):
 
         approval_id = _secrets.token_urlsafe(16)
         approval_event = asyncio.Event()
-        entry = {"event": approval_event, "approved": False}
+        entry = {"event": approval_event, "approved": False, "scope": "once"}
         pending_approvals[approval_id] = entry
 
         if event_bus:
@@ -461,12 +465,38 @@ async def chat(conversation_id: str, request: Request):
             await asyncio.wait_for(approval_event.wait(), timeout=approval_timeout)
         except asyncio.TimeoutError:
             logger.warning("Approval timed out (id=%s): %s", approval_id, verdict.reason)
+            if event_bus:
+                await event_bus.publish(
+                    f"global:{db_name}",
+                    {
+                        "type": "approval_resolved",
+                        "data": {
+                            "approval_id": approval_id,
+                            "approved": False,
+                            "reason": "timed_out",
+                        },
+                    },
+                )
             return False
         finally:
             # Endpoint may have already popped; clean up if still present
             pending_approvals.pop(approval_id, None)
 
-        return entry.get("approved", False)
+        approved = entry.get("approved", False)
+        if approved:
+            scope = entry.get("scope", "once")
+            _last_approval_scope[0] = scope
+            if scope in ("session", "always"):
+                tool_registry.grant_session_permission(verdict.tool_name)
+            if scope == "always":
+                try:
+                    from ..config import write_allowed_tool
+
+                    write_allowed_tool(verdict.tool_name)
+                except Exception as e:
+                    logger.warning("Could not persist 'Allow Always' for %s: %s", verdict.tool_name, e)
+
+        return approved
 
     async def _tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if tool_name in ("create_canvas", "update_canvas", "patch_canvas"):
@@ -477,10 +507,38 @@ async def chat(conversation_id: str, request: Request):
                 "_user_id": uid,
                 "_user_display_name": uname,
             }
+
+        def _scope_to_decision() -> str:
+            scope = _last_approval_scope[0]
+            return {"once": "allowed_once", "session": "allowed_session", "always": "allowed_always"}.get(
+                scope, "allowed_once"
+            )
+
         if tool_registry.has_tool(tool_name):
-            return await tool_registry.call_tool(tool_name, arguments, confirm_callback=_web_confirm)
+            result = await tool_registry.call_tool(tool_name, arguments, confirm_callback=_web_confirm)
+            # Upgrade generic "allowed_once" with actual scope if user chose session/always
+            if result.get("_approval_decision") == "allowed_once":
+                result["_approval_decision"] = _scope_to_decision()
+            return result
         if mcp_manager:
-            return await mcp_manager.call_tool(tool_name, arguments)
+            # MCP tools bypass ToolRegistry — apply safety gate here
+            verdict = tool_registry.check_safety(tool_name, arguments)
+            if verdict and verdict.needs_approval:
+                if verdict.details.get("hard_denied") == "true":
+                    return {
+                        "error": f"Tool '{tool_name}' is blocked by configuration",
+                        "safety_blocked": True,
+                        "_approval_decision": "hard_denied",
+                    }
+                confirmed = await _web_confirm(verdict)
+                if not confirmed:
+                    return {"error": "Operation denied by user", "exit_code": -1, "_approval_decision": "denied"}
+                result = await mcp_manager.call_tool(tool_name, arguments)
+                result["_approval_decision"] = _scope_to_decision()
+                return result
+            result = await mcp_manager.call_tool(tool_name, arguments)
+            result["_approval_decision"] = "auto"
+            return result
         raise ValueError(f"Unknown tool: {tool_name}")
 
     from ..services.agent_loop import run_agent_loop
@@ -632,6 +690,11 @@ async def chat(conversation_id: str, request: Request):
                             server_name = mcp_manager.get_tool_server_name(data["tool_name"])
                         else:
                             server_name = "unknown"
+                        # Extract audit metadata before storing
+                        tool_output = data["output"]
+                        approval_decision = None
+                        if isinstance(tool_output, dict):
+                            approval_decision = tool_output.pop("_approval_decision", None)
                         storage.create_tool_call(
                             db,
                             current_assistant_msg["id"],
@@ -639,8 +702,9 @@ async def chat(conversation_id: str, request: Request):
                             server_name,
                             tool_input,
                             data["id"],
+                            approval_decision=approval_decision,
                         )
-                        storage.update_tool_call(db, data["id"], data["output"], data["status"])
+                        storage.update_tool_call(db, data["id"], tool_output, data["status"])
                     sse_output = data["output"]
                     yield {
                         "event": "tool_call_end",

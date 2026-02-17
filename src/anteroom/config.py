@@ -233,11 +233,15 @@ class SafetyToolConfig:
 @dataclass
 class SafetyConfig:
     enabled: bool = True
+    approval_mode: str = "ask_for_dangerous"
     approval_timeout: int = 120
     bash: SafetyToolConfig = field(default_factory=SafetyToolConfig)
     write_file: SafetyToolConfig = field(default_factory=SafetyToolConfig)
     custom_patterns: list[str] = field(default_factory=list)
     sensitive_paths: list[str] = field(default_factory=list)
+    allowed_tools: list[str] = field(default_factory=list)
+    denied_tools: list[str] = field(default_factory=list)
+    tool_tiers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -432,20 +436,36 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     bash_safety_enabled = str(bash_raw.get("enabled", "true")).lower() not in ("false", "0", "no")
     wf_raw = safety_raw.get("write_file", {})
     wf_safety_enabled = str(wf_raw.get("enabled", "true")).lower() not in ("false", "0", "no")
+    safety_approval_mode = str(
+        safety_raw.get("approval_mode", os.environ.get("AI_CHAT_SAFETY_APPROVAL_MODE", "ask_for_dangerous"))
+    ).strip()
     safety_custom_patterns = safety_raw.get("custom_patterns", [])
     if not isinstance(safety_custom_patterns, list):
         safety_custom_patterns = []
     safety_sensitive_paths = safety_raw.get("sensitive_paths", [])
     if not isinstance(safety_sensitive_paths, list):
         safety_sensitive_paths = []
+    safety_allowed_tools = safety_raw.get("allowed_tools", [])
+    if not isinstance(safety_allowed_tools, list):
+        safety_allowed_tools = []
+    safety_denied_tools = safety_raw.get("denied_tools", [])
+    if not isinstance(safety_denied_tools, list):
+        safety_denied_tools = []
+    safety_tool_tiers = safety_raw.get("tool_tiers", {})
+    if not isinstance(safety_tool_tiers, dict):
+        safety_tool_tiers = {}
 
     safety_config = SafetyConfig(
         enabled=safety_enabled,
+        approval_mode=safety_approval_mode,
         approval_timeout=safety_timeout,
         bash=SafetyToolConfig(enabled=bash_safety_enabled),
         write_file=SafetyToolConfig(enabled=wf_safety_enabled),
         custom_patterns=[str(p) for p in safety_custom_patterns],
         sensitive_paths=[str(p) for p in safety_sensitive_paths],
+        allowed_tools=[str(t) for t in safety_allowed_tools],
+        denied_tools=[str(t) for t in safety_denied_tools],
+        tool_tiers={str(k): str(v) for k, v in safety_tool_tiers.items()},
     )
 
     return AppConfig(
@@ -508,3 +528,42 @@ def ensure_identity(config_path: Path | None = None) -> UserIdentity:
         public_key=identity_data["public_key"],
         private_key=identity_data["private_key"],
     )
+
+
+def write_allowed_tool(tool_name: str, config_path: Path | None = None) -> None:
+    """Append a tool name to safety.allowed_tools in the config file.
+
+    Preserves existing config structure. Creates the safety section if missing.
+    Uses advisory file locking to prevent concurrent writes from corrupting the file.
+    """
+    import fcntl
+
+    path = config_path or _get_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(".lock")
+
+    with open(lock_path, "w") as lock_f:
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+        try:
+            raw: dict[str, Any] = {}
+            if path.exists():
+                with open(path) as f:
+                    raw = yaml.safe_load(f) or {}
+
+            safety_section = raw.setdefault("safety", {})
+            allowed = safety_section.setdefault("allowed_tools", [])
+            if not isinstance(allowed, list):
+                allowed = []
+                safety_section["allowed_tools"] = allowed
+
+            if tool_name not in allowed:
+                allowed.append(tool_name)
+
+                with open(path, "w", encoding="utf-8") as f:
+                    yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+                try:
+                    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+                except OSError:
+                    pass
+        finally:
+            fcntl.flock(lock_f, fcntl.LOCK_UN)

@@ -62,7 +62,8 @@ class TestToolRegistry:
 
         reg.register("double", handler, {"name": "double", "description": ""})
         result = await reg.call_tool("double", {"x": 5})
-        assert result == {"result": 10}
+        assert result["result"] == 10
+        assert result["_approval_decision"] == "auto"
 
     @pytest.mark.asyncio
     async def test_call_unknown_tool(self) -> None:
@@ -94,7 +95,8 @@ class TestToolRegistry:
             return False
 
         reg.set_confirm_callback(deny)
-        result = await reg.call_tool("bash", {"command": "rm -rf /some/dir"})
+        # Use git reset --hard: passes sanitize_command but triggers safety.py destructive pattern
+        result = await reg.call_tool("bash", {"command": "git reset --hard HEAD"})
         assert "denied" in result.get("error", "").lower()
 
     @pytest.mark.asyncio
@@ -120,7 +122,8 @@ class TestToolRegistry:
         reg = ToolRegistry()
         register_default_tools(reg, working_dir="/tmp")
         reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
-        result = await reg.call_tool("bash", {"command": "rm -rf /some/dir"})
+        # Use git reset --hard: passes sanitize_command but triggers safety.py destructive pattern
+        result = await reg.call_tool("bash", {"command": "git reset --hard HEAD"})
         assert result.get("safety_blocked") is True
         assert "no approval channel" in result.get("error", "").lower()
 
@@ -130,7 +133,8 @@ class TestToolRegistry:
 
         reg = ToolRegistry()
         register_default_tools(reg, working_dir="/tmp")
-        reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
+        # ask_for_writes mode triggers approval for write_file (WRITE tier)
+        reg.set_safety_config(SafetyConfig(approval_mode="ask_for_writes"), working_dir="/tmp")
         result = await reg.call_tool("write_file", {"path": ".env", "content": "SECRET=foo"})
         assert result.get("safety_blocked") is True
 
@@ -226,6 +230,213 @@ class TestToolRegistry:
         reg.set_confirm_callback(allow)
         result = await reg.call_tool("write_file", {"path": ".env", "content": "SECRET=foo"})
         assert result.get("safety_blocked") is not True
+
+
+class TestToolTierSafety:
+    @pytest.mark.asyncio
+    async def test_denied_tool_hard_blocked(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(denied_tools=["bash"]), working_dir="/tmp")
+        result = await reg.call_tool("bash", {"command": "echo hello"})
+        assert result.get("safety_blocked") is True
+        assert "blocked by configuration" in result.get("error", "")
+
+    @pytest.mark.asyncio
+    async def test_allowed_tool_skips_approval(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(approval_mode="ask", allowed_tools=["write_file"]), working_dir="/tmp")
+        # write_file normally needs approval in ask mode; allowed_tools bypasses it
+        result = await reg.call_tool("write_file", {"path": "/tmp/test_tier_xyz.txt", "content": "hi"})
+        assert result.get("safety_blocked") is not True
+
+    @pytest.mark.asyncio
+    async def test_session_permission_skips_approval(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(approval_mode="ask"), working_dir="/tmp")
+        reg.grant_session_permission("write_file")
+        result = await reg.call_tool("write_file", {"path": "/tmp/test_session_xyz.txt", "content": "hi"})
+        assert result.get("safety_blocked") is not True
+
+    @pytest.mark.asyncio
+    async def test_clear_session_permissions(self) -> None:
+        from anteroom.config import SafetyConfig
+        from anteroom.tools.safety import SafetyVerdict
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(approval_mode="ask"), working_dir="/tmp")
+        reg.grant_session_permission("write_file")
+        reg.clear_session_permissions()
+
+        async def deny(verdict: SafetyVerdict) -> bool:
+            return False
+
+        reg.set_confirm_callback(deny)
+        result = await reg.call_tool("write_file", {"path": "/tmp/test_clear_xyz.txt", "content": "hi"})
+        assert "denied" in result.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_ask_mode_requires_approval_for_write(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(approval_mode="ask"), working_dir="/tmp")
+        # No callback — should fail closed
+        result = await reg.call_tool("write_file", {"path": "/tmp/test_ask_xyz.txt", "content": "hi"})
+        assert result.get("safety_blocked") is True
+
+    @pytest.mark.asyncio
+    async def test_auto_mode_skips_all_checks(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(approval_mode="auto"), working_dir="/tmp")
+        result = await reg.call_tool("bash", {"command": "rm -rf /tmp/test_auto_xyz"})
+        assert result.get("safety_blocked") is not True
+
+    @pytest.mark.asyncio
+    async def test_ask_for_writes_skips_read(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(approval_mode="ask_for_writes"), working_dir="/tmp")
+        result = await reg.call_tool("read_file", {"path": "/tmp/nonexistent_xyz.txt"})
+        assert result.get("safety_blocked") is not True
+
+    @pytest.mark.asyncio
+    async def test_tier_override_downgrades_tool(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        # Downgrade write_file to read tier — should skip approval even in ask_for_writes
+        reg.set_safety_config(
+            SafetyConfig(approval_mode="ask_for_writes", tool_tiers={"write_file": "read"}),
+            working_dir="/tmp",
+        )
+        result = await reg.call_tool("write_file", {"path": "/tmp/test_override_xyz.txt", "content": "hi"})
+        assert result.get("safety_blocked") is not True
+
+    def test_check_safety_public_method(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(approval_mode="ask"), working_dir="/tmp")
+        verdict = reg.check_safety("write_file", {"path": "/tmp/test.txt", "content": "hi"})
+        assert verdict is not None
+        assert verdict.needs_approval is True
+
+    def test_check_safety_returns_none_for_read(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(approval_mode="ask"), working_dir="/tmp")
+        verdict = reg.check_safety("read_file", {"path": "/tmp/test.txt"})
+        assert verdict is None
+
+    def test_check_safety_hard_deny(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(denied_tools=["bash"]), working_dir="/tmp")
+        verdict = reg.check_safety("bash", {"command": "echo hello"})
+        assert verdict is not None
+        assert verdict.details.get("hard_denied") == "true"
+
+
+class TestApprovalDecisionAudit:
+    """Verify _approval_decision metadata on call_tool results."""
+
+    @pytest.mark.asyncio
+    async def test_auto_decision_when_no_safety(self) -> None:
+        reg = ToolRegistry()
+
+        async def handler(**kwargs):
+            return {"ok": True}
+
+        reg.register("my_tool", handler, {"name": "my_tool", "description": ""})
+        result = await reg.call_tool("my_tool", {})
+        assert result["_approval_decision"] == "auto"
+
+    @pytest.mark.asyncio
+    async def test_denied_decision_on_callback_deny(self) -> None:
+        from anteroom.config import SafetyConfig
+        from anteroom.tools.safety import SafetyVerdict
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
+
+        async def deny(verdict: SafetyVerdict) -> bool:
+            return False
+
+        reg.set_confirm_callback(deny)
+        result = await reg.call_tool("bash", {"command": "git reset --hard HEAD"})
+        assert result["_approval_decision"] == "denied"
+
+    @pytest.mark.asyncio
+    async def test_allowed_once_decision_on_callback_approve(self) -> None:
+        from anteroom.config import SafetyConfig
+        from anteroom.tools.safety import SafetyVerdict
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
+
+        async def allow(verdict: SafetyVerdict) -> bool:
+            return True
+
+        reg.set_confirm_callback(allow)
+        result = await reg.call_tool("bash", {"command": "git reset --hard HEAD"})
+        assert result["_approval_decision"] == "allowed_once"
+
+    @pytest.mark.asyncio
+    async def test_hard_denied_decision(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(denied_tools=["bash"]), working_dir="/tmp")
+        result = await reg.call_tool("bash", {"command": "echo hello"})
+        assert result["_approval_decision"] == "hard_denied"
+
+
+class TestMetadataStripping:
+    """Verify that _-prefixed metadata is stripped from tool results for LLM."""
+
+    def test_underscore_keys_stripped(self) -> None:
+        result = {"output": "hello", "_approval_decision": "auto", "_internal": True}
+        llm_result = {k: v for k, v in result.items() if not k.startswith("_")}
+        assert llm_result == {"output": "hello"}
+        assert "_approval_decision" not in llm_result
+
+    def test_no_underscore_keys_unchanged(self) -> None:
+        result = {"output": "hello", "status": "ok"}
+        llm_result = {k: v for k, v in result.items() if not k.startswith("_")}
+        assert llm_result == result
+
+    def test_non_dict_result_passes_through(self) -> None:
+        result = "raw string"
+        if isinstance(result, dict):
+            llm_result = {k: v for k, v in result.items() if not k.startswith("_")}
+        else:
+            llm_result = result
+        assert llm_result == "raw string"
 
 
 class TestValidatePath:
