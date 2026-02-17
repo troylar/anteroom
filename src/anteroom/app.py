@@ -99,7 +99,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             await mcp_manager.startup()
             tools = mcp_manager.get_all_tools()
-            logger.info(f"MCP: {len(tools)} tools available from {len(config.mcp_servers)} server(s)")
+            logger.info(
+                f"MCP: {len(tools)} tools available from {len(config.mcp_servers)} server(s)"
+            )
         except Exception as e:
             logger.warning(f"MCP startup error: {e}")
     app.state.mcp_manager = mcp_manager
@@ -108,7 +110,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     working_dir = os.getcwd()
     register_default_tools(tool_registry, working_dir=working_dir)
     app.state.tool_registry = tool_registry
-    logger.info(f"Built-in tools: {len(tool_registry.list_tools())} registered (cwd: {working_dir})")
+    logger.info(
+        f"Built-in tools: {len(tool_registry.list_tools())} registered (cwd: {working_dir})"
+    )
+
+    # Destructive tool approvals (Web UI)
+    from .services.approvals import ApprovalManager
+
+    approval_manager = ApprovalManager()
+    approval_manager.start_cleanup_task(expire_after_s=600.0, interval_s=60.0)
+    app.state.approval_manager = approval_manager
+
+    async def _confirm_destructive(message: str) -> bool:
+        # Broadcast a UI event and wait for response.
+        approval_id = await approval_manager.request(message, owner="local")
+        # Publish into the global channel(s) Web UI clients subscribe to.
+        # Default UI subscribes to global:{db} based on its current db query param.
+        event = {
+            "type": "destructive_approval_requested",
+            "data": {"approval_id": approval_id, "message": message},
+        }
+
+        await event_bus.publish("global:personal", event)
+
+        # Also publish to common shared DBs to avoid mismatches when UI is on a non-personal DB.
+        for sdb in getattr(config, "shared_databases", []) or []:
+            if getattr(sdb, "name", None):
+                await event_bus.publish(f"global:{sdb.name}", event)
+        return await approval_manager.wait(approval_id)
+
+    tool_registry.set_confirm_callback(_confirm_destructive)
 
     # Expose vec support flag
     raw_conn = app.state.db._conn if hasattr(app.state.db, "_conn") else None
@@ -126,7 +157,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             app.state.embedding_worker = worker
             logger.info("Embedding worker started")
         else:
-            logger.info("Embedding service available but sqlite-vec not loaded; vector search disabled")
+            logger.info(
+                "Embedding service available but sqlite-vec not loaded; vector search disabled"
+            )
     else:
         logger.info("Embedding service not configured; vector search disabled")
 
@@ -134,6 +167,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     if hasattr(app.state, "embedding_worker") and app.state.embedding_worker:
         app.state.embedding_worker.stop()
+    if hasattr(app.state, "approval_manager"):
+        try:
+            await app.state.approval_manager.stop_cleanup_task()
+        except Exception:
+            logger.warning("Failed to stop approval cleanup task")
+
     if hasattr(app.state, "event_bus"):
         app.state.event_bus.stop_polling()
     if app.state.db:
@@ -156,12 +195,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=()"
+        )
         if self.tls_enabled:
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'sha256-XOZ/E5zGhh3+pD1xPPme298VAabSp0Pt7SmU0EdZqKY='; "
+            "script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
             "font-src 'self'; "
             "img-src 'self' data: blob:; "
@@ -181,7 +224,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 class MaxBodySizeMiddleware(BaseHTTPMiddleware):
     """Reject requests with Content-Length exceeding the limit."""
 
-    def __init__(self, app: FastAPI, max_body_size: int = MAX_REQUEST_BODY_BYTES) -> None:
+    def __init__(
+        self, app: FastAPI, max_body_size: int = MAX_REQUEST_BODY_BYTES
+    ) -> None:
         super().__init__(app)
         self.max_body_size = max_body_size
 
@@ -193,7 +238,9 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
                 request.client.host if request.client else "unknown",
                 content_length,
             )
-            return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+            return JSONResponse(
+                status_code=413, content={"detail": "Request body too large"}
+            )
         return await call_next(request)
 
 
@@ -202,7 +249,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     MAX_TRACKED_IPS = 10000
 
-    def __init__(self, app: FastAPI, max_requests: int = 60, window_seconds: int = 60) -> None:
+    def __init__(
+        self, app: FastAPI, max_requests: int = 60, window_seconds: int = 60
+    ) -> None:
         super().__init__(app)
         self.max_requests = max_requests
         self.window = window_seconds
@@ -229,7 +278,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         if len(hits) >= self.max_requests:
             security_logger.warning("Rate limit exceeded for IP %s", client_ip)
-            return JSONResponse(status_code=429, content={"detail": "Too many requests"})
+            return JSONResponse(
+                status_code=429, content={"detail": "Too many requests"}
+            )
         hits.append(now)
         return await call_next(request)
 
@@ -265,7 +316,9 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
         client_ip = request.client.host if request.client else "unknown"
 
         if not self._is_session_valid():
-            security_logger.warning("Expired session access attempt from %s: %s", client_ip, path)
+            security_logger.warning(
+                "Expired session access attempt from %s: %s", client_ip, path
+            )
             return JSONResponse(status_code=401, content={"detail": "Session expired"})
 
         # Check Authorization header
@@ -281,13 +334,26 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
             if request.method in ("POST", "PATCH", "PUT", "DELETE"):
                 csrf_cookie = request.cookies.get("anteroom_csrf", "")
                 csrf_header = request.headers.get("x-csrf-token", "")
-                if not csrf_cookie or not csrf_header or not hmac.compare_digest(csrf_cookie, csrf_header):
-                    security_logger.warning("CSRF validation failed from %s: %s %s", client_ip, request.method, path)
-                    return JSONResponse(status_code=403, content={"detail": "CSRF validation failed"})
+                if (
+                    not csrf_cookie
+                    or not csrf_header
+                    or not hmac.compare_digest(csrf_cookie, csrf_header)
+                ):
+                    security_logger.warning(
+                        "CSRF validation failed from %s: %s %s",
+                        client_ip,
+                        request.method,
+                        path,
+                    )
+                    return JSONResponse(
+                        status_code=403, content={"detail": "CSRF validation failed"}
+                    )
             self._last_activity = time.time()
             return await call_next(request)
 
-        security_logger.warning("Authentication failed from %s: %s %s", client_ip, request.method, path)
+        security_logger.warning(
+            "Authentication failed from %s: %s %s", client_ip, request.method, path
+        )
         return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
 
 
@@ -313,8 +379,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
-        security_logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
-        return JSONResponse(status_code=500, content={"detail": "An internal error occurred"})
+        security_logger.exception(
+            "Unhandled exception on %s %s", request.method, request.url.path
+        )
+        return JSONResponse(
+            status_code=500, content={"detail": "An internal error occurred"}
+        )
 
     scheme = "https" if config.app.tls else "http"
     origin = f"{scheme}://{config.app.host}:{config.app.port}"
@@ -343,10 +413,20 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.state.csrf_token = csrf_token
     cache_bust = str(int(time.time()))
 
-    from .routers import chat, config_api, conversations, databases, events, projects, search
+    from .routers import (
+        approvals,
+        chat,
+        config_api,
+        conversations,
+        databases,
+        events,
+        projects,
+        search,
+    )
 
     app.include_router(conversations.router, prefix="/api")
     app.include_router(chat.router, prefix="/api")
+    app.include_router(approvals.router, prefix="/api")
     app.include_router(config_api.router, prefix="/api")
     app.include_router(projects.router, prefix="/api")
     app.include_router(databases.router, prefix="/api")

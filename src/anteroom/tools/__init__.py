@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Callable, Coroutine
 
 logger = logging.getLogger(__name__)
@@ -10,23 +11,32 @@ logger = logging.getLogger(__name__)
 ToolHandler = Callable[..., Coroutine[Any, Any, dict[str, Any]]]
 ConfirmCallback = Callable[[str], Coroutine[Any, Any, bool]]
 
-# Destructive command patterns that need confirmation
-_DESTRUCTIVE_PATTERNS = (
-    "rm ",
-    "rm\t",
-    "rmdir",
-    "git push --force",
-    "git push -f",
-    "git reset --hard",
-    "git clean",
-    "git checkout .",
-    "drop table",
-    "drop database",
-    "truncate ",
-    "> /dev/",
-    "chmod 777",
-    "kill -9",
+# Destructive command patterns that need confirmation.
+# These are regexes searched against a normalized command string.
+_DESTRUCTIVE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\brm\s+", re.IGNORECASE),
+    re.compile(r"\brmdir\b", re.IGNORECASE),
+    re.compile(r"\bgit\s+push\s+(-f|--force)\b", re.IGNORECASE),
+    re.compile(r"\bgit\s+reset\s+--hard\b", re.IGNORECASE),
+    re.compile(r"\bgit\s+clean\b", re.IGNORECASE),
+    re.compile(r"\bgit\s+checkout\s+\.\b", re.IGNORECASE),
+    re.compile(r"\bdrop\s+table\b", re.IGNORECASE),
+    re.compile(r"\bdrop\s+database\b", re.IGNORECASE),
+    re.compile(r"\btruncate\s+", re.IGNORECASE),
+    re.compile(r">\s*/dev/", re.IGNORECASE),
+    re.compile(r"\bchmod\s+777\b", re.IGNORECASE),
+    re.compile(r"\bkill\s+-9\b", re.IGNORECASE),
 )
+
+
+def _normalize_command(command: str) -> str:
+    # Collapse any whitespace runs (spaces, tabs, newlines) to a single space.
+    return re.sub(r"\s+", " ", command).strip().lower()
+
+
+def _is_destructive_command(command: str) -> bool:
+    cmd = _normalize_command(command)
+    return any(p.search(cmd) is not None for p in _DESTRUCTIVE_PATTERNS)
 
 
 class ToolRegistry:
@@ -41,7 +51,9 @@ class ToolRegistry:
         """Set callback for confirming destructive operations."""
         self._confirm_callback = callback
 
-    def register(self, name: str, handler: ToolHandler, definition: dict[str, Any]) -> None:
+    def register(
+        self, name: str, handler: ToolHandler, definition: dict[str, Any]
+    ) -> None:
         self._handlers[name] = handler
         self._definitions[name] = definition
 
@@ -69,13 +81,12 @@ class ToolRegistry:
         # Check for destructive operations
         if self._confirm_callback and name == "bash":
             command = arguments.get("command", "")
-            cmd_lower = command.lower().strip()
-            for pattern in _DESTRUCTIVE_PATTERNS:
-                if pattern in cmd_lower:
-                    confirmed = await self._confirm_callback(f"Destructive command: {command}")
-                    if not confirmed:
-                        return {"error": "Command cancelled by user", "exit_code": -1}
-                    break
+            if _is_destructive_command(command):
+                confirmed = await self._confirm_callback(
+                    f"Destructive command: {command}"
+                )
+                if not confirmed:
+                    return {"error": "Command cancelled by user", "exit_code": -1}
 
         return await handler(**arguments)
 
@@ -83,7 +94,9 @@ class ToolRegistry:
         return list(self._handlers.keys())
 
 
-def register_default_tools(registry: ToolRegistry, working_dir: str | None = None) -> None:
+def register_default_tools(
+    registry: ToolRegistry, working_dir: str | None = None
+) -> None:
     """Register all built-in tools."""
     from . import bash, edit, glob_tool, grep, read, write
 
