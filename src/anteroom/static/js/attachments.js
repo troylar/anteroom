@@ -51,12 +51,24 @@ const Attachments = (() => {
         });
     }
 
+    const SAFE_MIMES = new Set([
+        'text/plain', 'text/markdown', 'text/csv', 'text/xml', 'text/css', 'text/html',
+        'application/json', 'application/pdf', 'application/xml', 'application/x-yaml',
+        'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+    ]);
+
     function addFiles(newFiles) {
         for (const file of newFiles) {
             const ext = file.name.split('.').pop().toLowerCase();
             if (!ALLOWED_EXTENSIONS.has(ext)) {
                 alert(`Unsupported file type: .${ext}\n\nSupported types: ${Array.from(ALLOWED_EXTENSIONS).join(', ')}`);
                 continue;
+            }
+            if (file.type && SAFE_MIMES.size && !file.type.startsWith('text/') && !SAFE_MIMES.has(file.type)) {
+                if (!['application/octet-stream', ''].includes(file.type)) {
+                    alert(`File MIME type mismatch: ${file.name} (${file.type})`);
+                    continue;
+                }
             }
             if (file.size > MAX_SIZE) {
                 alert(`File too large: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)\n\nMaximum size: 10 MB`);

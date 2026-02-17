@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS conversation_tags (
 CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'chat' CHECK(type IN ('chat', 'note', 'document')),
     model TEXT DEFAULT NULL,
     project_id TEXT DEFAULT NULL,
     folder_id TEXT DEFAULT NULL,
@@ -109,6 +110,20 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     status TEXT NOT NULL CHECK(status IN ('pending', 'success', 'error')),
     created_at TEXT NOT NULL,
     FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS canvases (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT 'Untitled',
+    content TEXT NOT NULL DEFAULT '',
+    language TEXT DEFAULT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    user_id TEXT DEFAULT NULL,
+    user_display_name TEXT DEFAULT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS change_log (
@@ -323,6 +338,9 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     if "folder_id" not in cols:
         conn.execute("ALTER TABLE conversations ADD COLUMN folder_id TEXT DEFAULT NULL")
 
+    if "type" not in cols:
+        conn.execute("ALTER TABLE conversations ADD COLUMN type TEXT NOT NULL DEFAULT 'chat'")
+
     # Ensure folders table exists for existing databases
     conn.execute(
         """CREATE TABLE IF NOT EXISTS folders (
@@ -396,6 +414,23 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
         )"""
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_change_log_id ON change_log(id)")
+
+    # Ensure canvases table exists for existing databases
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS canvases (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT 'Untitled',
+            content TEXT NOT NULL DEFAULT '',
+            language TEXT DEFAULT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            user_id TEXT DEFAULT NULL,
+            user_display_name TEXT DEFAULT NULL,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+        )"""
+    )
 
     # Ensure message_embeddings metadata table exists
     try:

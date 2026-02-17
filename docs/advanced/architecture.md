@@ -13,11 +13,18 @@ src/anteroom/
 ├── services/
 │   ├── agent_loop.py         # Shared agentic loop (core engine)
 │   ├── ai_service.py         # OpenAI SDK wrapper with streaming
-│   └── storage.py            # SQLite DAL with parameterized queries
+│   ├── storage.py            # SQLite DAL with parameterized queries
+│   ├── embeddings.py         # Embedding API client and vector management
+│   ├── embedding_worker.py   # Background worker: embeds new messages asynchronously
+│   └── event_bus.py          # In-process pub/sub for SSE fan-out
 ├── routers/                  # FastAPI endpoint handlers
+│   ├── approvals.py          # POST /api/approvals/{id}/respond — safety gate responses
+│   └── events.py             # SSE event bus endpoint for real-time notifications
 ├── tools/
 │   ├── __init__.py           # ToolRegistry pattern
-│   └── security.py           # Path blocking, command confirmation
+│   ├── security.py           # Path blocking, command confirmation (hard blocks)
+│   ├── safety.py             # Configurable approval gate: check_bash_command(), check_write_path()
+│   └── canvas.py             # Canvas tools: create_canvas, update_canvas, patch_canvas
 ├── cli/
 │   ├── repl.py               # REPL with prompt_toolkit
 │   └── default_skills/       # Built-in skill YAML files
@@ -63,7 +70,7 @@ SQLite with WAL journaling, FTS5 for search, and foreign keys enforced.
 - **Parameterized queries**: All values are bound, never concatenated
 - **UUID-based IDs**: All entities use UUID primary keys
 
-Tables: `conversations`, `messages`, `attachments`, `tool_calls`, `projects`, `folders`, `tags`.
+Tables: `users`, `conversations`, `messages`, `attachments`, `tool_calls`, `projects`, `folders`, `tags`, `conversation_tags`, `change_log`, `canvases`, `message_embeddings`.
 
 ## Tool Registry
 

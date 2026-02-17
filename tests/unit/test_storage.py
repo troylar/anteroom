@@ -18,6 +18,7 @@ from anteroom.services.storage import (
     create_tool_call,
     delete_conversation,
     delete_folder,
+    delete_message,
     delete_messages_after_position,
     delete_tag,
     fork_conversation,
@@ -31,7 +32,9 @@ from anteroom.services.storage import (
     move_conversation_to_folder,
     register_user,
     remove_tag_from_conversation,
+    replace_document_content,
     update_conversation_title,
+    update_conversation_type,
     update_folder,
     update_message_content,
     update_tag,
@@ -102,6 +105,51 @@ class TestConversations:
         updated = update_conversation_title(db, conv["id"], "Renamed")
         assert updated is not None
         assert updated["title"] == "Renamed"
+
+    def test_create_conversation_default_type_is_chat(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Chat")
+        assert conv["type"] == "chat"
+
+    def test_create_conversation_with_note_type(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="My Notes", conversation_type="note")
+        assert conv["type"] == "note"
+        fetched = get_conversation(db, conv["id"])
+        assert fetched is not None
+        assert fetched["type"] == "note"
+
+    def test_create_conversation_with_document_type(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="My Doc", conversation_type="document")
+        assert conv["type"] == "document"
+
+    def test_create_conversation_invalid_type_raises(self, db: sqlite3.Connection) -> None:
+        with pytest.raises(ValueError, match="Invalid conversation type"):
+            create_conversation(db, title="Bad", conversation_type="invalid")
+
+    def test_list_conversations_returns_type(self, db: sqlite3.Connection) -> None:
+        create_conversation(db, title="Chat", conversation_type="chat")
+        create_conversation(db, title="Note", conversation_type="note")
+        result = list_conversations(db)
+        types = {c["type"] for c in result}
+        assert types == {"chat", "note"}
+
+    def test_list_conversations_filter_by_type(self, db: sqlite3.Connection) -> None:
+        create_conversation(db, title="Chat 1", conversation_type="chat")
+        create_conversation(db, title="Note 1", conversation_type="note")
+        create_conversation(db, title="Doc 1", conversation_type="document")
+        notes = list_conversations(db, conversation_type="note")
+        assert len(notes) == 1
+        assert notes[0]["type"] == "note"
+
+    def test_update_conversation_type(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Will Change")
+        updated = update_conversation_type(db, conv["id"], "note")
+        assert updated is not None
+        assert updated["type"] == "note"
+
+    def test_update_conversation_type_invalid_raises(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Bad Update")
+        with pytest.raises(ValueError, match="Invalid conversation type"):
+            update_conversation_type(db, conv["id"], "invalid")
 
     def test_delete_conversation(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         conv = create_conversation(db, title="Doomed")
@@ -790,6 +838,92 @@ class TestUserIdentityInStorage:
         assert row["user_display_name"] == "Alice"
 
 
+class TestConversationTypeSQLInjection:
+    """Security: verify type field cannot be used for SQL injection."""
+
+    def test_type_filter_with_sql_injection_ignores_filter(self, db: sqlite3.Connection) -> None:
+        """Invalid type is not in VALID_CONVERSATION_TYPES, so filter is ignored (returns all).
+
+        This is safe because the type is never interpolated into SQL — it's checked
+        against an allowlist first, and only valid types reach the parameterized query.
+        """
+        create_conversation(db, title="Safe", conversation_type="chat")
+        result = list_conversations(db, conversation_type="chat' OR '1'='1")
+        # Invalid type is silently ignored: returns unfiltered results
+        assert len(result) == 1
+        assert result[0]["type"] == "chat"
+
+    def test_type_filter_with_union_injection_ignores_filter(self, db: sqlite3.Connection) -> None:
+        create_conversation(db, title="Safe", conversation_type="chat")
+        result = list_conversations(db, conversation_type="chat' UNION SELECT * FROM messages--")
+        assert len(result) == 1  # ignored, returns all
+
+    def test_type_filter_with_semicolon_injection_ignores_filter(self, db: sqlite3.Connection) -> None:
+        create_conversation(db, title="Safe", conversation_type="chat")
+        result = list_conversations(db, conversation_type="chat; DROP TABLE conversations;")
+        assert len(result) == 1  # ignored, returns all
+        # Verify table still exists
+        rows = db.execute_fetchall("SELECT COUNT(*) as cnt FROM conversations")
+        assert rows[0]["cnt"] == 1
+
+    def test_create_conversation_type_injection(self, db: sqlite3.Connection) -> None:
+        with pytest.raises(ValueError, match="Invalid conversation type"):
+            create_conversation(db, title="Bad", conversation_type="chat'; DROP TABLE conversations;--")
+
+    def test_update_type_injection(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Target")
+        with pytest.raises(ValueError, match="Invalid conversation type"):
+            update_conversation_type(db, conv["id"], "note'; DROP TABLE messages;--")
+
+    def test_valid_types_are_exactly_three(self, db: sqlite3.Connection) -> None:
+        from anteroom.services.storage import VALID_CONVERSATION_TYPES
+
+        assert VALID_CONVERSATION_TYPES == {"chat", "note", "document"}
+
+    def test_invalid_type_filter_ignored_returns_all(self, db: sqlite3.Connection) -> None:
+        """Invalid type filter is silently ignored, returning unfiltered results."""
+        create_conversation(db, title="Chat 1", conversation_type="chat")
+        result = list_conversations(db, conversation_type="not_valid")
+        assert len(result) == 1  # filter ignored, returns all
+
+    def test_valid_type_filter_works_correctly(self, db: sqlite3.Connection) -> None:
+        create_conversation(db, title="Chat", conversation_type="chat")
+        create_conversation(db, title="Note", conversation_type="note")
+        create_conversation(db, title="Doc", conversation_type="document")
+        for t in ("chat", "note", "document"):
+            result = list_conversations(db, conversation_type=t)
+            assert len(result) == 1
+            assert result[0]["type"] == t
+
+
+class TestFTSSearchSanitization:
+    """Security: verify FTS query sanitization prevents injection."""
+
+    def test_search_with_fts_special_chars(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Test conversation")
+        create_message(db, conv["id"], "user", "Hello world")
+        results = list_conversations(db, search='hello" OR "')
+        assert isinstance(results, list)
+
+    def test_search_with_asterisk(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Test")
+        create_message(db, conv["id"], "user", "Hello world")
+        results = list_conversations(db, search="hello*")
+        assert isinstance(results, list)
+
+    def test_search_with_parentheses(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Test")
+        create_message(db, conv["id"], "user", "Hello world")
+        results = list_conversations(db, search="hello) OR (1=1")
+        assert isinstance(results, list)
+
+    def test_search_with_near_operator(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Test")
+        create_message(db, conv["id"], "user", "Hello beautiful world")
+        results = list_conversations(db, search="NEAR(hello world)")
+        assert isinstance(results, list)
+
+
 class TestRegisterUser:
     def test_register_new_user(self, db: sqlite3.Connection) -> None:
         register_user(db, "u1", "Alice", "pub-key-pem")
@@ -823,3 +957,141 @@ class TestRegisterUser:
         register_user(db, "u1", "Alice v2", "pub2")
         row2 = db.execute_fetchone("SELECT created_at FROM users WHERE user_id = ?", ("u1",))
         assert row2["created_at"] == created_at
+
+
+class TestDeleteMessage:
+    def test_delete_message_removes_it(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Del")
+        m1 = create_message(db, conv["id"], "user", "keep")
+        m2 = create_message(db, conv["id"], "user", "remove")
+        result = delete_message(db, conv["id"], m2["id"])
+        assert result is True
+        msgs = list_messages(db, conv["id"])
+        assert len(msgs) == 1
+        assert msgs[0]["id"] == m1["id"]
+
+    def test_delete_message_wrong_conversation(self, db: sqlite3.Connection) -> None:
+        conv1 = create_conversation(db, title="Conv1")
+        conv2 = create_conversation(db, title="Conv2")
+        msg = create_message(db, conv1["id"], "user", "hello")
+        result = delete_message(db, conv2["id"], msg["id"])
+        assert result is False
+        msgs = list_messages(db, conv1["id"])
+        assert len(msgs) == 1
+
+    def test_delete_message_nonexistent(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Test")
+        result = delete_message(db, conv["id"], "nonexistent-id")
+        assert result is False
+
+    def test_delete_message_updates_conversation_timestamp(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Timestamp")
+        msg = create_message(db, conv["id"], "user", "hello")
+        before = get_conversation(db, conv["id"])
+        assert before is not None
+        delete_message(db, conv["id"], msg["id"])
+        after = get_conversation(db, conv["id"])
+        assert after is not None
+        assert after["updated_at"] >= before["updated_at"]
+
+
+class TestReplaceDocumentContent:
+    def test_replace_document_content_works(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Doc", conversation_type="document")
+        create_message(db, conv["id"], "user", "old content 1")
+        create_message(db, conv["id"], "user", "old content 2")
+        msg = replace_document_content(db, conv["id"], "new full content")
+        assert msg["content"] == "new full content"
+        assert msg["position"] == 0
+        msgs = list_messages(db, conv["id"])
+        assert len(msgs) == 1
+        assert msgs[0]["content"] == "new full content"
+
+    def test_replace_document_content_on_empty(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Empty Doc", conversation_type="document")
+        msg = replace_document_content(db, conv["id"], "first content")
+        assert msg["content"] == "first content"
+        msgs = list_messages(db, conv["id"])
+        assert len(msgs) == 1
+
+    def test_replace_document_content_updates_timestamp(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Doc TS", conversation_type="document")
+        before = get_conversation(db, conv["id"])
+        assert before is not None
+        replace_document_content(db, conv["id"], "content")
+        after = get_conversation(db, conv["id"])
+        assert after is not None
+        assert after["updated_at"] >= before["updated_at"]
+
+    def test_replace_document_content_preserves_identity(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Doc ID", conversation_type="document")
+        msg = replace_document_content(db, conv["id"], "content", user_id="u1", user_display_name="Alice")
+        assert msg["user_id"] == "u1"
+        assert msg["user_display_name"] == "Alice"
+
+    def test_replace_document_content_cascades_tool_calls(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Doc TC", conversation_type="document")
+        msg = create_message(db, conv["id"], "user", "old content")
+        create_tool_call(db, msg["id"], "read_file", "local", {"path": "/tmp"})
+        tcs = list_tool_calls(db, msg["id"])
+        assert len(tcs) == 1
+        replace_document_content(db, conv["id"], "new content")
+        tcs_after = list_tool_calls(db, msg["id"])
+        assert len(tcs_after) == 0
+
+    def test_replace_document_content_multiple_replaces(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Multi Replace", conversation_type="document")
+        replace_document_content(db, conv["id"], "v1")
+        replace_document_content(db, conv["id"], "v2")
+        msg = replace_document_content(db, conv["id"], "v3")
+        assert msg["content"] == "v3"
+        msgs = list_messages(db, conv["id"])
+        assert len(msgs) == 1
+        assert msgs[0]["content"] == "v3"
+
+
+class TestDeleteMessageCascade:
+    def test_delete_message_cascades_tool_calls(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Cascade TC")
+        msg = create_message(db, conv["id"], "assistant", "I used a tool")
+        create_tool_call(db, msg["id"], "bash", "local", {"command": "ls"})
+        assert len(list_tool_calls(db, msg["id"])) == 1
+        delete_message(db, conv["id"], msg["id"])
+        assert len(list_tool_calls(db, msg["id"])) == 0
+
+    def test_delete_message_preserves_other_messages(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Preserve")
+        m1 = create_message(db, conv["id"], "user", "first")
+        m2 = create_message(db, conv["id"], "assistant", "second")
+        m3 = create_message(db, conv["id"], "user", "third")
+        delete_message(db, conv["id"], m2["id"])
+        msgs = list_messages(db, conv["id"])
+        assert len(msgs) == 2
+        assert msgs[0]["id"] == m1["id"]
+        assert msgs[1]["id"] == m3["id"]
+
+    def test_delete_only_message(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Single")
+        msg = create_message(db, conv["id"], "user", "only one")
+        result = delete_message(db, conv["id"], msg["id"])
+        assert result is True
+        msgs = list_messages(db, conv["id"])
+        assert len(msgs) == 0
+
+    def test_delete_message_with_multiple_tool_calls(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Multi TC")
+        msg = create_message(db, conv["id"], "assistant", "I ran tools")
+        create_tool_call(db, msg["id"], "bash", "local", {"command": "ls"})
+        create_tool_call(db, msg["id"], "read_file", "local", {"path": "/tmp"})
+        create_tool_call(db, msg["id"], "glob_files", "local", {"pattern": "*.py"})
+        assert len(list_tool_calls(db, msg["id"])) == 3
+        delete_message(db, conv["id"], msg["id"])
+        assert len(list_tool_calls(db, msg["id"])) == 0
+
+    def test_delete_message_sql_injection_in_id(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="SQLi")
+        create_message(db, conv["id"], "user", "safe")
+        result = delete_message(db, conv["id"], "'; DROP TABLE messages;--")
+        assert result is False
+        msgs = list_messages(db, conv["id"])
+        assert len(msgs) == 1

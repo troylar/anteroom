@@ -86,6 +86,7 @@ class TestInitDb:
         assert col_names == {
             "id",
             "title",
+            "type",
             "model",
             "project_id",
             "folder_id",
@@ -244,6 +245,28 @@ class TestMigrations:
         info = conn.execute("PRAGMA table_info(conversations)").fetchall()
         col_names = [r[1] for r in info]
         assert col_names.count("user_id") == 1
+
+    def test_migration_adds_type_column_to_conversations(self) -> None:
+        from anteroom.db import _run_migrations
+
+        conn = self._init_legacy_db()
+        _run_migrations(conn)
+        info = conn.execute("PRAGMA table_info(conversations)").fetchall()
+        col_names = {r[1] for r in info}
+        assert "type" in col_names
+
+    def test_migration_type_column_defaults_to_chat(self) -> None:
+        from anteroom.db import _run_migrations
+
+        conn = self._init_legacy_db()
+        conn.execute(
+            "INSERT INTO conversations (id, title, created_at, updated_at)"
+            " VALUES ('test-1', 'Test', '2024-01-01', '2024-01-01')"
+        )
+        conn.commit()
+        _run_migrations(conn)
+        row = conn.execute("SELECT type FROM conversations WHERE id = 'test-1'").fetchone()
+        assert row[0] == "chat"
 
     def test_migration_creates_message_embeddings_table(self) -> None:
         from anteroom.db import _run_migrations

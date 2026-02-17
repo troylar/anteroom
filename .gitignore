@@ -23,3 +23,5 @@ Thumbs.db
 htmlcov/
 site/
 src/parlor/_build_info.py
+scripts/node_modules/
+scripts/package-lock.json

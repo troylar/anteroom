@@ -39,13 +39,13 @@ Before merging, audit **all documentation surfaces** for accuracy. Extract the p
 
 1. **Test count** — run `grep -r "def test_" tests/ | wc -l` and compare to the count in CLAUDE.md. Update if stale.
 2. **New modules** — check for any new `.py` files under `src/anteroom/` not mentioned in the "Key Modules" section. Add them.
-2. **Stale descriptions** — for modified modules, verify the CLAUDE.md description still matches the actual code behavior.
-3. **New config fields** — check `config.py` dataclasses for fields not documented in the "Configuration" section. Add them.
-4. **New agent events** — check `agent_loop.py` for any `AgentEvent(kind=...)` values not mentioned. Document them.
-5. **Architecture changes** — if the PR added middleware, new routers, or changed the security model, update those sections.
-6. **Database changes** — check `db.py` for new tables or columns not in the "Database" section. Add them.
-7. **Architecture diagram** — if new services or routers were added, update the ASCII diagram.
-8. **Version in pyproject.toml** — note the pre-bump version for reference.
+3. **Stale descriptions** — for modified modules, verify the CLAUDE.md description still matches the actual code behavior.
+4. **New config fields** — check `config.py` dataclasses for fields not documented in the "Configuration" section. Add them.
+5. **New agent events** — check `agent_loop.py` for any `AgentEvent(kind=...)` values not mentioned. Document them.
+6. **Architecture changes** — if the PR added middleware, new routers, or changed the security model, update those sections.
+7. **Database changes** — check `db.py` for new tables or columns not in the "Database" section. Add them.
+8. **Architecture diagram** — if new services or routers were added, update the ASCII diagram.
+9. **Version in pyproject.toml** — note the pre-bump version for reference.
 
 #### 2b. README.md
 

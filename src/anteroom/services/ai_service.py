@@ -115,6 +115,14 @@ class AIService:
                             current_tool_calls[idx]["function_name"] = tc.function.name
                         if tc.function and tc.function.arguments:
                             current_tool_calls[idx]["arguments"] += tc.function.arguments
+                            yield {
+                                "event": "tool_call_args_delta",
+                                "data": {
+                                    "index": idx,
+                                    "tool_name": current_tool_calls[idx]["function_name"],
+                                    "delta": tc.function.arguments,
+                                },
+                            }
 
                 if choice.finish_reason == "tool_calls":
                     for _idx, tc_data in sorted(current_tool_calls.items()):

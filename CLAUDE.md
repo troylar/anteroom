@@ -21,7 +21,7 @@ aroom --version                     # Show version
 aroom chat --model gpt-4o           # Override model
 
 # Testing
-pytest tests/ -v                    # All tests (~528 tests)
+pytest tests/ -v                    # All tests (~910 tests)
 pytest tests/unit/ -v               # Unit tests only
 pytest tests/unit/test_tools.py -v  # Single test file
 pytest tests/unit/test_tools.py::test_name -v  # Single test
@@ -51,30 +51,35 @@ CLI (cli/repl.py) ──┘         │
 ### Key Modules
 
 - **`app.py`** — FastAPI app factory, middleware stack (auth, rate limiting, CSRF, security headers with conditional HSTS based on TLS config, body size limit)
-- **`config.py`** — YAML config loading with env var overrides, dataclass hierarchy (`AppConfig` → `AIConfig`, `AppSettings`, `CliConfig`, `McpServerConfig`, `UserIdentity`). `AppSettings.tls` controls HTTPS, HSTS, and secure cookies. `ensure_identity()` auto-generates Ed25519 keypair on first run
+- **`config.py`** — YAML config loading with env var overrides, dataclass hierarchy (`AppConfig` → `AIConfig`, `AppSettings`, `CliConfig`, `McpServerConfig`, `SharedDatabaseConfig`, `UserIdentity`, `SafetyConfig`, `SafetyToolConfig`, `EmbeddingsConfig`). `AppSettings.tls` controls HTTPS, HSTS, and secure cookies. `ensure_identity()` auto-generates Ed25519 keypair on first run
 - **`identity.py`** — User identity generation: Ed25519 keypair via `cryptography`, UUID4 user IDs, PEM serialization
 - **`services/agent_loop.py`** — Shared agentic loop: streams responses, parses tool calls, executes tools in parallel via `asyncio.as_completed`, loops up to `max_tool_iterations` (50). Auto-compacts at 100K tokens. Emits `"thinking"` event between tool execution and next API call for UI spinners. Accepts optional `message_queue` param for prompt queuing — checks queue after each `done` event and continues the loop if messages are pending
-- **`services/ai_service.py`** — OpenAI SDK wrapper with streaming and transparent token refresh on 401
+- **`services/ai_service.py`** — OpenAI SDK wrapper with streaming and transparent token refresh on 401. Emits `tool_call_args_delta` events during argument accumulation for real-time canvas streaming
+- **`services/event_bus.py`** — Async pub/sub event bus: in-process delivery via `asyncio.Queue` per subscriber, cross-process delivery via SQLite `change_log` polling (1.5s interval). Channels: `conversation:{id}` and `global:{db_name}`. Used by `routers/events.py` SSE endpoint for real-time UI updates
 - **`services/storage.py`** — SQLite DAL with column-allowlisted SQL builder, parameterized queries, UUID-based IDs. Includes vector storage methods (`store_embedding`, `search_similar_messages`) that gracefully degrade when sqlite-vec is unavailable
 - **`services/embeddings.py`** — Embedding service: calls OpenAI-compatible embedding API, validates vectors, manages configuration from `EmbeddingsConfig`
 - **`services/embedding_worker.py`** — Background worker that processes unembedded messages asynchronously, runs on a configurable interval
 - **`routers/search.py`** — Search API: `/api/search/semantic` (vector similarity) and `/api/search/hybrid` (FTS5 + vector). Both endpoints require sqlite-vec
-- **`tools/`** — ToolRegistry pattern: `_handlers` (async callables) + `_definitions` (OpenAI function schemas). Built-in tools: read_file, write_file, edit_file, bash, glob_files, grep
+- **`tools/`** — ToolRegistry pattern: `_handlers` (async callables) + `_definitions` (OpenAI function schemas). Built-in tools: read_file, write_file, edit_file, bash, glob_files, grep, create_canvas, update_canvas, patch_canvas. Safety gate integration: `call_tool()` checks `tools/safety.py` verdicts before execution, accepts per-call `confirm_callback` for interface-specific approval flows
+- **`tools/safety.py`** — Pure detection logic for destructive operations. `check_bash_command()` matches against compiled regex patterns (13 defaults + configurable custom patterns). `check_write_path()` detects writes to sensitive paths (`.env`, `.ssh`, `.gnupg`, etc.). Returns `SafetyVerdict` dataclass. No I/O, no side effects
+- **`tools/canvas.py`** — Canvas tools for AI to create/update rich content panels alongside chat. Supports streaming content updates during generation via SSE events (`canvas_stream_start`, `canvas_streaming`). `patch_canvas` applies incremental search/replace edits for token efficiency
+- **`routers/approvals.py`** — `POST /api/approvals/{approval_id}/respond` endpoint for Web UI safety gate approval flow. Uses Pydantic request model, explicit `Content-Type: application/json` enforcement, regex-validated approval IDs, atomic dict pop to prevent TOCTOU races
+- **`routers/events.py`** — `GET /events` SSE endpoint for real-time UI updates (canvas streaming, approval notifications) backed by `services/event_bus.py`
 - **`cli/repl.py`** — REPL with prompt_toolkit, skills system, @file references, /commands. Uses concurrent input/output architecture with `patch_stdout()` — input prompt stays active while agent streams responses, with messages queued and processed in FIFO order
 - **`tls.py`** — Self-signed certificate generation for localhost HTTPS using `cryptography` package
-- **`routers/`** — FastAPI endpoints: conversations CRUD, SSE chat streaming, config, projects. Chat endpoint supports prompt queuing: if a stream is active for a conversation, new messages are queued (max 10) and return `{"status": "queued"}` JSON instead of opening a new SSE stream
+- **`routers/`** — FastAPI endpoints: conversations CRUD, SSE chat streaming, config, projects, canvas CRUD, document/note entry management. Chat endpoint supports prompt queuing: if a stream is active for a conversation, new messages are queued (max 10) and return `{"status": "queued"}` JSON instead of opening a new SSE stream. State-changing endpoints with JSON bodies enforce Content-Type validation
 
 ### Security Model
 
-Single-user local app with OWASP ASVS Level 1. Auth via HttpOnly session cookies + CSRF double-submit. Security middleware in `app.py` handles: rate limiting (120 req/min), body size (15MB), security headers (CSP, HSTS, X-Frame-Options), HMAC-SHA256 token comparison. Tool safety in `tools/security.py` blocks path traversal and destructive commands.
+Single-user local app with OWASP ASVS Level 1. Auth via HttpOnly session cookies + CSRF double-submit with Origin header validation (defense-in-depth). Security middleware in `app.py` handles: rate limiting (120 req/min), body size (15MB), security headers (CSP, HSTS, X-Frame-Options), HMAC-SHA256 token comparison, session absolute timeout. Tool safety in `tools/security.py` blocks path traversal and hard-blocks destructive commands. `tools/safety.py` provides a configurable approval gate: destructive bash commands and writes to sensitive paths require user confirmation via CLI prompt or Web UI inline approval. The Web UI flow uses `asyncio.Event` with configurable timeout (default 120s), event bus SSE for notifications, and `routers/approvals.py` for response handling. In-memory `pending_approvals` dict on `app.state` (capped at 100 entries). Fails closed: no approval channel = operation blocked.
 
 ### Database
 
-SQLite with WAL journaling, FTS5 for search, foreign keys enforced. Schema defined in `db.py`. Tables: users, conversations, messages, attachments, tool_calls, projects, folders, tags, message_embeddings. All entity tables carry `user_id` and `user_display_name` columns for identity attribution. Optional sqlite-vec extension enables vector similarity search via `message_embeddings` virtual table.
+SQLite with WAL journaling, FTS5 for search, foreign keys enforced. Schema defined in `db.py`. Tables: users, conversations, messages, attachments, tool_calls, projects, folders, tags, conversation_tags, message_embeddings, canvases, change_log. Conversations have a `type` column (`chat`, `note`, `document`) controlling behavior. All entity tables carry `user_id` and `user_display_name` columns for identity attribution. Optional sqlite-vec extension enables vector similarity search via the `vec_messages` virtual table (created with `vec0`); `message_embeddings` is a companion regular table storing metadata (content hash, chunk index).
 
 ### Configuration
 
-Config file at `~/.anteroom/config.yaml` (falls back to `~/.parlor/config.yaml` for backward compat). Environment variables override config values with `AI_CHAT_` prefix (e.g., `AI_CHAT_BASE_URL`, `AI_CHAT_API_KEY`, `AI_CHAT_MODEL`, `AI_CHAT_USER_ID`, `AI_CHAT_DISPLAY_NAME`). Token provider pattern (`api_key_command`) enables dynamic API key refresh via external commands. TLS is disabled by default (`app.tls: false`); set to `true` to enable HTTPS with a self-signed certificate. User identity (Ed25519 keypair + UUID) is auto-generated on first run and stored in the `identity` config section. `EmbeddingsConfig` controls vector embeddings: `enabled`, `model`, `dimensions`, `base_url`, `api_key`, `api_key_command`.
+Config file at `~/.anteroom/config.yaml` (falls back to `~/.parlor/config.yaml` for backward compat). Environment variables override config values with `AI_CHAT_` prefix (e.g., `AI_CHAT_BASE_URL`, `AI_CHAT_API_KEY`, `AI_CHAT_MODEL`, `AI_CHAT_USER_ID`, `AI_CHAT_DISPLAY_NAME`). Token provider pattern (`api_key_command`) enables dynamic API key refresh via external commands. TLS is disabled by default (`app.tls: false`); set to `true` to enable HTTPS with a self-signed certificate. User identity (Ed25519 keypair + UUID) is auto-generated on first run and stored in the `identity` config section. `EmbeddingsConfig` controls vector embeddings: `enabled`, `model`, `dimensions`, `base_url`, `api_key`, `api_key_command`. `SafetyConfig` controls tool safety gates: `enabled` flag, `approval_timeout` (seconds, default 120, clamped 10–600), and per-tool `SafetyToolConfig` entries with an `enabled` boolean. Global `custom_patterns` (list of regex strings for bash) and `sensitive_paths` (list of path strings for write_file) are top-level fields on `SafetyConfig`.
 
 ### Developer Workflow
 
