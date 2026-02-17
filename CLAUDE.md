@@ -24,8 +24,10 @@ aroom --allowed-tools bash,write_file       # Pre-allow tools
 aroom --approval-mode auto chat     # Works with subcommands too
 
 # Testing
-pytest tests/ -v                    # All tests (~1038 tests)
-pytest tests/unit/ -v               # Unit tests only
+pytest tests/ -v                    # All tests
+pytest tests/unit/ -v               # Unit tests only (~990 tests)
+pytest tests/e2e/ -v                # E2e tests (requires uvx/npx)
+pytest -m e2e -v                    # Run only e2e-marked tests
 pytest tests/unit/test_tools.py -v  # Single test file
 pytest tests/unit/test_tools.py::test_name -v  # Single test
 pytest --cov=anteroom --cov-report=html  # With coverage
@@ -101,7 +103,9 @@ PyPI package: `anteroom`. Deploy via `/deploy` Claude Code skill which handles: 
 
 - **Async tests** use `@pytest.mark.asyncio` with `asyncio_mode = "auto"` in pyproject.toml
 - **Unit tests** are fully mocked (no I/O), integration tests use real SQLite databases
-- Tests are in `tests/unit/`, `tests/integration/`, `tests/contract/`
+- **E2e tests** start real servers with real MCP servers but mock the AI service. Require `uvx` and/or `npx` on PATH; tests skip gracefully when unavailable
+- Tests are in `tests/unit/`, `tests/integration/`, `tests/contract/`, `tests/e2e/`
+- **Pytest markers**: `e2e` (end-to-end tests requiring real services), `real_ai` (tests that call a real AI backend, require API key)
 - Coverage target: 80%+
 
 ## CI
