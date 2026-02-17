@@ -70,7 +70,7 @@ aroom --version    # Show version
 
 ### Web UI
 
-Full-featured ChatGPT-style interface with conversations, projects, folders, tags, file attachments, MCP tool integration, prompt queuing, command palette, and four built-in themes.
+Full-featured ChatGPT-style interface with conversations, projects, folders, tags, file attachments, MCP tool integration, prompt queuing, canvas panels for AI-generated content (CodeMirror 6 editor), inline safety approvals, command palette, and four built-in themes.
 
 <p align="center">
   <img src="docs/screenshots/theme-midnight.png" alt="Midnight Theme" width="400">
@@ -79,7 +79,7 @@ Full-featured ChatGPT-style interface with conversations, projects, folders, tag
 
 ### CLI Chat
 
-An agentic terminal REPL with built-in tools (read/write/edit files, bash, glob, grep), MCP integration, skills system, and Rich markdown rendering. Type while the AI works --- messages queue automatically.
+An agentic terminal REPL with built-in tools (read/write/edit files, bash, glob, grep, canvas), MCP integration, skills system, safety approval prompts for destructive operations, and Rich markdown rendering. Type while the AI works --- messages queue automatically.
 
 ```bash
 aroom chat                          # Interactive REPL
@@ -104,7 +104,7 @@ Both interfaces share the same agent loop, storage layer, and SQLite database. C
 | **Database** | Parameterized queries, column allowlists, path validation |
 | **Input** | DOMPurify, UUID validation, filename sanitization |
 | **Rate Limiting** | 120 req/min per IP |
-| **CLI Safety** | Destructive command confirmation, path blocking |
+| **Tool Safety** | Destructive action approvals (CLI + Web UI), configurable patterns, sensitive path blocking |
 | **MCP Safety** | SSRF protection, shell metacharacter rejection |
 
 Full details in [SECURITY.md](SECURITY.md).
@@ -129,7 +129,7 @@ pytest tests/ -v
 | | |
 |---|---|
 | **Backend** | Python 3.10+, FastAPI, Uvicorn |
-| **Frontend** | Vanilla JS, marked.js, highlight.js, KaTeX |
+| **Frontend** | Vanilla JS, marked.js, highlight.js, KaTeX, CodeMirror 6 |
 | **CLI** | Rich, prompt-toolkit, tiktoken |
 | **Database** | SQLite with FTS5, WAL journaling |
 | **AI** | OpenAI Python SDK (async streaming) |
