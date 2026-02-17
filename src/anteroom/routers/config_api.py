@@ -304,6 +304,9 @@ async def browse_directory(path: str = "~"):
     """List directories and .db files at the given path for file browsing."""
     try:
         resolved = Path(os.path.expanduser(path)).resolve()
+        home = Path.home().resolve()
+        if not resolved.is_relative_to(home):
+            raise HTTPException(status_code=403, detail="Access denied: path must be within home directory")
         if not resolved.is_dir():
             raise HTTPException(status_code=400, detail="Not a directory")
 

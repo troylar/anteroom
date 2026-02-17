@@ -226,6 +226,21 @@ class EmbeddingsConfig:
 
 
 @dataclass
+class SafetyToolConfig:
+    enabled: bool = True
+
+
+@dataclass
+class SafetyConfig:
+    enabled: bool = True
+    approval_timeout: int = 120
+    bash: SafetyToolConfig = field(default_factory=SafetyToolConfig)
+    write_file: SafetyToolConfig = field(default_factory=SafetyToolConfig)
+    custom_patterns: list[str] = field(default_factory=list)
+    sensitive_paths: list[str] = field(default_factory=list)
+
+
+@dataclass
 class AppConfig:
     ai: AIConfig
     app: AppSettings = field(default_factory=AppSettings)
@@ -234,6 +249,7 @@ class AppConfig:
     cli: CliConfig = field(default_factory=CliConfig)
     identity: UserIdentity | None = None
     embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
+    safety: SafetyConfig = field(default_factory=SafetyConfig)
 
 
 def _resolve_data_dir() -> Path:
@@ -404,6 +420,34 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         api_key_command=emb_api_key_command,
     )
 
+    safety_raw = raw.get("safety", {})
+    safety_enabled = str(safety_raw.get("enabled", os.environ.get("AI_CHAT_SAFETY_ENABLED", "true"))).lower() not in (
+        "false",
+        "0",
+        "no",
+    )
+    safety_timeout = int(safety_raw.get("approval_timeout", 120))
+    safety_timeout = max(10, min(safety_timeout, 600))
+    bash_raw = safety_raw.get("bash", {})
+    bash_safety_enabled = str(bash_raw.get("enabled", "true")).lower() not in ("false", "0", "no")
+    wf_raw = safety_raw.get("write_file", {})
+    wf_safety_enabled = str(wf_raw.get("enabled", "true")).lower() not in ("false", "0", "no")
+    safety_custom_patterns = safety_raw.get("custom_patterns", [])
+    if not isinstance(safety_custom_patterns, list):
+        safety_custom_patterns = []
+    safety_sensitive_paths = safety_raw.get("sensitive_paths", [])
+    if not isinstance(safety_sensitive_paths, list):
+        safety_sensitive_paths = []
+
+    safety_config = SafetyConfig(
+        enabled=safety_enabled,
+        approval_timeout=safety_timeout,
+        bash=SafetyToolConfig(enabled=bash_safety_enabled),
+        write_file=SafetyToolConfig(enabled=wf_safety_enabled),
+        custom_patterns=[str(p) for p in safety_custom_patterns],
+        sensitive_paths=[str(p) for p in safety_sensitive_paths],
+    )
+
     return AppConfig(
         ai=ai,
         app=app_settings,
@@ -412,6 +456,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         cli=cli_config,
         identity=identity,
         embeddings=embeddings_config,
+        safety=safety_config,
     )
 
 

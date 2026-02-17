@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class ConversationSummary(BaseModel):
     id: str
     title: str
+    type: str = "chat"
     created_at: str
     updated_at: str
     message_count: int
@@ -16,6 +17,7 @@ class ConversationSummary(BaseModel):
 class Conversation(BaseModel):
     id: str
     title: str
+    type: str = "chat"
     created_at: str
     updated_at: str
 
@@ -50,6 +52,7 @@ class Message(BaseModel):
 class ConversationDetail(BaseModel):
     id: str
     title: str
+    type: str = "chat"
     created_at: str
     updated_at: str
     messages: list[Message] = Field(default_factory=list)
@@ -80,6 +83,7 @@ class ConversationUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     model: str | None = Field(default=None, max_length=200)
     folder_id: str | None = Field(default=None, max_length=200)
+    type: str | None = Field(default=None, pattern=r"^(chat|note|document)$")
 
 
 class FolderCreate(BaseModel):
@@ -133,6 +137,31 @@ class RewindResponse(BaseModel):
     deleted_messages: int
     reverted_files: list[str]
     skipped_files: list[str]
+
+
+class ConversationCreate(BaseModel):
+    title: str = Field(default="New Conversation", min_length=1, max_length=200)
+    type: str = Field(default="chat", pattern=r"^(chat|note|document)$")
+    project_id: str | None = None
+
+
+class EntryCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=100000)
+
+
+class DocumentContent(BaseModel):
+    content: str = Field(min_length=1, max_length=500000)
+
+
+class CanvasCreate(BaseModel):
+    title: str = Field(default="Untitled", min_length=1, max_length=200)
+    content: str = Field(default="", max_length=100000)
+    language: str | None = Field(default=None, max_length=50)
+
+
+class CanvasUpdate(BaseModel):
+    content: str | None = Field(default=None, max_length=100000)
+    title: str | None = Field(default=None, max_length=200)
 
 
 class ChatRequest(BaseModel):

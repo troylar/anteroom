@@ -83,28 +83,149 @@ class TestToolRegistry:
 
     @pytest.mark.asyncio
     async def test_destructive_command_confirmation_denied(self) -> None:
+        from anteroom.config import SafetyConfig
+        from anteroom.tools.safety import SafetyVerdict
+
         reg = ToolRegistry()
         register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
 
-        async def deny(msg: str) -> bool:
+        async def deny(verdict: SafetyVerdict) -> bool:
             return False
 
         reg.set_confirm_callback(deny)
         result = await reg.call_tool("bash", {"command": "rm -rf /some/dir"})
-        assert "cancelled" in result.get("error", "").lower()
+        assert "denied" in result.get("error", "").lower()
 
     @pytest.mark.asyncio
     async def test_destructive_command_confirmation_allowed(self) -> None:
+        from anteroom.config import SafetyConfig
+        from anteroom.tools.safety import SafetyVerdict
+
         reg = ToolRegistry()
         register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
 
-        async def allow(msg: str) -> bool:
+        async def allow(verdict: SafetyVerdict) -> bool:
             return True
 
         reg.set_confirm_callback(allow)
         result = await reg.call_tool("bash", {"command": "rm nonexistent_file_12345"})
-        # Should actually execute (and likely fail with "No such file")
-        assert "cancelled" not in result.get("error", "")
+        assert "denied" not in result.get("error", "")
+
+    @pytest.mark.asyncio
+    async def test_no_callback_fails_closed(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
+        result = await reg.call_tool("bash", {"command": "rm -rf /some/dir"})
+        assert result.get("safety_blocked") is True
+        assert "no approval channel" in result.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_write_file_sensitive_path_blocked(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
+        result = await reg.call_tool("write_file", {"path": ".env", "content": "SECRET=foo"})
+        assert result.get("safety_blocked") is True
+
+    @pytest.mark.asyncio
+    async def test_safety_disabled_skips_check(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(enabled=False), working_dir="/tmp")
+        result = await reg.call_tool("bash", {"command": "rm nonexistent_file_xyz"})
+        assert result.get("safety_blocked") is not True
+
+    @pytest.mark.asyncio
+    async def test_bash_subgate_disabled_skips_check(self) -> None:
+        from anteroom.config import SafetyConfig, SafetyToolConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(
+            SafetyConfig(bash=SafetyToolConfig(enabled=False)),
+            working_dir="/tmp",
+        )
+        # No callback set — if safety checked, this would fail closed.
+        # With bash sub-gate disabled, it should pass through to the tool.
+        result = await reg.call_tool("bash", {"command": "rm nonexistent_file_xyz"})
+        assert result.get("safety_blocked") is not True
+
+    @pytest.mark.asyncio
+    async def test_per_call_callback_overrides_registry(self) -> None:
+        from anteroom.config import SafetyConfig
+        from anteroom.tools.safety import SafetyVerdict
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
+
+        async def registry_deny(verdict: SafetyVerdict) -> bool:
+            return False
+
+        async def per_call_allow(verdict: SafetyVerdict) -> bool:
+            return True
+
+        reg.set_confirm_callback(registry_deny)
+        # Per-call callback should take precedence over registry callback
+        result = await reg.call_tool("bash", {"command": "rm nonexistent_file_xyz"}, confirm_callback=per_call_allow)
+        assert "denied" not in result.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_write_file_subgate_disabled_skips_check(self) -> None:
+        from anteroom.config import SafetyConfig, SafetyToolConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(
+            SafetyConfig(write_file=SafetyToolConfig(enabled=False)),
+            working_dir="/tmp",
+        )
+        result = await reg.call_tool("write_file", {"path": ".env", "content": "SECRET=foo"})
+        assert result.get("safety_blocked") is not True
+
+    @pytest.mark.asyncio
+    async def test_no_safety_config_set_passes_through(self) -> None:
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        # Never call set_safety_config — should pass through without blocking
+        result = await reg.call_tool("bash", {"command": "rm nonexistent_file_xyz"})
+        assert result.get("safety_blocked") is not True
+
+    @pytest.mark.asyncio
+    async def test_non_safety_tool_passes_through(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
+        # read_file is not a safety-gated tool — should not trigger approval
+        result = await reg.call_tool("read_file", {"path": "/tmp/nonexistent_12345.txt"})
+        assert result.get("safety_blocked") is not True
+
+    @pytest.mark.asyncio
+    async def test_write_file_sensitive_path_callback_approved(self) -> None:
+        from anteroom.config import SafetyConfig
+        from anteroom.tools.safety import SafetyVerdict
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
+
+        async def allow(verdict: SafetyVerdict) -> bool:
+            return True
+
+        reg.set_confirm_callback(allow)
+        result = await reg.call_tool("write_file", {"path": ".env", "content": "SECRET=foo"})
+        assert result.get("safety_blocked") is not True
 
 
 class TestValidatePath:

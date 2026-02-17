@@ -65,7 +65,8 @@ async def semantic_search(
     for conv_id, messages in grouped.items():
         conv = storage.get_conversation(db, conv_id)
         title = conv["title"] if conv else "Unknown"
-        conversations.append({"conversation_id": conv_id, "title": title, "messages": messages})
+        conv_type = conv.get("type", "chat") if conv else "chat"
+        conversations.append({"conversation_id": conv_id, "title": title, "type": conv_type, "messages": messages})
 
     return {"results": conversations}
 
@@ -76,6 +77,7 @@ async def unified_search(
     q: str = Query(..., min_length=1),
     mode: str = Query(default="auto", pattern="^(auto|keyword|semantic)$"),
     limit: int = Query(default=20, ge=1, le=100),
+    type: str | None = Query(default=None, pattern="^(chat|note|document)$"),
 ) -> dict[str, Any]:
     """Unified search: auto selects semantic if available, falls back to keyword."""
     db = _get_db(request)
@@ -109,13 +111,14 @@ async def unified_search(
             }
 
     # Keyword search fallback
-    conversations = storage.list_conversations(db, search=q, limit=limit)
+    conversations = storage.list_conversations(db, search=q, limit=limit, conversation_type=type)
     return {
         "mode": "keyword",
         "results": [
             {
                 "conversation_id": c["id"],
                 "title": c["title"],
+                "type": c.get("type", "chat"),
                 "message_count": c.get("message_count", 0),
             }
             for c in conversations

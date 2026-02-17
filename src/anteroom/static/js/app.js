@@ -3,6 +3,7 @@
 const App = (() => {
     const state = {
         currentConversationId: null,
+        currentConversationType: 'chat',
         currentProjectId: null,
         currentDatabase: null,
         isStreaming: false,
@@ -147,6 +148,7 @@ const App = (() => {
     async function init() {
         _migrateLocalStorage();
         Chat.init();
+        Canvas.init();
         Sidebar.init();
         Palette.init();
         Attachments.init();
@@ -361,14 +363,18 @@ const App = (() => {
     }
 
     async function newConversation() {
+        const payload = {};
+        if (state.currentProjectId) payload.project_id = state.currentProjectId;
         const opts = { method: 'POST' };
-        if (state.currentProjectId) {
+        if (Object.keys(payload).length > 0) {
             opts.headers = { 'Content-Type': 'application/json' };
-            opts.body = JSON.stringify({ project_id: state.currentProjectId });
+            opts.body = JSON.stringify(payload);
         }
         const conv = await api('/api/conversations', opts);
         state.currentConversationId = conv.id;
+        state.currentConversationType = 'chat';
         Chat.loadMessages([]);
+        Canvas.resetCanvas();
         _currentModel = '';
         document.getElementById('model-selector-label').textContent = 'Default model';
         await Sidebar.refresh();
@@ -381,12 +387,15 @@ const App = (() => {
     async function loadConversation(id) {
         state.currentConversationId = id;
         const detail = await api(`/api/conversations/${id}`);
+        state.currentConversationType = detail.type || 'chat';
+        Chat.setConversationType(state.currentConversationType);
         Chat.loadMessages(detail.messages || []);
         Sidebar.setActive(id);
         _currentModel = detail.model || '';
         document.getElementById('model-selector-label').textContent = _currentModel || 'Default model';
         _updateUrl();
         _connectEventSource();
+        Canvas.loadForConversation(id);
     }
 
     // --- URL Params ---
@@ -419,6 +428,8 @@ const App = (() => {
         }
 
         const db = state.currentDatabase || 'personal';
+        const _safeParam = (v) => /^[a-zA-Z0-9_-]+$/.test(v);
+        if (!_safeParam(db)) return;
         let url = `/api/events?db=${encodeURIComponent(db)}&client_id=${encodeURIComponent(state.clientId)}`;
         if (state.currentConversationId) {
             url += `&conversation_id=${encodeURIComponent(state.currentConversationId)}`;
@@ -478,6 +489,13 @@ const App = (() => {
                 Chat.loadMessages([]);
             }
             Sidebar.refresh();
+        });
+
+        _eventSource.addEventListener('approval_required', (e) => {
+            const data = JSON.parse(e.data);
+            if (data.conversation_id === state.currentConversationId) {
+                Chat.showApprovalPrompt(data);
+            }
         });
 
         _eventSource.onerror = () => {
@@ -753,11 +771,7 @@ const App = (() => {
 
     async function loadDatabases() {
         try {
-            // Fetch without db param so we always get the full list
-            const response = await fetch('/api/databases', { credentials: 'same-origin' });
-            if (response.ok) {
-                state.databases = await response.json();
-            }
+            state.databases = await api('/api/databases');
         } catch { /* ignore */ }
         _renderDatabaseList();
     }

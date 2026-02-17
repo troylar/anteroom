@@ -114,16 +114,22 @@ async def handle(
         }
 
     if not base.is_dir():
-        return {"error": f"Path not found: {base_path}"}
+        return {"error": "Path not found"}
 
     if glob and "\x00" in glob:
         return {"error": "Glob pattern contains null bytes"}
 
     file_pattern = glob or "**/*"
     all_matches: list[dict[str, Any]] = []
+    resolved_base = base.resolve()
     try:
         for file_path in sorted(base.glob(file_pattern)):
             if not file_path.is_file():
+                continue
+            try:
+                if not file_path.resolve().is_relative_to(resolved_base):
+                    continue
+            except (OSError, ValueError):
                 continue
             file_matches = _search_file(file_path, regex, context)
             for m in file_matches:
@@ -132,8 +138,8 @@ async def handle(
                     break
             if len(all_matches) >= _MAX_MATCHES:
                 break
-    except OSError as e:
-        return {"error": str(e)}
+    except OSError:
+        return {"error": "Search failed: unable to read target path"}
 
     output = []
     for m in all_matches:

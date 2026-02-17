@@ -40,12 +40,13 @@ async def event_stream(request: Request, db: str = "personal", conversation_id: 
     - ``global:{db}`` always (conversation list changes)
     - ``conversation:{conversation_id}`` when viewing a specific conversation
     """
+    from sse_starlette.sse import EventSourceResponse
+
     _validate_db_name(db)
     if conversation_id:
         _validate_uuid(conversation_id)
 
     if not hasattr(request.app.state, "event_bus"):
-        from sse_starlette.sse import EventSourceResponse
 
         async def empty():
             yield {"event": "error", "data": json.dumps({"message": "Event bus not available"})}

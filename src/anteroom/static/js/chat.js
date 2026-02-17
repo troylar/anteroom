@@ -8,6 +8,7 @@ const Chat = (() => {
     let _rewindPosition = null;
     let _rewindMsgEl = null;
     let _lastSentText = '';
+    let _conversationType = 'chat';
 
     // Remote collaboration state
     let _remoteAssistantEl = null;
@@ -16,13 +17,19 @@ const Chat = (() => {
     // Configure marked for safe link rendering (marked v15 passes token object)
     const renderer = new marked.Renderer();
     const originalLink = renderer.link.bind(renderer);
+    function _safeHref(url) {
+        var s = String(url).trim();
+        if (/^(javascript|data|vbscript):/i.test(s)) return '#';
+        if (/^(https?:|mailto:|\/(?!\/)|#)/i.test(s)) return s;
+        return '#';
+    }
     renderer.link = function(token) {
         try {
             const html = originalLink(token);
             if (!html) throw new Error('empty');
             return html.replace('<a ', '<a target="_blank" rel="noopener noreferrer" ');
         } catch {
-            const href = (token && token.href) || (typeof token === 'string' ? token : '');
+            const href = _safeHref((token && token.href) || (typeof token === 'string' ? token : ''));
             const text = (token && token.text) || href;
             return `<a href="${DOMPurify.sanitize(href)}" target="_blank" rel="noopener noreferrer">${DOMPurify.sanitize(text)}</a>`;
         }
@@ -56,6 +63,23 @@ const Chat = (() => {
         localStorage.setItem('anteroom_stream_raw_mode', val ? 'true' : 'false');
     }
 
+    function setConversationType(type) {
+        _conversationType = type || 'chat';
+        const input = document.getElementById('message-input');
+        const attachBtn = document.getElementById('btn-attach');
+        // Keep backward compat for note/document placeholders
+        if (_conversationType === 'note') {
+            input.placeholder = 'Add entry...';
+            if (attachBtn) attachBtn.style.display = 'none';
+        } else if (_conversationType === 'document') {
+            input.placeholder = 'Add content...';
+            if (attachBtn) attachBtn.style.display = 'none';
+        } else {
+            input.placeholder = 'Type a message...';
+            if (attachBtn) attachBtn.style.display = '';
+        }
+    }
+
     function autoResizeInput() {
         const input = document.getElementById('message-input');
         input.style.height = 'auto';
@@ -69,9 +93,36 @@ const Chat = (() => {
 
         const conversationId = App.state.currentConversationId;
         if (!conversationId) {
-            const conv = await App.api('/api/conversations', { method: 'POST' });
+            const conv = await App.api('/api/conversations', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: _conversationType }),
+            });
             App.state.currentConversationId = conv.id;
+            App.state.currentConversationType = conv.type || 'chat';
+            _conversationType = App.state.currentConversationType;
             Sidebar.refresh();
+        }
+
+        // Note/document mode: POST to /entries endpoint, no AI streaming
+        if (_conversationType === 'note' || _conversationType === 'document') {
+            input.value = '';
+            input.style.height = 'auto';
+            try {
+                const msg = await App.api(
+                    `/api/conversations/${App.state.currentConversationId}/entries`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: text }),
+                    }
+                );
+                _appendNoteEntry(msg);
+                scrollToBottom();
+            } catch (err) {
+                showToast('Failed to add entry: ' + err.message);
+            }
+            return;
         }
 
         _lastSentText = text;
@@ -155,7 +206,6 @@ const Chat = (() => {
                 throw new Error(`HTTP ${response.status}`);
             }
 
-            hideThinking();
             currentAssistantContent = '';
             currentAssistantEl = appendMessage('assistant', '');
 
@@ -202,15 +252,35 @@ const Chat = (() => {
 
     function handleSSEEvent(type, data) {
         switch (type) {
+            case 'thinking':
+                showThinking();
+                break;
             case 'token':
+                hideThinking();
                 currentAssistantContent += data.content;
                 renderAssistantContent();
                 break;
             case 'tool_call_start':
+                hideThinking();
                 renderToolCallStart(data);
                 break;
             case 'tool_call_end':
                 renderToolCallEnd(data);
+                break;
+            case 'canvas_stream_start':
+                Canvas.handleCanvasStreamStart();
+                break;
+            case 'canvas_streaming':
+                Canvas.handleCanvasStreaming(data);
+                break;
+            case 'canvas_created':
+                Canvas.handleCanvasCreated(data);
+                break;
+            case 'canvas_updated':
+                Canvas.handleCanvasUpdated(data);
+                break;
+            case 'canvas_patched':
+                Canvas.handleCanvasPatched(data);
                 break;
             case 'title':
                 Sidebar.updateTitle(App.state.currentConversationId, data.title);
@@ -642,6 +712,402 @@ const Chat = (() => {
         return String(id).replace(/[^a-zA-Z0-9\-_]/g, '');
     }
 
+    function _dateLabel(dateStr) {
+        const d = new Date(dateStr);
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const entry = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        const diff = Math.floor((today - entry) / 86400000);
+        if (diff === 0) return 'Today';
+        if (diff === 1) return 'Yesterday';
+        if (diff < 7) return d.toLocaleDateString(undefined, { weekday: 'long' });
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+    }
+
+    function _dateKey(dateStr) {
+        const d = new Date(dateStr);
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
+
+    function _insertDateHeader(container, label) {
+        const header = document.createElement('div');
+        header.className = 'note-date-header';
+        header.setAttribute('data-date', label);
+        header.innerHTML = `<span class="note-date-line"></span><span class="note-date-label">${escapeHtml(label)}</span><span class="note-date-line"></span>`;
+        container.appendChild(header);
+    }
+
+    function _buildNoteEntry(msg) {
+        const el = document.createElement('div');
+        el.className = 'note-entry';
+        el.setAttribute('data-msg-id', msg.id);
+
+        const header = document.createElement('div');
+        header.className = 'note-entry-header';
+
+        const ts = document.createElement('span');
+        ts.className = 'note-entry-timestamp';
+        ts.textContent = App.formatTimestamp(msg.created_at);
+        ts.title = new Date(msg.created_at).toLocaleString();
+        header.appendChild(ts);
+
+        const actions = document.createElement('div');
+        actions.className = 'note-entry-actions';
+
+        const editBtn = document.createElement('button');
+        editBtn.className = 'note-action-btn';
+        editBtn.title = 'Edit entry';
+        editBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+        editBtn.addEventListener('click', () => _startNoteEntryEdit(el, msg));
+        actions.appendChild(editBtn);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'note-action-btn note-action-delete';
+        deleteBtn.title = 'Delete entry';
+        deleteBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>';
+        deleteBtn.addEventListener('click', () => _confirmDeleteNoteEntry(el, msg));
+        actions.appendChild(deleteBtn);
+
+        header.appendChild(actions);
+        el.appendChild(header);
+
+        const content = document.createElement('div');
+        content.className = 'note-entry-content';
+        content.innerHTML = renderMarkdown(msg.content);
+        renderMath(content);
+        addCodeCopyButtons(content);
+        el.appendChild(content);
+
+        return el;
+    }
+
+    function _startNoteEntryEdit(el, msg) {
+        const contentDiv = el.querySelector('.note-entry-content');
+        const actionsDiv = el.querySelector('.note-entry-actions');
+        if (actionsDiv) actionsDiv.style.display = 'none';
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'note-edit-textarea';
+        textarea.value = msg.content;
+        textarea.rows = Math.max(3, msg.content.split('\n').length + 1);
+
+        const btnRow = document.createElement('div');
+        btnRow.className = 'note-edit-buttons';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'btn-modal-cancel';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', () => {
+            textarea.remove();
+            btnRow.remove();
+            contentDiv.style.display = '';
+            if (actionsDiv) actionsDiv.style.display = '';
+        });
+
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'btn-modal-save';
+        saveBtn.textContent = 'Save';
+        saveBtn.addEventListener('click', async () => {
+            const newContent = textarea.value.trim();
+            if (!newContent) return;
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            try {
+                await App.api(`/api/conversations/${App.state.currentConversationId}/messages/${msg.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: newContent }),
+                });
+                msg.content = newContent;
+                textarea.remove();
+                btnRow.remove();
+                contentDiv.innerHTML = renderMarkdown(newContent);
+                renderMath(contentDiv);
+                addCodeCopyButtons(contentDiv);
+                contentDiv.style.display = '';
+                if (actionsDiv) actionsDiv.style.display = '';
+            } catch (err) {
+                showToast('Failed to save: ' + err.message);
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save';
+            }
+        });
+
+        btnRow.appendChild(cancelBtn);
+        btnRow.appendChild(saveBtn);
+
+        contentDiv.style.display = 'none';
+        contentDiv.parentNode.insertBefore(textarea, contentDiv.nextSibling);
+        contentDiv.parentNode.insertBefore(btnRow, textarea.nextSibling);
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    }
+
+    function _confirmDeleteNoteEntry(el, msg) {
+        const existing = el.querySelector('.note-delete-confirm');
+        if (existing) return;
+
+        const bar = document.createElement('div');
+        bar.className = 'note-delete-confirm';
+        bar.innerHTML = '<span>Delete this entry?</span>';
+
+        const yesBtn = document.createElement('button');
+        yesBtn.className = 'note-delete-yes';
+        yesBtn.textContent = 'Delete';
+        yesBtn.addEventListener('click', async () => {
+            yesBtn.disabled = true;
+            yesBtn.textContent = 'Deleting...';
+            try {
+                await App.api(`/api/conversations/${App.state.currentConversationId}/messages/${msg.id}`, {
+                    method: 'DELETE',
+                });
+                el.classList.add('note-entry-removing');
+                el.addEventListener('animationend', () => el.remove());
+            } catch (err) {
+                showToast('Failed to delete: ' + err.message);
+                bar.remove();
+            }
+        });
+
+        const noBtn = document.createElement('button');
+        noBtn.className = 'note-delete-no';
+        noBtn.textContent = 'Cancel';
+        noBtn.addEventListener('click', () => bar.remove());
+
+        bar.appendChild(noBtn);
+        bar.appendChild(yesBtn);
+        el.appendChild(bar);
+    }
+
+    function _appendNoteEntry(msg) {
+        const container = document.getElementById('messages-container');
+        const welcome = document.getElementById('welcome-message');
+        if (welcome) welcome.style.display = 'none';
+
+        // Check if we need a date header
+        const dateKey = _dateKey(msg.created_at);
+        const lastHeader = container.querySelector('.note-date-header:last-of-type');
+        const lastEntry = container.querySelector('.note-entry:last-of-type');
+        let needsHeader = true;
+        if (lastEntry) {
+            const lastMsgDate = lastEntry.getAttribute('data-date-key');
+            if (lastMsgDate === dateKey) needsHeader = false;
+        }
+        if (needsHeader) {
+            _insertDateHeader(container, _dateLabel(msg.created_at));
+        }
+
+        const el = _buildNoteEntry(msg);
+        el.setAttribute('data-date-key', dateKey);
+        container.appendChild(el);
+    }
+
+    function _loadNoteEntries(messages) {
+        const container = document.getElementById('messages-container');
+        container.innerHTML = '';
+        const welcome = document.getElementById('welcome-message');
+
+        if (messages.length === 0) {
+            if (!welcome) {
+                const w = document.createElement('div');
+                w.id = 'welcome-message';
+                w.className = 'welcome-message';
+                w.innerHTML = '<h2>New Note</h2><p>Start adding entries below.</p>';
+                container.appendChild(w);
+            } else {
+                welcome.innerHTML = '<h2>New Note</h2><p>Start adding entries below.</p>';
+                welcome.style.display = '';
+                container.appendChild(welcome);
+            }
+            return;
+        }
+
+        let lastDateKey = null;
+        messages.forEach(msg => {
+            const dateKey = _dateKey(msg.created_at);
+            if (dateKey !== lastDateKey) {
+                _insertDateHeader(container, _dateLabel(msg.created_at));
+                lastDateKey = dateKey;
+            }
+            const el = _buildNoteEntry(msg);
+            el.setAttribute('data-date-key', dateKey);
+            container.appendChild(el);
+        });
+        scrollToBottom();
+    }
+
+    let _docEditMode = false;
+    let _docRawContent = '';
+
+    function _loadDocumentView(messages) {
+        const container = document.getElementById('messages-container');
+        container.innerHTML = '';
+        _docEditMode = false;
+        const welcome = document.getElementById('welcome-message');
+
+        if (messages.length === 0) {
+            if (!welcome) {
+                const w = document.createElement('div');
+                w.id = 'welcome-message';
+                w.className = 'welcome-message';
+                w.innerHTML = '<h2>New Document</h2><p>Add content below.</p>';
+                container.appendChild(w);
+            } else {
+                welcome.innerHTML = '<h2>New Document</h2><p>Add content below.</p>';
+                welcome.style.display = '';
+                container.appendChild(welcome);
+            }
+            return;
+        }
+
+        _docRawContent = messages.map(m => m.content).join('\n\n');
+
+        // Document toolbar
+        const toolbar = document.createElement('div');
+        toolbar.className = 'document-toolbar';
+        toolbar.id = 'document-toolbar';
+
+        const wordCount = document.createElement('span');
+        wordCount.className = 'document-word-count';
+        wordCount.id = 'document-word-count';
+        wordCount.textContent = _countWords(_docRawContent);
+        toolbar.appendChild(wordCount);
+
+        const editBtn = document.createElement('button');
+        editBtn.className = 'document-edit-btn';
+        editBtn.id = 'document-edit-btn';
+        editBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg><span>Edit</span>';
+        editBtn.addEventListener('click', () => _enterDocEditMode());
+        toolbar.appendChild(editBtn);
+
+        container.appendChild(toolbar);
+
+        // Rendered view
+        const docEl = document.createElement('div');
+        docEl.className = 'document-view';
+        docEl.id = 'document-view';
+        messages.forEach(msg => {
+            const section = document.createElement('div');
+            section.className = 'document-section';
+            section.innerHTML = renderMarkdown(msg.content);
+            renderMath(section);
+            addCodeCopyButtons(section);
+            docEl.appendChild(section);
+        });
+        container.appendChild(docEl);
+
+        // Hidden edit area (shown on toggle)
+        const editArea = document.createElement('div');
+        editArea.className = 'document-edit-area';
+        editArea.id = 'document-edit-area';
+        editArea.style.display = 'none';
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'document-edit-textarea';
+        textarea.id = 'document-edit-textarea';
+        textarea.value = _docRawContent;
+        editArea.appendChild(textarea);
+
+        const btnBar = document.createElement('div');
+        btnBar.className = 'document-edit-buttons';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'btn-modal-cancel';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', () => _exitDocEditMode(false));
+
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'btn-modal-save';
+        saveBtn.id = 'document-save-btn';
+        saveBtn.textContent = 'Save';
+        saveBtn.addEventListener('click', () => _saveDocument());
+
+        btnBar.appendChild(cancelBtn);
+        btnBar.appendChild(saveBtn);
+        editArea.appendChild(btnBar);
+
+        container.appendChild(editArea);
+    }
+
+    function _countWords(text) {
+        const words = text.trim().split(/\s+/).filter(w => w.length > 0);
+        const chars = text.length;
+        return `${words.length} word${words.length !== 1 ? 's' : ''} \u00b7 ${chars.toLocaleString()} char${chars !== 1 ? 's' : ''}`;
+    }
+
+    function _enterDocEditMode() {
+        _docEditMode = true;
+        const view = document.getElementById('document-view');
+        const editArea = document.getElementById('document-edit-area');
+        const editBtn = document.getElementById('document-edit-btn');
+        const textarea = document.getElementById('document-edit-textarea');
+
+        if (view) view.style.display = 'none';
+        if (editArea) editArea.style.display = '';
+        if (editBtn) editBtn.style.display = 'none';
+        if (textarea) {
+            textarea.value = _docRawContent;
+            textarea.focus();
+            textarea.setSelectionRange(0, 0);
+        }
+    }
+
+    function _exitDocEditMode(reload) {
+        _docEditMode = false;
+        const view = document.getElementById('document-view');
+        const editArea = document.getElementById('document-edit-area');
+        const editBtn = document.getElementById('document-edit-btn');
+
+        if (view) view.style.display = '';
+        if (editArea) editArea.style.display = 'none';
+        if (editBtn) editBtn.style.display = '';
+
+        if (reload) {
+            // Re-render the view with updated content
+            if (view) {
+                view.innerHTML = '';
+                const section = document.createElement('div');
+                section.className = 'document-section';
+                section.innerHTML = renderMarkdown(_docRawContent);
+                renderMath(section);
+                addCodeCopyButtons(section);
+                view.appendChild(section);
+            }
+            const wc = document.getElementById('document-word-count');
+            if (wc) wc.textContent = _countWords(_docRawContent);
+        }
+    }
+
+    async function _saveDocument() {
+        const textarea = document.getElementById('document-edit-textarea');
+        const saveBtn = document.getElementById('document-save-btn');
+        if (!textarea) return;
+        const content = textarea.value.trim();
+        if (!content) {
+            showToast('Document cannot be empty');
+            return;
+        }
+
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+
+        try {
+            await App.api(`/api/conversations/${App.state.currentConversationId}/document`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content }),
+            });
+            _docRawContent = content;
+            _exitDocEditMode(true);
+            showToast('Document saved');
+        } catch (err) {
+            showToast('Failed to save: ' + err.message);
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save';
+        }
+    }
+
     function appendMessage(role, content, msgData) {
         const container = document.getElementById('messages-container');
         const welcome = document.getElementById('welcome-message');
@@ -820,6 +1286,16 @@ const Chat = (() => {
     }
 
     function loadMessages(messages) {
+        // Dispatch to type-specific renderer
+        if (_conversationType === 'note') {
+            _loadNoteEntries(messages);
+            return;
+        }
+        if (_conversationType === 'document') {
+            _loadDocumentView(messages);
+            return;
+        }
+
         const container = document.getElementById('messages-container');
         container.innerHTML = '';
         const welcome = document.getElementById('welcome-message');
@@ -993,9 +1469,94 @@ const Chat = (() => {
         scrollToBottom();
     }
 
+    function showApprovalPrompt(data) {
+        const container = document.getElementById('messages-container');
+        if (!container) return;
+
+        const el = document.createElement('div');
+        el.className = 'approval-prompt';
+        el.setAttribute('data-approval-id', data.approval_id);
+
+        const icon = document.createElement('div');
+        icon.className = 'approval-icon';
+        icon.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+
+        const body = document.createElement('div');
+        body.className = 'approval-body';
+
+        const title = document.createElement('div');
+        title.className = 'approval-title';
+        title.textContent = 'Approval Required';
+        body.appendChild(title);
+
+        const reason = document.createElement('div');
+        reason.className = 'approval-reason';
+        reason.textContent = data.reason || 'A potentially destructive operation needs your confirmation.';
+        body.appendChild(reason);
+
+        if (data.details) {
+            const details = document.createElement('div');
+            details.className = 'approval-details';
+            if (data.details.command) {
+                const code = document.createElement('code');
+                code.textContent = data.details.command;
+                details.appendChild(code);
+            } else if (data.details.path) {
+                const code = document.createElement('code');
+                code.textContent = data.details.path;
+                details.appendChild(code);
+            }
+            body.appendChild(details);
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'approval-actions';
+
+        const denyBtn = document.createElement('button');
+        denyBtn.className = 'approval-btn approval-deny';
+        denyBtn.textContent = 'Deny';
+        denyBtn.addEventListener('click', () => _respondApproval(data.approval_id, false, el));
+        actions.appendChild(denyBtn);
+
+        const allowBtn = document.createElement('button');
+        allowBtn.className = 'approval-btn approval-allow';
+        allowBtn.textContent = 'Allow';
+        allowBtn.addEventListener('click', () => _respondApproval(data.approval_id, true, el));
+        actions.appendChild(allowBtn);
+
+        body.appendChild(actions);
+        el.appendChild(icon);
+        el.appendChild(body);
+        container.appendChild(el);
+        scrollToBottom();
+    }
+
+    async function _respondApproval(approvalId, approved, el) {
+        const buttons = el.querySelectorAll('.approval-btn');
+        buttons.forEach(b => { b.disabled = true; });
+
+        try {
+            await App.api(`/api/approvals/${encodeURIComponent(approvalId)}/respond`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ approved }),
+            });
+            el.classList.add(approved ? 'approval-allowed' : 'approval-denied');
+            const status = document.createElement('div');
+            status.className = 'approval-status';
+            status.textContent = approved ? 'Allowed' : 'Denied';
+            const actionsEl = el.querySelector('.approval-actions');
+            if (actionsEl) actionsEl.replaceWith(status);
+        } catch (err) {
+            buttons.forEach(b => { b.disabled = false; });
+            showToast('Failed to respond: ' + err.message);
+        }
+    }
+
     return {
         init, sendMessage, loadMessages, stopGeneration, setStreaming, escapeHtml,
-        streamChatResponse, isRawMode, setRawMode,
+        streamChatResponse, isRawMode, setRawMode, setConversationType,
         appendRemoteMessage, startRemoteStream, handleRemoteToken, finalizeRemoteStream,
+        showApprovalPrompt,
     };
 })();
