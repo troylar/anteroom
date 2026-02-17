@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import re
 import time
 from typing import Any, Callable, Coroutine
 
@@ -17,7 +18,10 @@ MAX_SUBAGENT_DEPTH = 3
 MAX_CONCURRENT_SUBAGENTS = 5
 MAX_TOTAL_SUBAGENTS = 20
 MAX_OUTPUT_CHARS = 4000
+MAX_PROMPT_CHARS = 32_000
 SUBAGENT_MAX_ITERATIONS = 25
+
+_MODEL_PATTERN = re.compile(r"^[a-zA-Z0-9._:/-]{1,128}$")
 
 EventSink = Callable[[str, AgentEvent], Coroutine[Any, Any, None]]
 
@@ -109,6 +113,12 @@ async def handle(
     """Execute a sub-agent with an isolated conversation context."""
     if _ai_service is None:
         return {"error": "Sub-agent requires AI service context"}
+
+    if len(prompt) > MAX_PROMPT_CHARS:
+        return {"error": f"Prompt exceeds maximum length ({MAX_PROMPT_CHARS} characters)"}
+
+    if model is not None and not _MODEL_PATTERN.match(model):
+        return {"error": "Invalid model identifier"}
 
     if _depth >= MAX_SUBAGENT_DEPTH:
         return {"error": f"Maximum sub-agent depth ({MAX_SUBAGENT_DEPTH}) reached"}

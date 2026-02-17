@@ -12,6 +12,7 @@ from anteroom.tools.subagent import (
     _SUBAGENT_SYSTEM_PROMPT,
     DEFINITION,
     MAX_OUTPUT_CHARS,
+    MAX_PROMPT_CHARS,
     MAX_SUBAGENT_DEPTH,
     SubagentLimiter,
     handle,
@@ -72,6 +73,71 @@ class TestSubagentHandler:
         )
         assert "error" in result
         assert "limiter" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_prompt_too_long(self) -> None:
+        result = await handle(
+            prompt="x" * (MAX_PROMPT_CHARS + 1),
+            _ai_service=_mock_ai(),
+            _tool_registry=MagicMock(),
+            _depth=0,
+            _limiter=_make_limiter(),
+        )
+        assert "error" in result
+        assert "maximum length" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_prompt_at_limit_accepted(self) -> None:
+        """Prompt exactly at MAX_PROMPT_CHARS should not be rejected."""
+        mock_registry = MagicMock()
+        mock_registry.get_openai_tools.return_value = []
+
+        async def mock_agent_loop(**kwargs):
+            yield AgentEvent(kind="done", data={})
+
+        with patch("anteroom.tools.subagent.run_agent_loop", side_effect=mock_agent_loop):
+            with patch("anteroom.tools.subagent.AIService"):
+                result = await handle(
+                    prompt="x" * MAX_PROMPT_CHARS,
+                    _ai_service=_mock_ai(),
+                    _tool_registry=mock_registry,
+                    _depth=0,
+                    _limiter=_make_limiter(),
+                )
+        assert "error" not in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_model_rejected(self) -> None:
+        result = await handle(
+            prompt="test",
+            model="'; DROP TABLE models; --",
+            _ai_service=_mock_ai(),
+            _tool_registry=MagicMock(),
+            _depth=0,
+            _limiter=_make_limiter(),
+        )
+        assert "error" in result
+        assert "Invalid model" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_valid_model_accepted(self) -> None:
+        mock_registry = MagicMock()
+        mock_registry.get_openai_tools.return_value = []
+
+        async def mock_agent_loop(**kwargs):
+            yield AgentEvent(kind="done", data={})
+
+        with patch("anteroom.tools.subagent.run_agent_loop", side_effect=mock_agent_loop):
+            with patch("anteroom.tools.subagent.AIService"):
+                result = await handle(
+                    prompt="test",
+                    model="gpt-4o-mini",
+                    _ai_service=_mock_ai(),
+                    _tool_registry=mock_registry,
+                    _depth=0,
+                    _limiter=_make_limiter(),
+                )
+        assert "error" not in result
 
     @pytest.mark.asyncio
     async def test_max_depth_exceeded(self) -> None:
