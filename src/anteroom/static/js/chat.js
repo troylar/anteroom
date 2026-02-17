@@ -1580,6 +1580,6 @@ const Chat = (() => {
         init, sendMessage, loadMessages, stopGeneration, setStreaming, escapeHtml,
         streamChatResponse, isRawMode, setRawMode, setConversationType,
         appendRemoteMessage, startRemoteStream, handleRemoteToken, finalizeRemoteStream,
-        showApprovalPrompt, resolveApprovalCard,
+        showApprovalPrompt, resolveApprovalCard, showThinkingFromEvent: showThinking,
     };
 })();

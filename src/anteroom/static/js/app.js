@@ -503,6 +503,13 @@ const App = (() => {
             Chat.resolveApprovalCard(data.approval_id, data.approved, data.reason);
         });
 
+        _eventSource.addEventListener('approval_executing', (e) => {
+            const data = JSON.parse(e.data);
+            if (data.conversation_id === state.currentConversationId) {
+                Chat.showThinkingFromEvent();
+            }
+        });
+
         _eventSource.onerror = () => {
             // Reconnect after a delay
             setTimeout(() => {

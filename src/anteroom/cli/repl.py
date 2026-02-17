@@ -466,9 +466,11 @@ async def run_cli(
         elif verdict.details.get("path"):
             renderer.console.print(f"  Path: [dim]{verdict.details['path']}[/dim]")
         try:
-            loop = asyncio.get_event_loop()
-            answer = await loop.run_in_executor(
-                None, input, "  [y] Allow once  [s] Allow for session  [a] Allow always  [n] Deny: "
+            from prompt_toolkit import PromptSession as _ConfirmSession
+
+            _confirm_session = _ConfirmSession()
+            answer = await _confirm_session.prompt_async(
+                "  [y] Allow once  [s] Allow for session  [a] Allow always  [n] Deny: "
             )
             choice = answer.strip().lower()
             if choice in ("a", "always"):
