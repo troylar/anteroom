@@ -527,8 +527,8 @@ def render_welcome(
 
     console.print()
     console.print(f"[#C5A059]  {_BOX_TOP}[/]")
-    console.print("[#C5A059]  \u2502         [bold]P A R L O R[/bold]         \u2502[/]")
-    console.print("[#C5A059]  \u2502    [#94A3B8]the digital speakeasy[/]    \u2502[/]")
+    console.print("[#C5A059]  \u2502       [bold]A N T E R O O M[/bold]       \u2502[/]")
+    console.print("[#C5A059]  \u2502    [#94A3B8]the secure AI gateway[/]    \u2502[/]")
     console.print(f"[#C5A059]  {_BOX_BOT}[/]")
     console.print()
 

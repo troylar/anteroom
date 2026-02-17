@@ -500,6 +500,19 @@ async def chat(conversation_id: str, request: Request):
                 except Exception as e:
                     logger.warning("Could not persist 'Allow Always' for %s: %s", verdict.tool_name, e)
 
+            # Notify UI that tool is now executing (chat SSE stream is blocked during approval)
+            if event_bus:
+                await event_bus.publish(
+                    f"conversation:{conversation_id}",
+                    {
+                        "type": "approval_executing",
+                        "data": {
+                            "conversation_id": conversation_id,
+                            "tool_name": verdict.tool_name,
+                        },
+                    },
+                )
+
         return approved
 
     async def _tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
