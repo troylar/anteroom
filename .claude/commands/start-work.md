@@ -11,11 +11,14 @@ Set up everything needed to begin implementing a GitHub issue.
 ## Usage
 
 ```
-/start-work 83                  # Start work on issue #83
-/start-work 83 --plan-only      # Just create the plan, don't create a branch
+/start-work 83                  # Start work on issue #83 (worktree, default)
+/start-work 83 --no-worktree    # Start on a branch in the current tree instead
+/start-work 83 --plan-only      # Just create the plan, don't create a branch or worktree
 ```
 
 The argument is a GitHub issue number.
+
+By default, work is set up in a **git worktree** — a separate working directory linked to the same repo. This keeps your current branch clean and lets you work on multiple features simultaneously without stashing. Use `--no-worktree` if you prefer a traditional branch in the current tree.
 
 ## Workflow
 
@@ -85,19 +88,38 @@ If a branch or PR already exists, show it and ask the user how to proceed:
 - Start fresh (new branch)
 - Abort
 
-### Step 3: Create Branch
+### Step 3: Create Branch and Workspace
 
 Generate a branch name from the issue:
 - Format: `issue-<N>-<short-description>`
 - `<short-description>`: 2-4 words from the issue title, kebab-case, max 50 chars total
 - Example: issue #83 "Add knowledge notebook support" → `issue-83-knowledge-notebooks`
 
+If `--plan-only` was passed, skip branch/workspace creation.
+
+#### Default: Worktree
+
+Create a branch and set up a worktree in a sibling directory:
+
+```bash
+git fetch origin main
+git branch issue-<N>-<description> origin/main
+git worktree add ../<repo-name>-issue-<N> issue-<N>-<description>
+```
+
+Install dev dependencies in the worktree:
+```bash
+cd ../<repo-name>-issue-<N> && pip install -e ".[dev]" -q
+```
+
+The worktree path follows the pattern: `../<repo-name>-issue-<N>` (sibling to the main repo directory).
+
+#### With `--no-worktree`: Traditional Branch
+
 ```bash
 git checkout main && git pull origin main
 git checkout -b issue-<N>-<short-description>
 ```
-
-If `--plan-only` was passed, skip branch creation.
 
 ### Step 4: Deep Code Exploration (parallel agents)
 
@@ -162,15 +184,17 @@ Print:
   🚀 Ready to Work: #<N> — <title>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  🔀 Branch:   issue-<N>-<description>
-  📋 Plan:     <number> steps across <number> files
-  🧪 Tests:    <number> existing, <number> new needed
-  🎯 Vision:   ✅ supports <principles>
+  🔀 Branch:     issue-<N>-<description>
+  📂 Worktree:   ../<repo>-issue-<N>  (or "current directory" if --no-worktree)
+  📋 Plan:       <number> steps across <number> files
+  🧪 Tests:      <number> existing, <number> new needed
+  🎯 Vision:     ✅ supports <principles>
 
 <The implementation plan from Step 5>
 
 ────────────────────────────────────────────
-  👉 Next: say "go" to start, or adjust the plan
+  👉 Next: cd ../<repo>-issue-<N> and say "go",
+           or adjust the plan
 ────────────────────────────────────────────
 ```
 
