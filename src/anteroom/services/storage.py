@@ -18,6 +18,8 @@ import filetype
 logger = logging.getLogger(__name__)
 
 
+VALID_CONVERSATION_TYPES = {"chat", "note", "document"}
+
 _ALLOWED_UPDATE_COLUMNS: set[str] = {
     "name",
     "instructions",
@@ -28,6 +30,7 @@ _ALLOWED_UPDATE_COLUMNS: set[str] = {
     "position",
     "color",
     "folder_id",
+    "type",
 }
 
 
@@ -362,18 +365,22 @@ def create_conversation(
     project_id: str | None = None,
     user_id: str | None = None,
     user_display_name: str | None = None,
+    conversation_type: str = "chat",
 ) -> dict[str, Any]:
+    if conversation_type not in VALID_CONVERSATION_TYPES:
+        raise ValueError(f"Invalid conversation type: {conversation_type!r}")
     cid = _uuid()
     now = _now()
     db.execute(
-        "INSERT INTO conversations (id, title, project_id, user_id, user_display_name, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (cid, title, project_id, user_id, user_display_name, now, now),
+        "INSERT INTO conversations (id, title, type, project_id, user_id, user_display_name, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (cid, title, conversation_type, project_id, user_id, user_display_name, now, now),
     )
     db.commit()
     return {
         "id": cid,
         "title": title,
+        "type": conversation_type,
         "model": None,
         "project_id": project_id,
         "user_id": user_id,
@@ -405,58 +412,52 @@ def list_conversations(
     project_id: str | None = None,
     limit: int = DEFAULT_PAGE_LIMIT,
     offset: int = 0,
+    conversation_type: str | None = None,
 ) -> list[dict[str, Any]]:
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    use_fts = False
     if search:
         safe_search = _sanitize_fts_query(search)
-        if project_id:
-            rows = db.execute_fetchall(
-                """
-                SELECT c.id, c.title, c.folder_id, c.created_at, c.updated_at,
-                       (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
-                FROM conversations c
-                JOIN conversations_fts fts ON fts.conversation_id = c.id
-                WHERE conversations_fts MATCH ? AND c.project_id = ?
-                ORDER BY c.updated_at DESC
-                LIMIT ? OFFSET ?
-                """,
-                (safe_search, project_id, limit, offset),
-            )
-        else:
-            rows = db.execute_fetchall(
-                """
-                SELECT c.id, c.title, c.folder_id, c.created_at, c.updated_at,
-                       (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
-                FROM conversations c
-                JOIN conversations_fts fts ON fts.conversation_id = c.id
-                WHERE conversations_fts MATCH ?
-                ORDER BY c.updated_at DESC
-                LIMIT ? OFFSET ?
-                """,
-                (safe_search, limit, offset),
-            )
-    elif project_id:
-        rows = db.execute_fetchall(
-            """
-            SELECT c.id, c.title, c.folder_id, c.created_at, c.updated_at,
+        use_fts = True
+        conditions.append("conversations_fts MATCH ?")
+        params.append(safe_search)
+
+    if project_id:
+        conditions.append("c.project_id = ?")
+        params.append(project_id)
+
+    if conversation_type and conversation_type in VALID_CONVERSATION_TYPES:
+        conditions.append("c.type = ?")
+        params.append(conversation_type)
+
+    # SECURITY-REVIEW: conditions list contains only static literal strings (never user input);
+    # all user values are in params as bind parameters. Safe query-builder pattern.
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    params.extend([limit, offset])
+
+    if use_fts:
+        query = f"""
+            SELECT c.id, c.title, c.type, c.folder_id, c.created_at, c.updated_at,
                    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
             FROM conversations c
-            WHERE c.project_id = ?
+            JOIN conversations_fts fts ON fts.conversation_id = c.id
+            {where}
             ORDER BY c.updated_at DESC
             LIMIT ? OFFSET ?
-            """,
-            (project_id, limit, offset),
-        )
+        """
     else:
-        rows = db.execute_fetchall(
-            """
-            SELECT c.id, c.title, c.folder_id, c.created_at, c.updated_at,
+        query = f"""
+            SELECT c.id, c.title, c.type, c.folder_id, c.created_at, c.updated_at,
                    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
             FROM conversations c
+            {where}
             ORDER BY c.updated_at DESC
             LIMIT ? OFFSET ?
-            """,
-            (limit, offset),
-        )
+        """
+
+    rows = db.execute_fetchall(query, tuple(params))
     results = [dict(r) for r in rows]
     for conv in results:
         conv["tags"] = get_conversation_tags(db, conv["id"])
@@ -468,6 +469,20 @@ def update_conversation_title(db: sqlite3.Connection, conversation_id: str, titl
     db.execute(
         "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
         (title, now, conversation_id),
+    )
+    db.commit()
+    return get_conversation(db, conversation_id)
+
+
+def update_conversation_type(
+    db: sqlite3.Connection, conversation_id: str, conversation_type: str
+) -> dict[str, Any] | None:
+    if conversation_type not in VALID_CONVERSATION_TYPES:
+        raise ValueError(f"Invalid conversation type: {conversation_type!r}")
+    now = _now()
+    db.execute(
+        "UPDATE conversations SET type = ?, updated_at = ? WHERE id = ?",
+        (conversation_type, now, conversation_id),
     )
     db.commit()
     return get_conversation(db, conversation_id)
@@ -733,6 +748,58 @@ def update_message_content(
     return dict(updated) if updated else None
 
 
+def delete_message(
+    db: sqlite3.Connection,
+    conversation_id: str,
+    message_id: str,
+) -> bool:
+    """Delete a single message by ID, validating it belongs to the given conversation."""
+    row = db.execute_fetchone(
+        "SELECT id FROM messages WHERE id = ? AND conversation_id = ?",
+        (message_id, conversation_id),
+    )
+    if not row:
+        return False
+    db.execute("DELETE FROM messages WHERE id = ? AND conversation_id = ?", (message_id, conversation_id))
+    now = _now()
+    db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+    db.commit()
+    return True
+
+
+def replace_document_content(
+    db: sqlite3.Connection,
+    conversation_id: str,
+    content: str,
+    user_id: str | None = None,
+    user_display_name: str | None = None,
+) -> dict[str, Any]:
+    """Replace all messages in a document conversation with a single new message."""
+    mid = _uuid()
+    now = _now()
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+        conn.execute(
+            "INSERT INTO messages (id, conversation_id, role, content, user_id, user_display_name,"
+            " created_at, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (mid, conversation_id, "user", content, user_id, user_display_name, now, 0),
+        )
+        conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (now, conversation_id),
+        )
+    return {
+        "id": mid,
+        "conversation_id": conversation_id,
+        "role": "user",
+        "content": content,
+        "user_id": user_id,
+        "user_display_name": user_display_name,
+        "created_at": now,
+        "position": 0,
+    }
+
+
 def delete_messages_after_position(
     db: sqlite3.Connection,
     conversation_id: str,
@@ -949,6 +1016,98 @@ def list_tool_calls(db: sqlite3.Connection, message_id: str) -> list[dict[str, A
         d["output"] = json.loads(output) if output else None
         result.append(d)
     return result
+
+
+# --- Canvases ---
+
+
+def create_canvas(
+    db: sqlite3.Connection,
+    conversation_id: str,
+    title: str = "Untitled",
+    content: str = "",
+    language: str | None = None,
+    user_id: str | None = None,
+    user_display_name: str | None = None,
+) -> dict[str, Any]:
+    cid = _uuid()
+    now = _now()
+    db.execute(
+        "INSERT INTO canvases (id, conversation_id, title, content, language, version,"
+        " created_at, updated_at, user_id, user_display_name)"
+        " VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+        (cid, conversation_id, title, content, language, now, now, user_id, user_display_name),
+    )
+    db.commit()
+    return {
+        "id": cid,
+        "conversation_id": conversation_id,
+        "title": title,
+        "content": content,
+        "language": language,
+        "version": 1,
+        "created_at": now,
+        "updated_at": now,
+        "user_id": user_id,
+        "user_display_name": user_display_name,
+    }
+
+
+def get_canvas(db: sqlite3.Connection, canvas_id: str) -> dict[str, Any] | None:
+    row = db.execute_fetchone("SELECT * FROM canvases WHERE id = ?", (canvas_id,))
+    if not row:
+        return None
+    return dict(row)
+
+
+def get_canvas_for_conversation(db: sqlite3.Connection, conversation_id: str) -> dict[str, Any] | None:
+    row = db.execute_fetchone(
+        "SELECT * FROM canvases WHERE conversation_id = ? ORDER BY updated_at DESC LIMIT 1",
+        (conversation_id,),
+    )
+    if not row:
+        return None
+    return dict(row)
+
+
+def update_canvas(
+    db: sqlite3.Connection,
+    canvas_id: str,
+    content: str | None = None,
+    title: str | None = None,
+) -> dict[str, Any] | None:
+    canvas = get_canvas(db, canvas_id)
+    if not canvas:
+        return None
+    now = _now()
+    if content is not None and title is not None:
+        db.execute(
+            "UPDATE canvases SET version = version + 1, updated_at = ?, content = ?, title = ? WHERE id = ?",
+            (now, content, title, canvas_id),
+        )
+    elif content is not None:
+        db.execute(
+            "UPDATE canvases SET version = version + 1, updated_at = ?, content = ? WHERE id = ?",
+            (now, content, canvas_id),
+        )
+    elif title is not None:
+        db.execute(
+            "UPDATE canvases SET version = version + 1, updated_at = ?, title = ? WHERE id = ?",
+            (now, title, canvas_id),
+        )
+    else:
+        return canvas
+    db.commit()
+    return get_canvas(db, canvas_id)
+
+
+def delete_canvas(db: sqlite3.Connection, canvas_id: str) -> bool:
+    canvas = get_canvas(db, canvas_id)
+    if not canvas:
+        return False
+    db.execute("DELETE FROM canvases WHERE id = ?", (canvas_id,))
+    db.commit()
+    return True
 
 
 # --- Embeddings ---

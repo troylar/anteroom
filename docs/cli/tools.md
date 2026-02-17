@@ -1,6 +1,6 @@
 # Built-in Tools
 
-Six tools ship out of the box with no MCP server required.
+Nine tools ship out of the box with no MCP server required.
 
 ## Tool Reference
 
@@ -80,6 +80,42 @@ Regex search across files with context lines and file-type filtering.
 
 Maximum 200 matches. Files over 5MB are skipped.
 
+### create_canvas
+
+Create a named canvas panel alongside the chat to display rich content (markdown, code, reports).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `canvas_id` | string | Unique identifier for the canvas |
+| `title` | string | Display title shown in the panel header |
+| `content` | string | Initial content (markdown supported) |
+| `content_type` | string | `markdown`, `code`, or `text` (default: `markdown`) |
+
+Emits `canvas_created` and `canvas_stream_start`/`canvas_streaming` SSE events during generation.
+
+### update_canvas
+
+Replace the full content of an existing canvas.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `canvas_id` | string | Canvas to update |
+| `content` | string | New content (replaces existing) |
+| `title` | string | Updated title (optional) |
+
+Emits a `canvas_updated` SSE event.
+
+### patch_canvas
+
+Apply incremental search-and-replace edits to an existing canvas. More token-efficient than `update_canvas` for small changes.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `canvas_id` | string | Canvas to patch |
+| `edits` | array | List of `{"old_text": "...", "new_text": "..."}` objects |
+
+Each edit must match exactly once. Emits a `canvas_patched` SSE event.
+
 ## How Tools Work
 
 All file tools resolve paths relative to the working directory (or accept absolute paths). Every tool returns structured JSON that the AI uses to inform its next action.
@@ -99,4 +135,4 @@ cli:
   builtin_tools: false
 ```
 
-This disables all six built-in tools. MCP tools (if configured) still work.
+This disables all nine built-in tools. MCP tools (if configured) still work.

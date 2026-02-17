@@ -40,8 +40,8 @@ async def handle(path: str, offset: int = 1, limit: int | None = None, **_: Any)
     try:
         with open(resolved, encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
-    except OSError as e:
-        return {"error": str(e)}
+    except OSError:
+        return {"error": "Unable to read file"}
 
     start = max(0, offset - 1)
     end = start + limit if limit else len(lines)

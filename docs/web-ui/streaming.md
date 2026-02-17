@@ -34,3 +34,27 @@ Tool calls render as expandable detail panels:
 ## Thinking Indicator
 
 Between tool execution and the next API call, Anteroom emits a `"thinking"` event that triggers a pulsing dots animation in the UI. This provides visual feedback that the AI is processing tool results before continuing.
+
+## Canvas Streaming
+
+When the AI calls `create_canvas`, `update_canvas`, or `patch_canvas`, a panel appears alongside the chat and updates in real-time via the following SSE events:
+
+| Event | When emitted | Payload fields |
+|---|---|---|
+| `canvas_stream_start` | AI begins generating canvas content | `canvas_id`, `title`, `content_type` |
+| `canvas_streaming` | Each streamed content chunk | `canvas_id`, `delta` |
+| `canvas_created` | `create_canvas` completes | `canvas_id`, `title`, `content` |
+| `canvas_updated` | `update_canvas` completes | `canvas_id`, `content` |
+| `canvas_patched` | `patch_canvas` completes | `canvas_id`, `edits_applied` |
+
+Canvas content is streamed token-by-token using `tool_call_args_delta` events from `ai_service.py`, giving the same live-render experience as normal text responses.
+
+## Safety Approval Events
+
+When a destructive tool call is intercepted by the safety gate, the stream emits an `approval_required` event before pausing:
+
+| Event | Payload fields |
+|---|---|
+| `approval_required` | `approval_id`, `tool_name`, `command` (or `path`) |
+
+The browser renders an inline Approve / Deny prompt inside the tool call panel. The user's response is submitted to `POST /api/approvals/{approval_id}/respond`. See [Tool Safety](../security/tool-safety.md#web-ui-approval-flow) for the full flow.

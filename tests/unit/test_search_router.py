@@ -134,6 +134,80 @@ class TestSemanticSearch:
         assert resp.status_code == 500
 
 
+class TestSearchTypeFilter:
+    """Type filter parameter on unified search endpoint."""
+
+    def test_keyword_search_with_type_filter(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.search.storage") as mock_storage:
+            mock_storage.list_conversations.return_value = [
+                {"id": "c1", "title": "Note Conv", "type": "note", "message_count": 3}
+            ]
+            client = TestClient(app)
+            resp = client.get("/api/search?q=hello&mode=keyword&type=note")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["mode"] == "keyword"
+            mock_storage.list_conversations.assert_called_once()
+            call_kwargs = mock_storage.list_conversations.call_args
+            assert call_kwargs.kwargs.get("conversation_type") == "note"
+
+    def test_keyword_search_results_include_type(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.search.storage") as mock_storage:
+            mock_storage.list_conversations.return_value = [
+                {"id": "c1", "title": "A Doc", "type": "document", "message_count": 1}
+            ]
+            client = TestClient(app)
+            resp = client.get("/api/search?q=hello&mode=keyword")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["results"][0]["type"] == "document"
+
+    def test_invalid_type_filter_rejected(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.get("/api/search?q=hello&type=invalid")
+        assert resp.status_code == 422
+
+    def test_sql_injection_type_filter_rejected(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.get("/api/search?q=hello&type=chat' OR '1'='1")
+        assert resp.status_code == 422
+
+    def test_no_type_filter_passes_none(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.search.storage") as mock_storage:
+            mock_storage.list_conversations.return_value = []
+            client = TestClient(app)
+            resp = client.get("/api/search?q=hello&mode=keyword")
+            assert resp.status_code == 200
+            call_kwargs = mock_storage.list_conversations.call_args
+            assert call_kwargs.kwargs.get("conversation_type") is None
+
+
+class TestSemanticSearchTypeInResults:
+    """Semantic search results include conversation type."""
+
+    def test_semantic_results_include_type(self) -> None:
+        service = AsyncMock()
+        service.embed = AsyncMock(return_value=[0.1] * 1536)
+        app = _make_app(vec_enabled=True, embedding_service=service)
+
+        with patch("anteroom.routers.search.storage") as mock_storage:
+            mock_storage.search_similar_messages.return_value = [
+                {"message_id": "m1", "conversation_id": "c1", "content": "Hello", "role": "user", "distance": 0.1}
+            ]
+            mock_storage.get_conversation.return_value = {"title": "My Note", "type": "note"}
+
+            client = TestClient(app)
+            resp = client.get("/api/search/semantic?q=hello")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["results"][0]["type"] == "note"
+
+
 class TestAutoModeFallback:
     def test_auto_falls_back_to_keyword_when_embed_returns_none(self) -> None:
         service = AsyncMock()

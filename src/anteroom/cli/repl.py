@@ -353,11 +353,14 @@ def _expand_file_references(text: str, working_dir: str) -> str:
     @src/          -> includes directory listing
     @"path with spaces/file.py" -> handles quoted paths
     """
+    from ..tools.security import validate_path as _validate_ref_path
 
     def _replace(match: re.Match[str]) -> str:
         raw_path = match.group(1).strip("\"'")
-        full_path = Path(working_dir) / raw_path if not os.path.isabs(raw_path) else Path(raw_path)
-        resolved = full_path.resolve()
+        validated, error = _validate_ref_path(raw_path, working_dir)
+        if error:
+            return match.group(0)  # Skip blocked paths silently
+        resolved = Path(validated)
 
         if resolved.is_file():
             try:
@@ -453,15 +456,19 @@ async def run_cli(
             logger.warning("Failed to start MCP servers: %s", e)
             renderer.render_error(f"MCP startup failed: {e}")
 
-    # Set up confirmation prompt for destructive operations
-    async def _confirm_destructive(message: str) -> bool:
-        renderer.console.print(f"\n[yellow bold]Warning:[/yellow bold] {message}")
+    # Set up safety configuration and confirmation callback
+    from ..tools.safety import SafetyVerdict
+
+    async def _confirm_destructive(verdict: SafetyVerdict) -> bool:
+        renderer.console.print(f"\n[yellow bold]Warning:[/yellow bold] {verdict.reason}")
         try:
-            answer = input("  Proceed? [y/N] ").strip().lower()
-            return answer in ("y", "yes")
+            loop = asyncio.get_event_loop()
+            answer = await loop.run_in_executor(None, input, "  Proceed? [y/N] ")
+            return answer.strip().lower() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
             return False
 
+    tool_registry.set_safety_config(config.safety, working_dir=working_dir)
     tool_registry.set_confirm_callback(_confirm_destructive)
 
     # Build unified tool executor
@@ -472,9 +479,12 @@ async def run_cli(
             return await mcp_manager.call_tool(tool_name, arguments)
         raise ValueError(f"Unknown tool: {tool_name}")
 
-    # Build unified tool list
+    # Build unified tool list (exclude canvas tools — they require web UI context)
+    _canvas_tool_names = {"create_canvas", "update_canvas", "patch_canvas"}
     tools_openai: list[dict[str, Any]] = []
-    tools_openai.extend(tool_registry.get_openai_tools())
+    tools_openai.extend(
+        t for t in tool_registry.get_openai_tools() if t.get("function", {}).get("name") not in _canvas_tool_names
+    )
     if mcp_manager:
         mcp_tools = mcp_manager.get_openai_tools()
         if mcp_tools:
@@ -743,6 +753,7 @@ async def _run_repl(
 
     commands = [
         "new",
+        "append",
         "last",
         "list",
         "search",
@@ -878,7 +889,13 @@ async def _run_repl(
             [
                 ("bold", " Conversations\n"),
                 (cmd, "  /new"),
-                (desc, "              Start a new conversation\n"),
+                (desc, "              Start a new chat conversation\n"),
+                (cmd, "  /new note <t>"),
+                (desc, "     Start a new note\n"),
+                (cmd, "  /new doc <t>"),
+                (desc, "      Start a new document\n"),
+                (cmd, "  /append <text>"),
+                (desc, "    Add entry to current note\n"),
                 (cmd, "  /last"),
                 (desc, "             Resume the most recent conversation\n"),
                 (cmd, "  /list [N]"),
@@ -1016,10 +1033,30 @@ async def _run_repl(
                     exit_flag.set()
                     return
                 elif cmd == "/new":
-                    conv = storage.create_conversation(db, **id_kw)
+                    parts = user_input.split(maxsplit=2)
+                    conv_type = "chat"
+                    conv_title = "New Conversation"
+                    if len(parts) >= 2 and parts[1] in ("note", "doc", "document"):
+                        conv_type = "document" if parts[1] in ("doc", "document") else "note"
+                        conv_title = parts[2].strip() if len(parts) >= 3 else f"New {conv_type.title()}"
+                    conv = storage.create_conversation(db, title=conv_title, conversation_type=conv_type, **id_kw)
                     ai_messages = []
-                    is_first_message = True
-                    renderer.console.print("[grey62]New conversation started[/grey62]\n")
+                    is_first_message = conv_type == "chat"
+                    type_label = f" ({conv_type})" if conv_type != "chat" else ""
+                    renderer.console.print(f"[grey62]New conversation started{type_label}[/grey62]\n")
+                    continue
+                elif cmd == "/append":
+                    parts = user_input.split(maxsplit=1)
+                    if len(parts) < 2 or not parts[1].strip():
+                        renderer.console.print("[grey62]Usage: /append <text>[/grey62]\n")
+                        continue
+                    current_type = conv.get("type", "chat")
+                    if current_type != "note":
+                        renderer.render_error("Current conversation is not a note. Use /new note <title> first.")
+                        continue
+                    entry_text = parts[1].strip()
+                    storage.create_message(db, conv["id"], "user", entry_text, **id_kw)
+                    renderer.console.print(f"[grey62]Entry added to '{conv.get('title', 'Untitled')}'[/grey62]\n")
                     continue
                 elif cmd == "/tools":
                     renderer.render_tools(all_tool_names)
@@ -1052,8 +1089,11 @@ async def _run_repl(
                         renderer.console.print("\n[bold]Recent conversations:[/bold]")
                         for i, c in enumerate(display_convs):
                             msg_count = c.get("message_count", 0)
+                            ctype = c.get("type", "chat")
+                            type_badge = f" [cyan]\\[{ctype}][/cyan]" if ctype != "chat" else ""
                             renderer.console.print(
-                                f"  {i + 1}. {c['title']} ({msg_count} msgs) [grey62]{c['id'][:8]}...[/grey62]"
+                                f"  {i + 1}. {c['title']}{type_badge}"
+                                f" ({msg_count} msgs) [grey62]{c['id'][:8]}...[/grey62]"
                             )
                         if has_more:
                             more_n = list_limit + 20
@@ -1110,11 +1150,24 @@ async def _run_repl(
 
                     # Check for --keyword flag
                     force_keyword = False
+                    type_filter = None
                     if search_arg.startswith("--keyword "):
                         force_keyword = True
                         search_arg = search_arg[len("--keyword ") :].strip()
                         if not search_arg:
                             renderer.console.print("[grey62]Usage: /search --keyword <query>[/grey62]\n")
+                            continue
+                    elif search_arg.startswith("--type "):
+                        rest = search_arg[len("--type ") :].strip()
+                        type_parts = rest.split(maxsplit=1)
+                        if type_parts and type_parts[0] in ("chat", "note", "document"):
+                            type_filter = type_parts[0]
+                            search_arg = type_parts[1] if len(type_parts) > 1 else ""
+                        else:
+                            renderer.render_error("Invalid type. Use: chat, note, or document")
+                            continue
+                        if not search_arg:
+                            renderer.console.print("[grey62]Usage: /search --type <type> <query>[/grey62]\n")
                             continue
 
                     query = search_arg
@@ -1154,7 +1207,7 @@ async def _run_repl(
                         except Exception:
                             pass  # Fall through to keyword search
 
-                    results = storage.list_conversations(db, search=query, limit=20)
+                    results = storage.list_conversations(db, search=query, limit=20, conversation_type=type_filter)
                     if results:
                         renderer.console.print(f"\n[bold]Search results for '{query}':[/bold]")
                         for i, c in enumerate(results):
@@ -1360,6 +1413,16 @@ async def _run_repl(
                 is_skill, skill_prompt = skill_registry.resolve_input(user_input)
                 if is_skill:
                     user_input = skill_prompt
+
+            # For note/document types, save message without AI response
+            current_conv_type = conv.get("type", "chat")
+            if current_conv_type in ("note", "document"):
+                expanded = _expand_file_references(user_input, working_dir)
+                storage.create_message(db, conv["id"], "user", expanded, **id_kw)
+                renderer.console.print(f"[grey62]Entry added to '{conv.get('title', 'Untitled')}'[/grey62]\n")
+                if is_first_message:
+                    is_first_message = False
+                continue
 
             # Visual separation between input and response
             renderer.render_newline()

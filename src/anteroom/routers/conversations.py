@@ -11,7 +11,11 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
 
 from ..models import (
+    CanvasCreate,
+    CanvasUpdate,
     ConversationUpdate,
+    DocumentContent,
+    EntryCreate,
     FolderCreate,
     FolderUpdate,
     ForkRequest,
@@ -34,6 +38,13 @@ def _validate_uuid(value: str) -> str:
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ID format")
     return value
+
+
+def _require_json(request: Request) -> None:
+    """Reject requests without application/json Content-Type on state-changing endpoints."""
+    ct = request.headers.get("content-type", "")
+    if not ct.startswith("application/json"):
+        raise HTTPException(status_code=415, detail="Content-Type must be application/json")
 
 
 def _get_db(request: Request):
@@ -78,15 +89,21 @@ def _get_client_id(request: Request) -> str:
 
 
 @router.get("/conversations")
-async def list_conversations(request: Request, search: str | None = None, project_id: str | None = None):
+async def list_conversations(
+    request: Request,
+    search: str | None = None,
+    project_id: str | None = None,
+    type: str | None = Query(default=None, pattern=r"^(chat|note|document)$"),
+):
     if project_id:
         _validate_uuid(project_id)
     db = _get_db(request)
-    return storage.list_conversations(db, search=search, project_id=project_id)
+    return storage.list_conversations(db, search=search, project_id=project_id, conversation_type=type)
 
 
 @router.post("/conversations", status_code=201)
 async def create_conversation(request: Request):
+    _require_json(request)
     db = _get_db(request)
     body = {}
     try:
@@ -96,12 +113,20 @@ async def create_conversation(request: Request):
     project_id = body.get("project_id") if isinstance(body, dict) else None
     if project_id:
         _validate_uuid(project_id)
+    conv_type = body.get("type", "chat") if isinstance(body, dict) else "chat"
+    if conv_type not in ("chat", "note", "document"):
+        raise HTTPException(status_code=400, detail="Invalid conversation type")
+    title = body.get("title", "New Conversation") if isinstance(body, dict) else "New Conversation"
+    if len(title) > 200:
+        raise HTTPException(status_code=400, detail="Title must be 200 characters or fewer")
     uid, uname = _get_identity(request)
-    conv = storage.create_conversation(db, project_id=project_id, user_id=uid, user_display_name=uname)
+    conv = storage.create_conversation(
+        db, title=title, project_id=project_id, user_id=uid, user_display_name=uname, conversation_type=conv_type
+    )
 
     event_bus = _get_event_bus(request)
     if event_bus:
-        asyncio.ensure_future(
+        asyncio.create_task(
             event_bus.publish(
                 f"global:{_get_db_name(request)}",
                 {
@@ -141,7 +166,7 @@ async def update_conversation(conversation_id: str, body: ConversationUpdate, re
 
         event_bus = _get_event_bus(request)
         if event_bus:
-            asyncio.ensure_future(
+            asyncio.create_task(
                 event_bus.publish(
                     f"global:{_get_db_name(request)}",
                     {
@@ -155,6 +180,8 @@ async def update_conversation(conversation_id: str, body: ConversationUpdate, re
                 )
             )
 
+    if body.type is not None:
+        conv = storage.update_conversation_type(db, conversation_id, body.type)
     if body.model is not None:
         conv = storage.update_conversation_model(db, conversation_id, body.model)
     if body.folder_id is not None:
@@ -182,7 +209,7 @@ async def delete_conversation(conversation_id: str, request: Request):
 
     event_bus = _get_event_bus(request)
     if event_bus:
-        asyncio.ensure_future(
+        asyncio.create_task(
             event_bus.publish(
                 f"global:{_get_db_name(request)}",
                 {
@@ -198,8 +225,48 @@ async def delete_conversation(conversation_id: str, request: Request):
     return Response(status_code=204)
 
 
+@router.post("/conversations/{conversation_id}/entries", status_code=201)
+async def create_entry(conversation_id: str, body: EntryCreate, request: Request):
+    _require_json(request)
+    _validate_uuid(conversation_id)
+    db = _get_db(request)
+    conv = storage.get_conversation(db, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conv.get("type") not in ("note", "document"):
+        raise HTTPException(status_code=400, detail="Entries can only be added to note or document conversations")
+    uid, uname = _get_identity(request)
+    msg = storage.create_message(db, conversation_id, "user", body.content, user_id=uid, user_display_name=uname)
+
+    _embedding_worker = getattr(request.app.state, "embedding_worker", None)
+    if _embedding_worker:
+        asyncio.create_task(_embedding_worker.embed_message(msg["id"], body.content, conversation_id))
+
+    event_bus = _get_event_bus(request)
+    if event_bus:
+        asyncio.create_task(
+            event_bus.publish(
+                f"conversation:{conversation_id}",
+                {
+                    "type": "new_message",
+                    "data": {
+                        "conversation_id": conversation_id,
+                        "message_id": msg["id"],
+                        "role": "user",
+                        "content": body.content,
+                        "position": msg["position"],
+                        "client_id": _get_client_id(request),
+                    },
+                },
+            )
+        )
+
+    return msg
+
+
 @router.post("/conversations/{conversation_id}/fork", status_code=201)
 async def fork_conversation(conversation_id: str, body: ForkRequest, request: Request):
+    _require_json(request)
     _validate_uuid(conversation_id)
     db = _get_db(request)
     conv = storage.get_conversation(db, conversation_id)
@@ -225,6 +292,39 @@ async def update_message(conversation_id: str, message_id: str, body: MessageEdi
     if not updated:
         raise HTTPException(status_code=404, detail="Message not found")
     return updated
+
+
+@router.delete("/conversations/{conversation_id}/messages/{message_id}", status_code=204)
+async def delete_message(conversation_id: str, message_id: str, request: Request):
+    _validate_uuid(conversation_id)
+    _validate_uuid(message_id)
+    db = _get_db(request)
+    conv = storage.get_conversation(db, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conv.get("type") not in ("note", "document"):
+        raise HTTPException(
+            status_code=400, detail="Individual message deletion is only supported for note and document conversations"
+        )
+    deleted = storage.delete_message(db, conversation_id, message_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return Response(status_code=204)
+
+
+@router.put("/conversations/{conversation_id}/document")
+async def replace_document(conversation_id: str, body: DocumentContent, request: Request):
+    _require_json(request)
+    _validate_uuid(conversation_id)
+    db = _get_db(request)
+    conv = storage.get_conversation(db, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conv.get("type") != "document":
+        raise HTTPException(status_code=400, detail="Only document conversations support full content replacement")
+    uid, uname = _get_identity(request)
+    msg = storage.replace_document_content(db, conversation_id, body.content, user_id=uid, user_display_name=uname)
+    return msg
 
 
 @router.delete("/conversations/{conversation_id}/messages", status_code=204)
@@ -268,6 +368,80 @@ async def rewind_conversation(conversation_id: str, body: RewindRequest, request
         reverted_files=result.reverted_files,
         skipped_files=result.skipped_files,
     )
+
+
+# --- Canvas ---
+# Rate limiting: canvas endpoints are covered by the global 120 req/min middleware in app.py
+
+
+@router.post("/conversations/{conversation_id}/canvas", status_code=201)
+async def create_canvas(conversation_id: str, body: CanvasCreate, request: Request):
+    _require_json(request)
+    _validate_uuid(conversation_id)
+    db = _get_db(request)
+    conv = storage.get_conversation(db, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    existing = storage.get_canvas_for_conversation(db, conversation_id)
+    if existing:
+        raise HTTPException(status_code=409, detail="Canvas already exists for this conversation")
+    uid, uname = _get_identity(request)
+    canvas = storage.create_canvas(
+        db,
+        conversation_id,
+        title=body.title,
+        content=body.content,
+        language=body.language,
+        user_id=uid,
+        user_display_name=uname,
+    )
+    return canvas
+
+
+@router.get("/conversations/{conversation_id}/canvas")
+async def get_canvas(conversation_id: str, request: Request):
+    _validate_uuid(conversation_id)
+    db = _get_db(request)
+    conv = storage.get_conversation(db, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    canvas = storage.get_canvas_for_conversation(db, conversation_id)
+    if not canvas:
+        raise HTTPException(status_code=404, detail="No canvas for this conversation")
+    return canvas
+
+
+@router.patch("/conversations/{conversation_id}/canvas")
+async def update_canvas(conversation_id: str, body: CanvasUpdate, request: Request):
+    _require_json(request)
+    _validate_uuid(conversation_id)
+    db = _get_db(request)
+    conv = storage.get_conversation(db, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    canvas = storage.get_canvas_for_conversation(db, conversation_id)
+    if not canvas:
+        raise HTTPException(status_code=404, detail="No canvas for this conversation")
+    if body.content is None and body.title is None:
+        raise HTTPException(status_code=400, detail="At least one of 'content' or 'title' must be provided")
+    updated = storage.update_canvas(db, canvas["id"], content=body.content, title=body.title)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Canvas not found")
+    return updated
+
+
+@router.delete("/conversations/{conversation_id}/canvas", status_code=204)
+async def delete_canvas(conversation_id: str, request: Request):
+    _validate_uuid(conversation_id)
+    db = _get_db(request)
+    conv = storage.get_conversation(db, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    canvas = storage.get_canvas_for_conversation(db, conversation_id)
+    if not canvas:
+        raise HTTPException(status_code=404, detail="No canvas for this conversation")
+    storage.delete_canvas(db, canvas["id"])
+    return Response(status_code=204)
 
 
 # --- Folders ---

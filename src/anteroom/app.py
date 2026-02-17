@@ -107,7 +107,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     tool_registry = ToolRegistry()
     working_dir = os.getcwd()
     register_default_tools(tool_registry, working_dir=working_dir)
+    tool_registry.set_safety_config(config.safety, working_dir=working_dir)
     app.state.tool_registry = tool_registry
+    app.state.pending_approvals = {}
     logger.info(f"Built-in tools: {len(tool_registry.list_tools())} registered (cwd: {working_dir})")
 
     # Expose vec support flag
@@ -284,6 +286,13 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
                 if not csrf_cookie or not csrf_header or not hmac.compare_digest(csrf_cookie, csrf_header):
                     security_logger.warning("CSRF validation failed from %s: %s %s", client_ip, request.method, path)
                     return JSONResponse(status_code=403, content={"detail": "CSRF validation failed"})
+                # Defense-in-depth: validate Origin header if present
+                origin = request.headers.get("origin")
+                if origin:
+                    allowed = getattr(request.app.state, "_allowed_origins", set())
+                    if allowed and origin not in allowed:
+                        security_logger.warning("Origin mismatch from %s: %s", client_ip, origin)
+                        return JSONResponse(status_code=403, content={"detail": "Origin not allowed"})
             self._last_activity = time.time()
             return await call_next(request)
 
@@ -318,13 +327,15 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     scheme = "https" if config.app.tls else "http"
     origin = f"{scheme}://{config.app.host}:{config.app.port}"
+    _allowed_origins = {
+        origin,
+        f"{scheme}://127.0.0.1:{config.app.port}",
+        f"{scheme}://localhost:{config.app.port}",
+    }
+    app.state._allowed_origins = _allowed_origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            origin,
-            f"{scheme}://127.0.0.1:{config.app.port}",
-            f"{scheme}://localhost:{config.app.port}",
-        ],
+        allow_origins=list(_allowed_origins),
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-CSRF-Token", "X-Client-Id"],
         allow_credentials=True,
@@ -343,7 +354,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.state.csrf_token = csrf_token
     cache_bust = str(int(time.time()))
 
-    from .routers import chat, config_api, conversations, databases, events, projects, search
+    from .routers import approvals, chat, config_api, conversations, databases, events, projects, search
 
     app.include_router(conversations.router, prefix="/api")
     app.include_router(chat.router, prefix="/api")
@@ -352,6 +363,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(databases.router, prefix="/api")
     app.include_router(events.router, prefix="/api")
     app.include_router(search.router, prefix="/api")
+    app.include_router(approvals.router, prefix="/api")
 
     @app.post("/api/logout")
     async def logout():
@@ -390,6 +402,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             secure=secure_cookies,
             samesite="strict",
             path="/api/",
+            max_age=SESSION_ABSOLUTE_TIMEOUT,
         )
         response.set_cookie(
             key="anteroom_csrf",
@@ -398,6 +411,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             secure=secure_cookies,
             samesite="strict",
             path="/",
+            max_age=SESSION_ABSOLUTE_TIMEOUT,
         )
         return response
 

@@ -47,14 +47,24 @@ async def handle(pattern: str, path: str | None = None, **_: Any) -> dict[str, A
 
     base = Path(resolved)
     if not base.is_dir():
-        return {"error": f"Directory not found: {base_path}"}
+        return {"error": "Directory not found"}
 
     try:
         matches = sorted(base.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    except OSError as e:
-        return {"error": str(e)}
+    except OSError:
+        return {"error": "Search failed: unable to list directory contents"}
 
-    results = [str(m.relative_to(base)) for m in matches[:_MAX_RESULTS] if m.is_file()]
+    resolved_base = base.resolve()
+    results = []
+    for m in matches[:_MAX_RESULTS]:
+        if not m.is_file():
+            continue
+        try:
+            if not m.resolve().is_relative_to(resolved_base):
+                continue
+        except (OSError, ValueError):
+            continue
+        results.append(str(m.relative_to(base)))
     truncated = len(matches) > _MAX_RESULTS
 
     return {"files": results, "count": len(results), "truncated": truncated}

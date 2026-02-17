@@ -5,9 +5,9 @@ const Sidebar = (() => {
     let folders = [];
     let allTags = [];
     let searchTimeout = null;
-
     function init() {
-        document.getElementById('btn-new-chat').addEventListener('click', () => App.newConversation());
+        const newChatBtn = document.getElementById('btn-new-chat');
+        newChatBtn.addEventListener('click', () => App.newConversation());
 
         const searchInput = document.getElementById('search-input');
         searchInput.addEventListener('input', () => {
@@ -26,7 +26,8 @@ const Sidebar = (() => {
     async function refresh() {
         try {
             const pp = _projectParam();
-            const convUrl = pp ? `/api/conversations?${pp}` : '/api/conversations';
+            const qs = pp ? `?${pp}` : '';
+            const convUrl = `/api/conversations${qs}`;
             const folderUrl = pp ? `/api/folders?${pp}` : '/api/folders';
             [conversations, folders, allTags] = await Promise.all([
                 App.api(convUrl),
@@ -623,16 +624,18 @@ const Sidebar = (() => {
 
     async function exportConv(id) {
         try {
-            const response = await fetch(`/api/conversations/${id}/export`, { credentials: 'same-origin' });
-            if (!response.ok) throw new Error('Export failed');
-            const blob = await response.blob();
+            const response = await App.api(`/api/conversations/${id}/export`);
+            const blob = response instanceof Response ? await response.blob() : new Blob([JSON.stringify(response)]);
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const disposition = response.headers.get('Content-Disposition') || '';
+            const disposition = (response instanceof Response ? response.headers.get('Content-Disposition') : '') || '';
             const match = disposition.match(/filename="(.+?)"/);
-            // SECURITY-REVIEW: Content-Disposition from own server; filename sanitized server-side
-            a.download = match ? match[1] : 'conversation.md';
+            let filename = 'conversation.md';
+            if (match) {
+                filename = match[1].replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_').substring(0, 255);
+            }
+            a.download = filename;
             document.body.appendChild(a);
             a.click();
             a.remove();

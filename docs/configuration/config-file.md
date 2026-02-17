@@ -44,6 +44,24 @@ mcp_servers:
   - name: "remote-tools"
     transport: "sse"
     url: "https://mcp-server.example.com/sse"
+
+safety:
+  enabled: true
+  approval_timeout: 120
+  bash:
+    enabled: true
+  write_file:
+    enabled: true
+  custom_patterns: []
+  sensitive_paths: []
+
+embeddings:
+  enabled: true
+  model: "text-embedding-3-small"
+  dimensions: 1536
+  base_url: ""
+  api_key: ""
+  api_key_command: ""
 ```
 
 ## Sections
@@ -101,6 +119,34 @@ A list of additional SQLite databases. See [Shared Databases](../web-ui/shared-d
 ### mcp_servers
 
 A list of MCP tool servers. See [MCP Servers](mcp-servers.md).
+
+### safety
+
+Controls the tool safety approval gate. When enabled, destructive bash commands and writes to sensitive paths require explicit user confirmation before execution.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `true` | Enable the safety gate globally |
+| `approval_timeout` | integer | `120` | Seconds to wait for approval before blocking the operation |
+| `bash.enabled` | boolean | `true` | Apply safety checks to `bash` tool calls |
+| `write_file.enabled` | boolean | `true` | Apply safety checks to `write_file` tool calls |
+| `custom_patterns` | list | `[]` | Additional regex patterns that trigger confirmation for bash commands |
+| `sensitive_paths` | list | `[]` | Additional path prefixes that trigger confirmation for file writes |
+
+See [Tool Safety](../security/tool-safety.md) for the full list of built-in patterns and the approval flow.
+
+### embeddings
+
+Controls vector embeddings for semantic search. Requires an OpenAI-compatible embedding endpoint and the sqlite-vec extension.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `true` | Enable background embedding of messages |
+| `model` | string | `text-embedding-3-small` | Embedding model name |
+| `dimensions` | integer | `1536` | Vector dimensions (must match the model) |
+| `base_url` | string | `""` | Embedding API endpoint (falls back to `ai.base_url` if empty) |
+| `api_key` | string | `""` | API key for the embedding endpoint |
+| `api_key_command` | string | `""` | External command to obtain the embedding API key dynamically |
 
 ## API Key Command
 
