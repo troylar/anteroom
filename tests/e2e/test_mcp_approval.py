@@ -251,6 +251,10 @@ class TestMcpApprovalSessionScope:
         mcp_approval_app: Any,
     ) -> None:
         """After session grant, the same tool should execute without approval prompt."""
+        # Explicitly grant session permission so this test is order-independent
+        tool_registry = mcp_approval_app.state.tool_registry
+        tool_registry.grant_session_permission("get_current_time")
+
         call_id = f"call_{uuid.uuid4().hex[:12]}"
         stream_fn = mock_tool_call_stream(
             tool_name="get_current_time",
@@ -284,14 +288,13 @@ class TestMcpApprovalAlwaysScope:
         mcp_approval_conversation_id: str,
         mcp_approval_app: Any,
     ) -> None:
-        """Use a different MCP tool to test 'always' scope independently.
+        """Test 'always' scope grants session permission and triggers config persist.
 
-        We use get_current_time with a distinct conversation to avoid interference
-        from session-scope grants in earlier tests. The 'always' scope triggers
-        write_allowed_tool (which we mock to prevent config file writes), but
-        the session permission is granted immediately.
+        The 'always' scope triggers write_allowed_tool (which we mock to prevent
+        config file writes), but the session permission is granted immediately.
         """
-        # Clear any existing session permissions for this tool to test cleanly
+        # Ensure no pre-existing session permission so approval is required.
+        # No public API to revoke session permissions, so we access the internal set.
         tool_registry = mcp_approval_app.state.tool_registry
         tool_registry._session_allowed.discard("get_current_time")
 
@@ -327,15 +330,20 @@ class TestMcpApprovalAlwaysScope:
         assert len(end_events) >= 1
         assert end_events[0]["data"]["status"] == "success"
 
-        # Verify the session permission was granted
-        assert "get_current_time" in tool_registry._session_allowed
+        # Verify the session permission was granted (check_safety returns None when auto-approved)
+        assert tool_registry.check_safety("get_current_time", {}) is None
 
     def test_always_scope_subsequent_call_auto_approved(
         self,
         mcp_approval_client: httpx.Client,
         mcp_approval_conversation_id: str,
+        mcp_approval_app: Any,
     ) -> None:
         """After 'always' grant, subsequent calls should auto-approve."""
+        # Explicitly grant session permission so this test is order-independent
+        tool_registry = mcp_approval_app.state.tool_registry
+        tool_registry.grant_session_permission("get_current_time")
+
         call_id = f"call_{uuid.uuid4().hex[:12]}"
         stream_fn = mock_tool_call_stream(
             tool_name="get_current_time",
@@ -383,7 +391,8 @@ class TestMcpApprovalEdgeCases:
         mcp_approval_app: Any,
     ) -> None:
         """Responding twice to the same approval should fail on the second attempt."""
-        # Clear session permission so approval is required again
+        # Ensure approval is required (no pre-existing session permission).
+        # No public API to revoke session permissions, so we access the internal set.
         tool_registry = mcp_approval_app.state.tool_registry
         tool_registry._session_allowed.discard("get_current_time")
 
