@@ -562,7 +562,33 @@ async def chat(conversation_id: str, request: Request):
 
         return approved
 
+    _subagent_counter = 0
+    _subagent_events: dict[str, list[dict[str, Any]]] = {}
+    _max_subagent_events = 500
+
+    async def _web_event_sink(agent_id: str, event: Any) -> None:
+        """Buffer sub-agent events for SSE emission, partitioned by agent_id."""
+        kind = event.kind
+        data = event.data
+        if kind in ("subagent_start", "subagent_end", "tool_call_start"):
+            buf = _subagent_events.setdefault(agent_id, [])
+            if len(buf) < _max_subagent_events:
+                buf.append({"kind": kind, "agent_id": agent_id, **data})
+
+    from ..tools.subagent import SubagentLimiter
+
+    _sa_config = getattr(request.app.state.config.safety, "subagent", None)
+    # SECURITY-REVIEW: Limiter is per-request, not global. A single user with
+    # multiple browser tabs can spawn up to max_total * concurrent_requests
+    # sub-agents. Acceptable for a single-user local app; revisit if
+    # multi-user support is added.
+    _subagent_limiter = SubagentLimiter(
+        max_concurrent=_sa_config.max_concurrent if _sa_config else 5,
+        max_total=_sa_config.max_total if _sa_config else 10,
+    )
+
     async def _tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        nonlocal _subagent_counter
         if tool_name in ("create_canvas", "update_canvas", "patch_canvas"):
             arguments = {
                 **arguments,
@@ -570,6 +596,20 @@ async def chat(conversation_id: str, request: Request):
                 "_db": db,
                 "_user_id": uid,
                 "_user_display_name": uname,
+            }
+        elif tool_name == "run_agent":
+            _subagent_counter += 1
+            arguments = {
+                **arguments,
+                "_ai_service": ai_service,
+                "_tool_registry": tool_registry,
+                "_cancel_event": cancel_event,
+                "_depth": 0,
+                "_agent_id": f"agent-{_subagent_counter}",
+                "_event_sink": _web_event_sink,
+                "_limiter": _subagent_limiter,
+                "_confirm_callback": _web_confirm,
+                "_config": _sa_config,
             }
 
         def _scope_to_decision() -> str:
@@ -827,6 +867,20 @@ async def chat(conversation_id: str, request: Request):
                                         }
                                     ),
                                 }
+
+                    # Emit buffered sub-agent events when a run_agent tool completes.
+                    # Only drain partitions whose subagent_end has been received,
+                    # preserving events for still-running concurrent sub-agents.
+                    if data["tool_name"] == "run_agent":
+                        for sa_agent_id in list(_subagent_events.keys()):
+                            events = _subagent_events[sa_agent_id]
+                            if any(e["kind"] == "subagent_end" for e in events):
+                                for sa_event in events:
+                                    yield {
+                                        "event": "subagent_event",
+                                        "data": json.dumps(sa_event),
+                                    }
+                                del _subagent_events[sa_agent_id]
 
                 elif kind == "error":
                     yield {"event": "error", "data": json.dumps(data)}

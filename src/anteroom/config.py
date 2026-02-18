@@ -232,6 +232,17 @@ class SafetyToolConfig:
 
 
 @dataclass
+class SubagentConfig:
+    max_concurrent: int = 5
+    max_total: int = 10
+    max_depth: int = 3
+    max_iterations: int = 15
+    timeout: int = 120
+    max_output_chars: int = 4000
+    max_prompt_chars: int = 32_000
+
+
+@dataclass
 class SafetyConfig:
     enabled: bool = True
     approval_mode: str = "ask_for_writes"
@@ -243,6 +254,7 @@ class SafetyConfig:
     allowed_tools: list[str] = field(default_factory=list)
     denied_tools: list[str] = field(default_factory=list)
     tool_tiers: dict[str, str] = field(default_factory=dict)
+    subagent: SubagentConfig = field(default_factory=SubagentConfig)
 
 
 @dataclass
@@ -456,6 +468,27 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     if not isinstance(safety_tool_tiers, dict):
         safety_tool_tiers = {}
 
+    sa_raw = safety_raw.get("subagent", {})
+    if not isinstance(sa_raw, dict):
+        sa_raw = {}
+
+    def _sa_int(key: str, default: int, lo: int, hi: int) -> int:
+        try:
+            val = int(sa_raw.get(key, default))
+        except (ValueError, TypeError):
+            val = default
+        return max(lo, min(val, hi))
+
+    subagent_config = SubagentConfig(
+        max_concurrent=_sa_int("max_concurrent", 5, 1, 20),
+        max_total=_sa_int("max_total", 10, 1, 50),
+        max_depth=_sa_int("max_depth", 3, 1, 10),
+        max_iterations=_sa_int("max_iterations", 15, 1, 100),
+        timeout=_sa_int("timeout", 120, 10, 600),
+        max_output_chars=_sa_int("max_output_chars", 4000, 100, 100_000),
+        max_prompt_chars=_sa_int("max_prompt_chars", 32_000, 100, 100_000),
+    )
+
     safety_config = SafetyConfig(
         enabled=safety_enabled,
         approval_mode=safety_approval_mode,
@@ -467,6 +500,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         allowed_tools=[str(t) for t in safety_allowed_tools],
         denied_tools=[str(t) for t in safety_denied_tools],
         tool_tiers={str(k): str(v) for k, v in safety_tool_tiers.items()},
+        subagent=subagent_config,
     )
 
     return AppConfig(

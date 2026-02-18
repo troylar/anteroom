@@ -509,7 +509,48 @@ async def run_cli(
     tool_registry.set_confirm_callback(_confirm_destructive)
 
     # Build unified tool executor
+    _subagent_counter = 0
+    _active_cancel_event: list[asyncio.Event | None] = [None]
+
+    from ..tools.subagent import SubagentLimiter
+
+    _sa_config = config.safety.subagent
+    _subagent_limiter = SubagentLimiter(
+        max_concurrent=_sa_config.max_concurrent,
+        max_total=_sa_config.max_total,
+    )
+
+    async def _cli_event_sink(agent_id: str, event: Any) -> None:
+        """Render sub-agent progress events in the CLI."""
+        kind = event.kind
+        data = event.data
+        if kind == "subagent_start":
+            renderer.render_subagent_start(
+                agent_id, data.get("prompt", ""), data.get("model", ""), data.get("depth", 1)
+            )
+        elif kind == "tool_call_start":
+            renderer.render_subagent_tool(agent_id, data.get("tool_name", ""), data.get("arguments"))
+        elif kind == "subagent_end":
+            renderer.render_subagent_end(
+                agent_id, data.get("elapsed_seconds", 0), data.get("tool_calls", []), data.get("error")
+            )
+
     async def tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        nonlocal _subagent_counter
+        if tool_name == "run_agent":
+            _subagent_counter += 1
+            arguments = {
+                **arguments,
+                "_ai_service": ai_service,
+                "_tool_registry": tool_registry,
+                "_cancel_event": _active_cancel_event[0],
+                "_depth": 0,
+                "_agent_id": f"agent-{_subagent_counter}",
+                "_event_sink": _cli_event_sink,
+                "_limiter": _subagent_limiter,
+                "_confirm_callback": _confirm_destructive,
+                "_config": _sa_config,
+            }
         if tool_registry.has_tool(tool_name):
             return await tool_registry.call_tool(tool_name, arguments)
         if mcp_manager:
@@ -593,6 +634,7 @@ async def run_cli(
             prompt=prompt,
             working_dir=working_dir,
             resume_conversation_id=resume_conversation_id,
+            cancel_event_ref=_active_cancel_event,
         )
     else:
         git_branch = _detect_git_branch()
@@ -623,6 +665,8 @@ async def run_cli(
             skill_registry=skill_registry,
             mcp_manager=mcp_manager,
             tool_registry=tool_registry,
+            cancel_event_ref=_active_cancel_event,
+            subagent_limiter=_subagent_limiter,
         )
 
     # Cleanup
@@ -641,6 +685,7 @@ async def _run_one_shot(
     prompt: str,
     working_dir: str,
     resume_conversation_id: str | None = None,
+    cancel_event_ref: list[asyncio.Event | None] | None = None,
 ) -> None:
     """Run a single prompt and exit."""
     id_kw = _identity_kwargs(config)
@@ -660,11 +705,14 @@ async def _run_one_shot(
     messages.append({"role": "user", "content": expanded})
 
     cancel_event = asyncio.Event()
+    if cancel_event_ref is not None:
+        cancel_event_ref[0] = cancel_event
 
     loop = asyncio.get_event_loop()
     _add_signal_handler(loop, signal.SIGINT, cancel_event.set)
     escape_task = asyncio.create_task(_watch_for_escape(cancel_event))
 
+    renderer.clear_subagent_state()
     thinking = False
     try:
         async for event in run_agent_loop(
@@ -737,6 +785,8 @@ async def _run_repl(
     skill_registry: SkillRegistry | None = None,
     mcp_manager: Any = None,
     tool_registry: Any = None,
+    cancel_event_ref: list[asyncio.Event | None] | None = None,
+    subagent_limiter: Any = None,
 ) -> None:
     """Run the interactive REPL."""
     id_kw = _identity_kwargs(config)
@@ -1498,8 +1548,13 @@ async def _run_repl(
 
             # Stream response
             renderer.clear_turn_history()
+            renderer.clear_subagent_state()
+            if subagent_limiter is not None:
+                subagent_limiter.reset()
             cancel_event = asyncio.Event()
             _current_cancel_event[0] = cancel_event
+            if cancel_event_ref is not None:
+                cancel_event_ref[0] = cancel_event
             loop = asyncio.get_event_loop()
             original_handler = signal.getsignal(signal.SIGINT)
             _add_signal_handler(loop, signal.SIGINT, cancel_event.set)
@@ -1630,6 +1685,8 @@ async def _run_repl(
                     agent_busy.clear()
                     session.app.invalidate()
                 _current_cancel_event[0] = None
+                if cancel_event_ref is not None:
+                    cancel_event_ref[0] = None
                 cancel_event.set()
                 _remove_signal_handler(loop, signal.SIGINT)
                 if not _IS_WINDOWS:

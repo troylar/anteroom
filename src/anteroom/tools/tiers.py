@@ -46,6 +46,7 @@ DEFAULT_TOOL_TIERS: dict[str, ToolTier] = {
     "update_canvas": ToolTier.WRITE,
     "patch_canvas": ToolTier.WRITE,
     "bash": ToolTier.EXECUTE,
+    "run_agent": ToolTier.EXECUTE,
 }
 
 # MCP tools and unknown tools default to this tier
