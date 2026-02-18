@@ -24,3 +24,7 @@ Anteroom uses the double-submit cookie pattern:
 On first visit, Anteroom generates a session token and sets it as an HttpOnly cookie. All subsequent API requests must include this cookie. For state-changing operations, the CSRF token must also be included as a request header.
 
 No passwords are involved --- this is a single-user local application. The session token prevents unauthorized access from other processes or users on the same machine.
+
+## Session Expiry Handling
+
+When an API request returns 401 (session expired or invalid token), the browser redirects to `/` to obtain a fresh session cookie. To prevent infinite reload loops (e.g., if the server is unreachable or the token is permanently invalid), the client tracks redirect timestamps in `sessionStorage`. If two 401 redirects occur within 5 seconds, a fixed banner is shown instead of reloading again, instructing the user to manually refresh.
