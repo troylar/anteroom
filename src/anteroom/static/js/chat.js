@@ -1328,8 +1328,9 @@ const Chat = (() => {
         const kind = data.kind;
         const agentId = data.agent_id;
 
-        // Find the parent tool-call-subagent container to nest cards inside it
-        const parentToolCall = contentEl.querySelector('.tool-call-subagent');
+        // Find the last tool-call-subagent container (handles concurrent run_agent calls)
+        const allSubagentCalls = contentEl.querySelectorAll('.tool-call-subagent');
+        const parentToolCall = allSubagentCalls.length > 0 ? allSubagentCalls[allSubagentCalls.length - 1] : null;
         const cardsContainer = parentToolCall
             ? parentToolCall.querySelector('.subagent-cards-container')
             : null;
@@ -1373,10 +1374,12 @@ const Chat = (() => {
             const card = document.getElementById(`subagent-${_sanitizeId(agentId)}`);
             if (card) {
                 const tools = card.querySelector('.subagent-tools');
-                const chip = document.createElement('span');
-                chip.className = 'subagent-tool-chip';
-                chip.textContent = data.tool_name || 'tool';
-                tools.appendChild(chip);
+                if (tools) {
+                    const chip = document.createElement('span');
+                    chip.className = 'subagent-tool-chip';
+                    chip.textContent = data.tool_name || 'tool';
+                    tools.appendChild(chip);
+                }
             }
         } else if (kind === 'subagent_end') {
             const card = document.getElementById(`subagent-${_sanitizeId(agentId)}`);
@@ -1386,10 +1389,16 @@ const Chat = (() => {
                 footer.className = 'subagent-footer';
                 const elapsed = data.elapsed_seconds != null ? `${data.elapsed_seconds.toFixed(1)}s` : '';
                 const toolCount = (data.tool_calls || []).length;
-                footer.textContent = data.error
-                    ? `Failed: ${data.error}`
+                const errorMsg = data.error ? String(data.error).slice(0, 200) : '';
+                footer.textContent = errorMsg
+                    ? `Failed: ${errorMsg}`
                     : `Done in ${elapsed} · ${toolCount} tool call${toolCount !== 1 ? 's' : ''}`;
                 card.appendChild(footer);
+
+                // Clear running animation from parent if all sub-agents are done
+                if (parentToolCall && parentToolCall.classList.contains('subagent-running')) {
+                    parentToolCall.classList.remove('subagent-running');
+                }
             }
         }
     }
