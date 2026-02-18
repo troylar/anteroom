@@ -20,6 +20,7 @@ from anteroom.cli.renderer import (
     render_tool_call_start,
     save_turn_history,
     set_verbosity,
+    startup_step,
 )
 
 
@@ -423,3 +424,52 @@ class TestToolBatchSpacing:
             # No blank line should be printed on console (only _stdout_console gets the markdown)
             blank_calls = [c for c in mock_console.print.call_args_list if c == ((),) or c[0] == ()]
             assert len(blank_calls) == 0
+
+
+class TestStartupStep:
+    """Tests for #122: startup progress feedback."""
+
+    def test_returns_context_manager(self) -> None:
+        with patch("anteroom.cli.renderer.console") as mock_console:
+            mock_console.status.return_value.__enter__ = lambda s: s
+            mock_console.status.return_value.__exit__ = lambda s, *a: None
+            result = startup_step("Loading...")
+            assert result is mock_console.status.return_value
+
+    def test_uses_dim_styling(self) -> None:
+        with patch("anteroom.cli.renderer.console") as mock_console:
+            mock_console.status.return_value.__enter__ = lambda s: s
+            mock_console.status.return_value.__exit__ = lambda s, *a: None
+            startup_step("Loading...")
+            call_args = mock_console.status.call_args
+            message_arg = call_args[0][0]
+            assert "[dim]" in message_arg
+            assert "Loading..." in message_arg
+
+    def test_uses_dots12_spinner(self) -> None:
+        with patch("anteroom.cli.renderer.console") as mock_console:
+            mock_console.status.return_value.__enter__ = lambda s: s
+            mock_console.status.return_value.__exit__ = lambda s, *a: None
+            startup_step("Connecting...")
+            call_kwargs = mock_console.status.call_args[1]
+            assert call_kwargs["spinner"] == "dots12"
+            assert call_kwargs["spinner_style"] == "dim"
+
+    def test_message_indented(self) -> None:
+        with patch("anteroom.cli.renderer.console") as mock_console:
+            mock_console.status.return_value.__enter__ = lambda s: s
+            mock_console.status.return_value.__exit__ = lambda s, *a: None
+            startup_step("Validating...")
+            message_arg = mock_console.status.call_args[0][0]
+            assert message_arg.startswith("  ")
+
+    def test_works_as_context_manager(self) -> None:
+        from unittest.mock import MagicMock
+
+        with patch("anteroom.cli.renderer.console") as mock_console:
+            mock_ctx = MagicMock()
+            mock_console.status.return_value = mock_ctx
+            with startup_step("Testing..."):
+                pass
+            mock_ctx.__enter__.assert_called_once()
+            mock_ctx.__exit__.assert_called_once()

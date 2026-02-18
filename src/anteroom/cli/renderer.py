@@ -507,6 +507,18 @@ def render_error(message: str) -> None:
     console.print(f"\n[red bold]Error:[/red bold] {escape(message)}")
 
 
+def startup_step(message: str) -> Status:
+    """Create a dim animated spinner for a startup step.
+
+    Use as a context manager around slow operations so the user
+    sees activity during CLI bootstrap::
+
+        with renderer.startup_step("Connecting to servers..."):
+            await slow_operation()
+    """
+    return console.status(f"  [dim]{message}[/dim]", spinner="dots12", spinner_style="dim")
+
+
 # ---------------------------------------------------------------------------
 # Welcome / help
 # ---------------------------------------------------------------------------
