@@ -140,6 +140,7 @@ The `run_agent` tool spawns isolated child AI sessions for parallel task executi
 - **Max nesting depth**: 3 levels (sub-agents can spawn sub-agents, up to 3 deep)
 - **Prompt size cap**: 32,000 characters per sub-agent prompt
 - **Output truncation**: 4,000 characters max per sub-agent response
+- **Max iterations**: 25 per sub-agent turn (parent loop allows 50)
 
 ### Input Validation
 

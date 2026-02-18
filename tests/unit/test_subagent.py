@@ -57,6 +57,18 @@ class TestSubagentHandler:
         assert "AI service" in result["error"]
 
     @pytest.mark.asyncio
+    async def test_empty_prompt_rejected(self) -> None:
+        result = await handle(prompt="", _ai_service=_mock_ai())
+        assert "error" in result
+        assert "empty" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_prompt_rejected(self) -> None:
+        result = await handle(prompt="   \n\t  ", _ai_service=_mock_ai())
+        assert "error" in result
+        assert "empty" in result["error"].lower()
+
+    @pytest.mark.asyncio
     async def test_missing_tool_registry(self) -> None:
         mock_ai = MagicMock()
         result = await handle(prompt="test", _ai_service=mock_ai)
@@ -428,6 +440,31 @@ class TestSubagentLimiter:
         # Third acquire should fail — total cap of 2 reached
         assert await limiter.acquire() is False
         assert limiter.total_spawned == 2
+
+    @pytest.mark.asyncio
+    async def test_acquire_timeout_rollback(self) -> None:
+        """Semaphore timeout should rollback total_spawned counter."""
+        limiter = SubagentLimiter(max_concurrent=1, max_total=5)
+        assert await limiter.acquire() is True  # occupy the one slot
+        # Force a timeout on the semaphore acquire
+        with patch("anteroom.tools.subagent.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            result = await limiter.acquire()
+        assert result is False
+        # total_spawned should be 1 (incremented then rolled back for the failed one)
+        assert limiter.total_spawned == 1
+        limiter.release()
+
+    @pytest.mark.asyncio
+    async def test_reset_clears_state(self) -> None:
+        """reset() should zero counters and create fresh semaphore."""
+        limiter = SubagentLimiter(max_concurrent=2, max_total=5)
+        await limiter.acquire()
+        await limiter.acquire()
+        assert limiter.total_spawned == 2
+        limiter.reset()
+        assert limiter.total_spawned == 0
+        # Can acquire again after reset
+        assert await limiter.acquire() is True
 
     @pytest.mark.asyncio
     async def test_total_cap_rejects_via_handle(self) -> None:

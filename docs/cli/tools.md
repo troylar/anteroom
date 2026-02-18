@@ -125,7 +125,7 @@ Launch an autonomous sub-agent to handle a complex or independent task in parall
 | `prompt` | string | Detailed, self-contained instruction for the sub-agent |
 | `model` | string | Optional model override (e.g. `gpt-4o-mini` for fast tasks) |
 
-Sub-agents run in isolated conversation contexts — they cannot see the parent's history. Multiple `run_agent` calls execute concurrently. Guarded by concurrency limits (max 5 concurrent, 20 total per request) and depth limits (max 3 levels of nesting).
+Sub-agents run in isolated conversation contexts — they cannot see the parent's history. Multiple `run_agent` calls execute concurrently. Guarded by concurrency limits (max 5 concurrent, 20 total per request), depth limits (max 3 levels of nesting), and iteration limits (25 per sub-agent vs 50 for the parent).
 
 ## How Tools Work
 

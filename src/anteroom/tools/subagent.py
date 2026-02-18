@@ -38,7 +38,7 @@ DEFINITION: dict[str, Any] = {
     "name": "run_agent",
     "description": (
         "Launch an autonomous sub-agent to handle a complex or independent task. "
-        "The sub-agent runs its own AI session with access to tools (read, write, edit, bash, glob, grep) "
+        "The sub-agent runs its own AI session with access to all built-in tools "
         "and returns a summary of its work. Use this to parallelize independent tasks — "
         "the parent AI can issue multiple run_agent calls simultaneously. "
         "Each sub-agent has its own conversation context and cannot see the parent's history."
