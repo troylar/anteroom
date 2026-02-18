@@ -514,7 +514,11 @@ async def run_cli(
 
     from ..tools.subagent import SubagentLimiter
 
-    _subagent_limiter = SubagentLimiter()
+    _sa_config = config.safety.subagent
+    _subagent_limiter = SubagentLimiter(
+        max_concurrent=_sa_config.max_concurrent,
+        max_total=_sa_config.max_total,
+    )
 
     async def _cli_event_sink(agent_id: str, event: Any) -> None:
         """Render sub-agent progress events in the CLI."""
@@ -545,6 +549,7 @@ async def run_cli(
                 "_event_sink": _cli_event_sink,
                 "_limiter": _subagent_limiter,
                 "_confirm_callback": _confirm_destructive,
+                "_config": _sa_config,
             }
         if tool_registry.has_tool(tool_name):
             return await tool_registry.call_tool(tool_name, arguments)

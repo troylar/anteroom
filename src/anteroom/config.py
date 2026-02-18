@@ -232,6 +232,17 @@ class SafetyToolConfig:
 
 
 @dataclass
+class SubagentConfig:
+    max_concurrent: int = 5
+    max_total: int = 10
+    max_depth: int = 3
+    max_iterations: int = 15
+    timeout: int = 120
+    max_output_chars: int = 4000
+    max_prompt_chars: int = 32_000
+
+
+@dataclass
 class SafetyConfig:
     enabled: bool = True
     approval_mode: str = "ask_for_writes"
@@ -243,6 +254,7 @@ class SafetyConfig:
     allowed_tools: list[str] = field(default_factory=list)
     denied_tools: list[str] = field(default_factory=list)
     tool_tiers: dict[str, str] = field(default_factory=dict)
+    subagent: SubagentConfig = field(default_factory=SubagentConfig)
 
 
 @dataclass
@@ -456,6 +468,21 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     if not isinstance(safety_tool_tiers, dict):
         safety_tool_tiers = {}
 
+    sa_raw = safety_raw.get("subagent", {})
+    if not isinstance(sa_raw, dict):
+        sa_raw = {}
+    sa_timeout = int(sa_raw.get("timeout", 120))
+    sa_timeout = max(10, min(sa_timeout, 600))
+    subagent_config = SubagentConfig(
+        max_concurrent=int(sa_raw.get("max_concurrent", 5)),
+        max_total=int(sa_raw.get("max_total", 10)),
+        max_depth=int(sa_raw.get("max_depth", 3)),
+        max_iterations=int(sa_raw.get("max_iterations", 15)),
+        timeout=sa_timeout,
+        max_output_chars=int(sa_raw.get("max_output_chars", 4000)),
+        max_prompt_chars=int(sa_raw.get("max_prompt_chars", 32_000)),
+    )
+
     safety_config = SafetyConfig(
         enabled=safety_enabled,
         approval_mode=safety_approval_mode,
@@ -467,6 +494,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         allowed_tools=[str(t) for t in safety_allowed_tools],
         denied_tools=[str(t) for t in safety_denied_tools],
         tool_tiers={str(k): str(v) for k, v in safety_tool_tiers.items()},
+        subagent=subagent_config,
     )
 
     return AppConfig(

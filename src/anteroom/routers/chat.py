@@ -577,7 +577,11 @@ async def chat(conversation_id: str, request: Request):
 
     from ..tools.subagent import SubagentLimiter
 
-    _subagent_limiter = SubagentLimiter()
+    _sa_config = getattr(request.app.state.config.safety, "subagent", None)
+    _subagent_limiter = SubagentLimiter(
+        max_concurrent=_sa_config.max_concurrent if _sa_config else 5,
+        max_total=_sa_config.max_total if _sa_config else 10,
+    )
 
     async def _tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         nonlocal _subagent_counter
@@ -601,6 +605,7 @@ async def chat(conversation_id: str, request: Request):
                 "_event_sink": _web_event_sink,
                 "_limiter": _subagent_limiter,
                 "_confirm_callback": _web_confirm,
+                "_config": _sa_config,
             }
 
         def _scope_to_decision() -> str:

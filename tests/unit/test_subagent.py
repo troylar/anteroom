@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from anteroom.config import SubagentConfig
 from anteroom.services.agent_loop import AgentEvent
 from anteroom.tools.subagent import (
     _SUBAGENT_SYSTEM_PROMPT,
@@ -663,3 +664,393 @@ class TestSubagentRegistration:
         tools = registry.get_openai_tools()
         names = [t["function"]["name"] for t in tools]
         assert "run_agent" in names
+
+
+class TestSubagentConfigDriven:
+    @pytest.mark.asyncio
+    async def test_custom_max_depth_from_config(self) -> None:
+        """Config max_depth=1 should reject depth=1."""
+        cfg = SubagentConfig(max_depth=1)
+        result = await handle(
+            prompt="test",
+            _ai_service=_mock_ai(),
+            _tool_registry=MagicMock(),
+            _depth=1,
+            _limiter=_make_limiter(),
+            _config=cfg,
+        )
+        assert "error" in result
+        assert "depth" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_custom_max_depth_allows_lower(self) -> None:
+        """Config max_depth=2 should allow depth=0."""
+        cfg = SubagentConfig(max_depth=2)
+        mock_registry = MagicMock()
+        mock_registry.get_openai_tools.return_value = []
+
+        async def mock_agent_loop(**kwargs):
+            yield AgentEvent(kind="done", data={})
+
+        with patch("anteroom.tools.subagent.run_agent_loop", side_effect=mock_agent_loop):
+            with patch("anteroom.tools.subagent.AIService"):
+                result = await handle(
+                    prompt="test",
+                    _ai_service=_mock_ai(),
+                    _tool_registry=mock_registry,
+                    _depth=0,
+                    _limiter=_make_limiter(),
+                    _config=cfg,
+                )
+        assert "error" not in result
+
+    @pytest.mark.asyncio
+    async def test_custom_max_prompt_chars(self) -> None:
+        """Config max_prompt_chars=50 should reject longer prompts."""
+        cfg = SubagentConfig(max_prompt_chars=50)
+        result = await handle(
+            prompt="x" * 51,
+            _ai_service=_mock_ai(),
+            _tool_registry=MagicMock(),
+            _depth=0,
+            _limiter=_make_limiter(),
+            _config=cfg,
+        )
+        assert "error" in result
+        assert "maximum length" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_custom_max_iterations_passed_to_loop(self) -> None:
+        """Config max_iterations should be forwarded to run_agent_loop."""
+        cfg = SubagentConfig(max_iterations=7)
+        mock_registry = MagicMock()
+        mock_registry.get_openai_tools.return_value = []
+        captured_kwargs: list[dict] = []
+
+        async def mock_agent_loop(**kwargs):
+            captured_kwargs.append(kwargs)
+            yield AgentEvent(kind="done", data={})
+
+        with patch("anteroom.tools.subagent.run_agent_loop", side_effect=mock_agent_loop):
+            with patch("anteroom.tools.subagent.AIService"):
+                await handle(
+                    prompt="test",
+                    _ai_service=_mock_ai(),
+                    _tool_registry=mock_registry,
+                    _depth=0,
+                    _limiter=_make_limiter(),
+                    _config=cfg,
+                )
+        assert captured_kwargs[0]["max_iterations"] == 7
+
+    @pytest.mark.asyncio
+    async def test_custom_max_output_chars_truncates(self) -> None:
+        """Config max_output_chars should control truncation threshold."""
+        cfg = SubagentConfig(max_output_chars=20)
+        mock_registry = MagicMock()
+        mock_registry.get_openai_tools.return_value = []
+
+        async def mock_agent_loop(**kwargs):
+            yield AgentEvent(kind="token", data={"content": "x" * 50})
+            yield AgentEvent(kind="done", data={})
+
+        with patch("anteroom.tools.subagent.run_agent_loop", side_effect=mock_agent_loop):
+            with patch("anteroom.tools.subagent.AIService"):
+                result = await handle(
+                    prompt="test",
+                    _ai_service=_mock_ai(),
+                    _tool_registry=mock_registry,
+                    _depth=0,
+                    _limiter=_make_limiter(),
+                    _config=cfg,
+                )
+        assert result["truncated"] is True
+        assert result["output"].startswith("x" * 20)
+
+    @pytest.mark.asyncio
+    async def test_config_propagated_to_nested_subagent(self) -> None:
+        """_config should be injected into nested run_agent calls."""
+        cfg = SubagentConfig(max_depth=5, timeout=60)
+        mock_registry = MagicMock()
+        mock_registry.get_openai_tools.return_value = [
+            {"function": {"name": "run_agent"}, "type": "function"},
+        ]
+        captured_configs: list = []
+
+        async def mock_call_tool(name, args, confirm_callback=None):
+            if name == "run_agent":
+                captured_configs.append(args.get("_config"))
+            return {"output": "ok"}
+
+        mock_registry.call_tool = mock_call_tool
+
+        async def mock_agent_loop(**kwargs):
+            executor = kwargs["tool_executor"]
+            await executor("run_agent", {"prompt": "nested"})
+            yield AgentEvent(kind="done", data={})
+
+        with patch("anteroom.tools.subagent.run_agent_loop", side_effect=mock_agent_loop):
+            with patch("anteroom.tools.subagent.AIService"):
+                await handle(
+                    prompt="parent task",
+                    _ai_service=_mock_ai(),
+                    _tool_registry=mock_registry,
+                    _depth=0,
+                    _limiter=_make_limiter(),
+                    _config=cfg,
+                )
+
+        assert captured_configs[0] is cfg
+
+
+class TestSubagentTimeout:
+    @pytest.mark.asyncio
+    async def test_wall_clock_timeout(self) -> None:
+        """Sub-agent should return timeout error when wall-clock limit exceeded."""
+        cfg = SubagentConfig(timeout=1)
+        mock_registry = MagicMock()
+        mock_registry.get_openai_tools.return_value = []
+
+        async def mock_agent_loop(**kwargs):
+            yield AgentEvent(kind="token", data={"content": "partial"})
+            await asyncio.sleep(5)
+            yield AgentEvent(kind="done", data={})
+
+        with patch("anteroom.tools.subagent.run_agent_loop", side_effect=mock_agent_loop):
+            with patch("anteroom.tools.subagent.AIService"):
+                result = await handle(
+                    prompt="test",
+                    _ai_service=_mock_ai(),
+                    _tool_registry=mock_registry,
+                    _depth=0,
+                    _limiter=_make_limiter(),
+                    _config=cfg,
+                )
+
+        assert "error" in result
+        assert "timed out" in result["error"]
+        assert result["output"] == "partial"
+
+    @pytest.mark.asyncio
+    async def test_default_timeout_no_config(self) -> None:
+        """Without config, module-level SUBAGENT_TIMEOUT is used (no timeout error for fast ops)."""
+        mock_registry = MagicMock()
+        mock_registry.get_openai_tools.return_value = []
+
+        async def mock_agent_loop(**kwargs):
+            yield AgentEvent(kind="token", data={"content": "done"})
+            yield AgentEvent(kind="done", data={})
+
+        with patch("anteroom.tools.subagent.run_agent_loop", side_effect=mock_agent_loop):
+            with patch("anteroom.tools.subagent.AIService"):
+                result = await handle(
+                    prompt="test",
+                    _ai_service=_mock_ai(),
+                    _tool_registry=mock_registry,
+                    _depth=0,
+                    _limiter=_make_limiter(),
+                )
+        assert "error" not in result
+        assert result["output"] == "done"
+
+
+class TestSubagentConfigParsing:
+    def test_default_subagent_config(self) -> None:
+        """SafetyConfig should have SubagentConfig with defaults."""
+        from anteroom.config import SafetyConfig
+
+        cfg = SafetyConfig()
+        assert cfg.subagent.max_concurrent == 5
+        assert cfg.subagent.max_total == 10
+        assert cfg.subagent.max_depth == 3
+        assert cfg.subagent.max_iterations == 15
+        assert cfg.subagent.timeout == 120
+        assert cfg.subagent.max_output_chars == 4000
+        assert cfg.subagent.max_prompt_chars == 32_000
+
+    def test_load_config_parses_subagent_section(self, tmp_path) -> None:
+        """load_config should parse safety.subagent from YAML."""
+        from anteroom.config import load_config
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "ai:\n"
+            "  base_url: http://localhost:8000\n"
+            "  api_key: test-key\n"
+            "safety:\n"
+            "  subagent:\n"
+            "    max_concurrent: 3\n"
+            "    max_total: 8\n"
+            "    max_depth: 2\n"
+            "    max_iterations: 10\n"
+            "    timeout: 60\n"
+            "    max_output_chars: 2000\n"
+            "    max_prompt_chars: 16000\n"
+        )
+        cfg = load_config(config_file)
+        sa = cfg.safety.subagent
+        assert sa.max_concurrent == 3
+        assert sa.max_total == 8
+        assert sa.max_depth == 2
+        assert sa.max_iterations == 10
+        assert sa.timeout == 60
+        assert sa.max_output_chars == 2000
+        assert sa.max_prompt_chars == 16000
+
+    def test_load_config_defaults_when_subagent_missing(self, tmp_path) -> None:
+        """Missing subagent section should use defaults."""
+        from anteroom.config import load_config
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("ai:\n  base_url: http://localhost:8000\n  api_key: test-key\n")
+        cfg = load_config(config_file)
+        sa = cfg.safety.subagent
+        assert sa.max_concurrent == 5
+        assert sa.max_total == 10
+        assert sa.timeout == 120
+
+    def test_load_config_clamps_timeout(self, tmp_path) -> None:
+        """Timeout should be clamped to 10-600."""
+        from anteroom.config import load_config
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "ai:\n  base_url: http://localhost:8000\n  api_key: test-key\nsafety:\n  subagent:\n    timeout: 5\n"
+        )
+        cfg = load_config(config_file)
+        assert cfg.safety.subagent.timeout == 10
+
+        config_file.write_text(
+            "ai:\n  base_url: http://localhost:8000\n  api_key: test-key\nsafety:\n  subagent:\n    timeout: 9999\n"
+        )
+        cfg = load_config(config_file)
+        assert cfg.safety.subagent.timeout == 600
+
+
+class TestSubagentConcurrentExecution:
+    """Test parallel sub-agent execution with limiter contention."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_handles_respect_max_concurrent(self) -> None:
+        """Multiple handle() calls should not exceed max_concurrent."""
+        cfg = SubagentConfig(max_concurrent=2, max_total=5, timeout=5)
+        limiter = SubagentLimiter(max_concurrent=2, max_total=5)
+        mock_registry = MagicMock()
+        mock_registry.get_openai_tools.return_value = []
+
+        peak_concurrent = 0
+        current_concurrent = 0
+        lock = asyncio.Lock()
+
+        async def mock_agent_loop(**kwargs):
+            nonlocal peak_concurrent, current_concurrent
+            async with lock:
+                current_concurrent += 1
+                peak_concurrent = max(peak_concurrent, current_concurrent)
+            yield AgentEvent(kind="token", data={"content": "ok"})
+            await asyncio.sleep(0.1)
+            yield AgentEvent(kind="done", data={})
+            async with lock:
+                current_concurrent -= 1
+
+        with patch("anteroom.tools.subagent.run_agent_loop", side_effect=mock_agent_loop):
+            with patch("anteroom.tools.subagent.AIService"):
+                tasks = [
+                    handle(
+                        prompt=f"task-{i}",
+                        _ai_service=_mock_ai(),
+                        _tool_registry=mock_registry,
+                        _depth=0,
+                        _limiter=limiter,
+                        _config=cfg,
+                    )
+                    for i in range(4)
+                ]
+                results = await asyncio.gather(*tasks)
+
+        assert peak_concurrent <= 2
+        assert all("error" not in r for r in results)
+
+    @pytest.mark.asyncio
+    async def test_max_total_cap_enforced(self) -> None:
+        """Once max_total is reached, subsequent calls should be rejected."""
+        cfg = SubagentConfig(max_concurrent=5, max_total=2, timeout=5)
+        limiter = SubagentLimiter(max_concurrent=5, max_total=2)
+        mock_registry = MagicMock()
+        mock_registry.get_openai_tools.return_value = []
+
+        async def mock_agent_loop(**kwargs):
+            yield AgentEvent(kind="token", data={"content": "ok"})
+            yield AgentEvent(kind="done", data={})
+
+        with patch("anteroom.tools.subagent.run_agent_loop", side_effect=mock_agent_loop):
+            with patch("anteroom.tools.subagent.AIService"):
+                results = []
+                for i in range(4):
+                    r = await handle(
+                        prompt=f"task-{i}",
+                        _ai_service=_mock_ai(),
+                        _tool_registry=mock_registry,
+                        _depth=0,
+                        _limiter=limiter,
+                        _config=cfg,
+                    )
+                    results.append(r)
+
+        succeeded = [r for r in results if "error" not in r]
+        rejected = [r for r in results if "error" in r and "limit" in r.get("error", "").lower()]
+        assert len(succeeded) == 2
+        assert len(rejected) == 2
+
+
+class TestSubagentCliWiring:
+    """Test that SubagentConfig flows correctly through tool executor paths."""
+
+    def test_config_accessible_from_safety(self) -> None:
+        """SubagentConfig should be accessible via config.safety.subagent."""
+        from anteroom.config import SafetyConfig
+
+        safety = SafetyConfig(subagent=SubagentConfig(max_concurrent=3, timeout=60))
+        assert safety.subagent.max_concurrent == 3
+        assert safety.subagent.timeout == 60
+
+    def test_limiter_uses_config_values(self) -> None:
+        """SubagentLimiter should accept config-driven max_concurrent and max_total."""
+        cfg = SubagentConfig(max_concurrent=3, max_total=7)
+        limiter = SubagentLimiter(max_concurrent=cfg.max_concurrent, max_total=cfg.max_total)
+        assert limiter._max_total == 7
+        assert limiter._total_spawned == 0
+
+    @pytest.mark.asyncio
+    async def test_tool_executor_passes_config_to_handle(self) -> None:
+        """Simulate tool executor injecting _config into handle kwargs."""
+        cfg = SubagentConfig(max_depth=2, timeout=30)
+        captured_kwargs: dict = {}
+
+        original_handle = handle
+
+        async def spy_handle(**kwargs):
+            captured_kwargs.update(kwargs)
+            return await original_handle(**kwargs)
+
+        mock_registry = MagicMock()
+        mock_registry.get_openai_tools.return_value = []
+
+        async def mock_agent_loop(**kwargs):
+            yield AgentEvent(kind="token", data={"content": "done"})
+            yield AgentEvent(kind="done", data={})
+
+        with patch("anteroom.tools.subagent.run_agent_loop", side_effect=mock_agent_loop):
+            with patch("anteroom.tools.subagent.AIService"):
+                await spy_handle(
+                    prompt="test",
+                    _ai_service=_mock_ai(),
+                    _tool_registry=mock_registry,
+                    _depth=0,
+                    _limiter=_make_limiter(),
+                    _config=cfg,
+                )
+
+        assert captured_kwargs["_config"] is cfg
+        assert captured_kwargs["_config"].max_depth == 2
+        assert captured_kwargs["_config"].timeout == 30

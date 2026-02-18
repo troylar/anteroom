@@ -9,17 +9,20 @@ import re
 import time
 from typing import Any, Callable, Coroutine
 
+from ..config import SubagentConfig
 from ..services.agent_loop import AgentEvent, run_agent_loop
 from ..services.ai_service import AIService
 
 logger = logging.getLogger(__name__)
 
+# Module-level constants serve as absolute maximums / fallback defaults
 MAX_SUBAGENT_DEPTH = 3
 MAX_CONCURRENT_SUBAGENTS = 5
 MAX_TOTAL_SUBAGENTS = 20
 MAX_OUTPUT_CHARS = 4000
 MAX_PROMPT_CHARS = 32_000
 SUBAGENT_MAX_ITERATIONS = 25
+SUBAGENT_TIMEOUT = 120
 
 _MODEL_PATTERN = re.compile(r"^[a-zA-Z0-9._:/-]{1,128}$")
 
@@ -122,6 +125,7 @@ async def handle(
     _agent_id: str = "",
     _limiter: SubagentLimiter | None = None,
     _confirm_callback: Any | None = None,
+    _config: SubagentConfig | None = None,
 ) -> dict[str, Any]:
     """Execute a sub-agent with an isolated conversation context."""
     if _ai_service is None:
@@ -130,14 +134,16 @@ async def handle(
     if not prompt or not prompt.strip():
         return {"error": "Prompt must not be empty"}
 
-    if len(prompt) > MAX_PROMPT_CHARS:
-        return {"error": f"Prompt exceeds maximum length ({MAX_PROMPT_CHARS} characters)"}
+    max_prompt = _config.max_prompt_chars if _config else MAX_PROMPT_CHARS
+    if len(prompt) > max_prompt:
+        return {"error": f"Prompt exceeds maximum length ({max_prompt} characters)"}
 
     if model is not None and not _MODEL_PATTERN.match(model):
         return {"error": "Invalid model identifier"}
 
-    if _depth >= MAX_SUBAGENT_DEPTH:
-        return {"error": f"Maximum sub-agent depth ({MAX_SUBAGENT_DEPTH}) reached"}
+    max_depth = _config.max_depth if _config else MAX_SUBAGENT_DEPTH
+    if _depth >= max_depth:
+        return {"error": f"Maximum sub-agent depth ({max_depth}) reached"}
 
     if _tool_registry is None:
         return {"error": "Sub-agent requires tool registry context"}
@@ -164,6 +170,7 @@ async def handle(
             _agent_id=_agent_id,
             _limiter=_limiter,
             _confirm_callback=_confirm_callback,
+            _config=_config,
         )
     finally:
         _limiter.release()
@@ -181,8 +188,14 @@ async def _run_subagent(
     _agent_id: str,
     _limiter: SubagentLimiter,
     _confirm_callback: Any | None = None,
+    _config: SubagentConfig | None = None,
 ) -> dict[str, Any]:
     """Internal: run the sub-agent after limiter acquisition."""
+    max_depth = _config.max_depth if _config else MAX_SUBAGENT_DEPTH
+    max_iterations = _config.max_iterations if _config else SUBAGENT_MAX_ITERATIONS
+    max_output = _config.max_output_chars if _config else MAX_OUTPUT_CHARS
+    timeout = _config.timeout if _config else SUBAGENT_TIMEOUT
+
     child_depth = _depth + 1
     start_time = time.monotonic()
 
@@ -195,7 +208,7 @@ async def _run_subagent(
 
     # Build child tool list — exclude run_agent at max depth
     child_tools = _tool_registry.get_openai_tools()
-    if child_depth >= MAX_SUBAGENT_DEPTH:
+    if child_depth >= max_depth:
         child_tools = [t for t in child_tools if t["function"]["name"] != "run_agent"]
 
     # Child tool executor wraps the registry, injecting depth and limiter for nested sub-agents
@@ -214,6 +227,7 @@ async def _run_subagent(
             arguments["_event_sink"] = _event_sink
             arguments["_limiter"] = _limiter
             arguments["_confirm_callback"] = _confirm_callback
+            arguments["_config"] = _config
         return await _tool_registry.call_tool(tool_name, arguments, confirm_callback=_confirm_callback)
 
     # Isolated message history for the child
@@ -241,7 +255,8 @@ async def _run_subagent(
     tool_calls_made: list[str] = []
     error_message: str | None = None
 
-    try:
+    async def _run_loop() -> None:
+        nonlocal error_message
         async for event in run_agent_loop(
             ai_service=child_ai,
             messages=messages,
@@ -249,9 +264,8 @@ async def _run_subagent(
             tools_openai=child_tools,
             cancel_event=_cancel_event,
             extra_system_prompt=_SUBAGENT_SYSTEM_PROMPT,
-            max_iterations=SUBAGENT_MAX_ITERATIONS,
+            max_iterations=max_iterations,
         ):
-            # Forward events to parent for UI rendering
             if _event_sink:
                 await _event_sink(_agent_id, event)
 
@@ -264,6 +278,11 @@ async def _run_subagent(
             elif event.kind == "error":
                 error_message = event.data.get("message", "Unknown error")
 
+    try:
+        await asyncio.wait_for(_run_loop(), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning("Sub-agent %s timed out after %ds", _agent_id, timeout)
+        error_message = f"Sub-agent timed out after {timeout}s"
     except Exception:
         logger.exception("Sub-agent execution failed")
         error_message = "Sub-agent execution failed"
@@ -273,8 +292,8 @@ async def _run_subagent(
 
     # Truncate if too long
     truncated = False
-    if len(output) > MAX_OUTPUT_CHARS:
-        output = output[:MAX_OUTPUT_CHARS] + "\n\n... [output truncated]"
+    if len(output) > max_output:
+        output = output[:max_output] + "\n\n... [output truncated]"
         truncated = True
 
     # Notify parent of sub-agent completion
