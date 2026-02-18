@@ -12,6 +12,7 @@ ai:
   model: "gpt-4"                              # Default model
   system_prompt: "You are a helpful assistant."
   verify_ssl: true                            # SSL cert verification (default: true)
+  request_timeout: 120                        # API request timeout in seconds (default: 120, clamped 10–600)
 
 app:
   host: "127.0.0.1"      # Bind address
@@ -20,8 +21,10 @@ app:
   tls: false              # Set true for HTTPS with self-signed cert
 
 cli:
-  builtin_tools: true      # Enable built-in tools (default: true)
-  max_tool_iterations: 50  # Max tool calls per response (default: 50)
+  builtin_tools: true              # Enable built-in tools (default: true)
+  max_tool_iterations: 50          # Max tool calls per response (default: 50)
+  context_warn_tokens: 80000       # Token count at which context warning is shown (default: 80000)
+  context_auto_compact_tokens: 100000  # Token count at which auto-compaction triggers (default: 100000)
 
 identity:
   user_id: "auto-generated-uuid"
@@ -88,6 +91,7 @@ embeddings:
 | `model` | string | `gpt-4` | Default model name |
 | `system_prompt` | string | `You are a helpful assistant.` | System prompt for all conversations |
 | `verify_ssl` | boolean | `true` | Verify SSL certificates when connecting to the API |
+| `request_timeout` | integer | `120` | Per-request timeout in seconds for API calls (clamped 10–600); env: `AI_CHAT_REQUEST_TIMEOUT` |
 
 ### app
 
@@ -104,6 +108,8 @@ embeddings:
 |---|---|---|---|
 | `builtin_tools` | boolean | `true` | Enable the 6 built-in tools |
 | `max_tool_iterations` | integer | `50` | Max agentic loop iterations per turn |
+| `context_warn_tokens` | integer | `80000` | Token count at which a context warning is shown in the CLI |
+| `context_auto_compact_tokens` | integer | `100000` | Token count at which context is automatically compacted |
 
 ### identity
 
