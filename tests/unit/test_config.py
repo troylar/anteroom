@@ -95,6 +95,12 @@ class TestLoadConfig:
         config = load_config(cfg_file)
         assert "Anteroom" in config.ai.system_prompt
         assert "<agentic_behavior>" in config.ai.system_prompt
+        assert "<tool_use>" in config.ai.system_prompt
+        assert "<code_modification>" in config.ai.system_prompt
+        assert "<git_operations>" in config.ai.system_prompt
+        assert "<investigation>" in config.ai.system_prompt
+        assert "<communication>" in config.ai.system_prompt
+        assert "<safety>" in config.ai.system_prompt
 
     def test_default_app_settings(self, tmp_path: Path) -> None:
         cfg_file = _write_config(
