@@ -286,7 +286,9 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
 
         if not self._is_session_valid():
             security_logger.warning("Expired session access attempt from %s: %s", client_ip, path)
-            return self._make_401("Session expired")
+            # Don't set a fresh cookie for timeout — the server-side session
+            # is expired and a new cookie won't fix it (requires server restart).
+            return JSONResponse(status_code=401, content={"detail": "Session expired"})
 
         # Check Authorization header
         auth = request.headers.get("authorization", "")

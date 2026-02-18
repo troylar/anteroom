@@ -13,6 +13,8 @@ const App = (() => {
     };
 
     let _eventSource = null;
+    let _esConnectedAt = 0;
+    let _esFailCount = 0;
     const _shownApprovalIds = new Set();
 
     // --- Theme System ---
@@ -537,9 +539,6 @@ const App = (() => {
                 Chat.showThinkingFromEvent();
             }
         });
-
-        let _esConnectedAt = Date.now();
-        let _esFailCount = 0;
 
         _eventSource.onopen = () => {
             _esConnectedAt = Date.now();
