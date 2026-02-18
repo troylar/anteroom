@@ -249,6 +249,60 @@ class TestLoadConfig:
         assert "Be very brief." in config.ai.system_prompt
         assert "Anteroom" in config.ai.system_prompt
 
+    def test_narration_cadence_default(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {
+                    "base_url": "https://api.example.com",
+                    "api_key": "sk-test-key",
+                },
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.ai.narration_cadence == 5
+        assert "<narration>" in config.ai.system_prompt
+        assert "every 5 tool calls" in config.ai.system_prompt
+
+    def test_narration_cadence_yaml_override(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {
+                    "base_url": "https://api.example.com",
+                    "api_key": "sk-test-key",
+                    "narration_cadence": 10,
+                },
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.ai.narration_cadence == 10
+        assert "every 10 tool calls" in config.ai.system_prompt
+
+    def test_narration_cadence_disabled(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {
+                    "base_url": "https://api.example.com",
+                    "api_key": "sk-test-key",
+                    "narration_cadence": 0,
+                },
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.ai.narration_cadence == 0
+        assert "<narration>" not in config.ai.system_prompt
+
+    def test_narration_cadence_env_var(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AI_CHAT_BASE_URL", "https://env.example.com")
+        monkeypatch.setenv("AI_CHAT_API_KEY", "sk-env-key")
+        monkeypatch.setenv("AI_CHAT_NARRATION_CADENCE", "3")
+        cfg_file = _write_config(tmp_path, {})
+        config = load_config(cfg_file)
+        assert config.ai.narration_cadence == 3
+        assert "every 3 tool calls" in config.ai.system_prompt
+
 
 class TestEmbeddingsConfig:
     def test_default_embeddings_config(self, tmp_path: Path) -> None:
