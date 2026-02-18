@@ -246,6 +246,7 @@ const Chat = (() => {
                 showError(null, err.message);
             }
         } finally {
+            hideThinking();
             setStreaming(false);
         }
     }
@@ -268,18 +269,22 @@ const Chat = (() => {
                 renderToolCallEnd(data);
                 break;
             case 'canvas_stream_start':
+                hideThinking();
                 Canvas.handleCanvasStreamStart();
                 break;
             case 'canvas_streaming':
                 Canvas.handleCanvasStreaming(data);
                 break;
             case 'canvas_created':
+                hideThinking();
                 Canvas.handleCanvasCreated(data);
                 break;
             case 'canvas_updated':
+                hideThinking();
                 Canvas.handleCanvasUpdated(data);
                 break;
             case 'canvas_patched':
+                hideThinking();
                 Canvas.handleCanvasPatched(data);
                 break;
             case 'title':
@@ -292,9 +297,11 @@ const Chat = (() => {
                 document.querySelectorAll('.queued-badge').forEach(b => b.remove());
                 break;
             case 'done':
+                hideThinking();
                 finalizeAssistant();
                 break;
             case 'error':
+                hideThinking();
                 if (currentAssistantEl) {
                     showError(currentAssistantEl, data.message);
                 }
@@ -1568,10 +1575,14 @@ const Chat = (() => {
     function resolveApprovalCard(approvalId, approved, reason) {
         const el = document.querySelector(`[data-approval-id="${CSS.escape(approvalId)}"]`);
         if (!el || el.classList.contains('approval-allowed') || el.classList.contains('approval-denied')) return;
-        el.classList.add('approval-denied');
+        el.classList.add(approved ? 'approval-allowed' : 'approval-denied');
         const status = document.createElement('div');
         status.className = 'approval-status';
-        status.textContent = reason === 'timed_out' ? 'Timed out' : 'Denied';
+        if (reason === 'timed_out') {
+            status.textContent = 'Timed out';
+        } else {
+            status.textContent = approved ? 'Allowed' : 'Denied';
+        }
         const actionsEl = el.querySelector('.approval-actions');
         if (actionsEl) actionsEl.replaceWith(status);
     }

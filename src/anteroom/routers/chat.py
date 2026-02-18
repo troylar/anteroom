@@ -7,6 +7,7 @@ import base64
 import copy
 import json
 import logging
+import time as time_mod
 import uuid as uuid_mod
 from collections import defaultdict
 from typing import Any
@@ -115,7 +116,7 @@ SAFE_INLINE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
 _cancel_events: dict[str, set[asyncio.Event]] = defaultdict(set)
 _message_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
-_active_streams: dict[str, bool] = {}
+_active_streams: dict[str, dict[str, Any]] = {}
 
 
 def _validate_uuid(value: str) -> str:
@@ -253,15 +254,39 @@ async def chat(conversation_id: str, request: Request):
 
     # Queue message if a stream is already active for this conversation
     if not regenerate and _active_streams.get(conversation_id):
-        queue = _message_queues.get(conversation_id)
-        if queue and queue.qsize() >= MAX_QUEUED_MESSAGES:
-            raise HTTPException(status_code=429, detail="Message queue full (max 10)")
-        storage.create_message(db, conversation_id, "user", message_text, user_id=uid, user_display_name=uname)
-        if queue is None:
-            queue = asyncio.Queue()
-            _message_queues[conversation_id] = queue
-        await queue.put({"role": "user", "content": message_text})
-        return JSONResponse({"status": "queued", "position": queue.qsize()})
+        stream_info = _active_streams[conversation_id]
+        stale_request = stream_info.get("request")
+        stream_age = time_mod.monotonic() - stream_info.get("started_at", 0)
+
+        # Detect stale streams: client disconnected or stream exceeded timeout
+        is_stale = False
+        if stale_request:
+            try:
+                is_stale = await stale_request.is_disconnected()
+            except Exception:
+                is_stale = True
+        _safety_cfg = getattr(request.app.state.config, "safety", None)
+        stale_timeout = (_safety_cfg.approval_timeout if _safety_cfg else 120) + 30
+        if not is_stale and stream_age > stale_timeout:
+            is_stale = True
+
+        if is_stale:
+            logger.info("Cleaning up stale stream for conversation %s (age=%.0fs)", conversation_id, stream_age)
+            old_cancel = stream_info.get("cancel_event")
+            if old_cancel:
+                old_cancel.set()
+            _active_streams.pop(conversation_id, None)
+            # Fall through to create a new stream
+        else:
+            queue = _message_queues.get(conversation_id)
+            if queue and queue.qsize() >= MAX_QUEUED_MESSAGES:
+                raise HTTPException(status_code=429, detail="Message queue full (max 10)")
+            storage.create_message(db, conversation_id, "user", message_text, user_id=uid, user_display_name=uname)
+            if queue is None:
+                queue = asyncio.Queue()
+                _message_queues[conversation_id] = queue
+            await queue.put({"role": "user", "content": message_text})
+            return JSONResponse({"status": "queued", "position": queue.qsize()})
 
     if regenerate:
         existing = storage.list_messages(db, conversation_id)
@@ -339,7 +364,11 @@ async def chat(conversation_id: str, request: Request):
 
     cancel_event = asyncio.Event()
     _cancel_events[conversation_id].add(cancel_event)
-    _active_streams[conversation_id] = True
+    _active_streams[conversation_id] = {
+        "started_at": time_mod.monotonic(),
+        "request": request,
+        "cancel_event": cancel_event,
+    }
     if conversation_id not in _message_queues:
         _message_queues[conversation_id] = asyncio.Queue()
 
@@ -462,7 +491,24 @@ async def chat(conversation_id: str, request: Request):
             )
 
         try:
-            await asyncio.wait_for(approval_event.wait(), timeout=approval_timeout)
+            # Poll for approval with periodic disconnect checks so we don't
+            # block for the full timeout when the client has already left.
+            elapsed = 0.0
+            poll_interval = 1.0
+            while not approval_event.is_set():
+                if elapsed >= approval_timeout:
+                    raise asyncio.TimeoutError()
+                try:
+                    if await request.is_disconnected():
+                        raise asyncio.TimeoutError()
+                except asyncio.TimeoutError:
+                    raise
+                except Exception:
+                    pass
+                try:
+                    await asyncio.wait_for(approval_event.wait(), timeout=poll_interval)
+                except asyncio.TimeoutError:
+                    elapsed += poll_interval
         except asyncio.TimeoutError:
             logger.warning("Approval timed out (id=%s): %s", approval_id, verdict.reason)
             if event_bus:

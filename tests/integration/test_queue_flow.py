@@ -6,7 +6,9 @@ Tests the queue routing logic and state management in chat.py.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -16,6 +18,15 @@ from anteroom.routers.chat import (
     _cancel_events,
     _message_queues,
 )
+
+
+def _stream_entry() -> dict[str, Any]:
+    """Create a standard active stream metadata dict."""
+    return {
+        "started_at": time.monotonic(),
+        "request": MagicMock(),
+        "cancel_event": asyncio.Event(),
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -39,8 +50,8 @@ class TestQueueStateManagement:
     def test_active_stream_flag_set_and_read(self):
         """Active stream flag can be set and read for a conversation."""
         cid = "00000000-0000-0000-0000-000000000001"
-        _active_streams[cid] = True
-        assert _active_streams.get(cid) is True
+        _active_streams[cid] = _stream_entry()
+        assert _active_streams.get(cid)
 
     def test_inactive_stream_returns_none(self):
         """Unset conversation returns None (falsy) — triggers normal flow."""
@@ -50,7 +61,7 @@ class TestQueueStateManagement:
     def test_queue_accepts_message(self):
         """Queue can accept and hold a message."""
         cid = "00000000-0000-0000-0000-000000000003"
-        _active_streams[cid] = True
+        _active_streams[cid] = _stream_entry()
         _message_queues[cid] = asyncio.Queue()
 
         loop = asyncio.new_event_loop()
@@ -114,7 +125,7 @@ class TestCleanup:
     def test_cleanup_removes_active_stream(self):
         """Active stream flag is removed during cleanup."""
         cid = "00000000-0000-0000-0000-000000000010"
-        _active_streams[cid] = True
+        _active_streams[cid] = _stream_entry()
 
         _active_streams.pop(cid, None)
         assert cid not in _active_streams
@@ -197,12 +208,12 @@ class TestCleanup:
         cancel = asyncio.Event()
 
         # Setup (what chat() does)
-        _active_streams[cid] = True
+        _active_streams[cid] = _stream_entry()
         _message_queues[cid] = asyncio.Queue()
         _cancel_events[cid].add(cancel)
 
         # Verify setup
-        assert _active_streams[cid] is True
+        assert _active_streams[cid]
         assert _message_queues[cid] is not None
         assert cancel in _cancel_events[cid]
 
@@ -247,8 +258,8 @@ class TestConversationIsolation:
         cid_a = "00000000-0000-0000-0000-000000000022"
         cid_b = "00000000-0000-0000-0000-000000000023"
 
-        _active_streams[cid_a] = True
-        assert _active_streams.get(cid_a) is True
+        _active_streams[cid_a] = _stream_entry()
+        assert _active_streams.get(cid_a)
         assert _active_streams.get(cid_b) is None
 
     def test_cleanup_one_doesnt_affect_other(self):
@@ -256,8 +267,8 @@ class TestConversationIsolation:
         cid_a = "00000000-0000-0000-0000-000000000024"
         cid_b = "00000000-0000-0000-0000-000000000025"
 
-        _active_streams[cid_a] = True
-        _active_streams[cid_b] = True
+        _active_streams[cid_a] = _stream_entry()
+        _active_streams[cid_b] = _stream_entry()
         _message_queues[cid_a] = asyncio.Queue()
         _message_queues[cid_b] = asyncio.Queue()
 
@@ -283,7 +294,7 @@ class TestQueueRouting:
     def test_routes_to_queue_when_active(self):
         """When stream is active, new message should be routed to queue."""
         cid = "00000000-0000-0000-0000-000000000030"
-        _active_streams[cid] = True
+        _active_streams[cid] = _stream_entry()
         _message_queues[cid] = asyncio.Queue()
 
         # Simulate the routing check from chat()
@@ -299,7 +310,7 @@ class TestQueueRouting:
     def test_regenerate_bypasses_queue(self):
         """Regenerate requests bypass queue even when stream is active."""
         cid = "00000000-0000-0000-0000-000000000032"
-        _active_streams[cid] = True
+        _active_streams[cid] = _stream_entry()
         _message_queues[cid] = asyncio.Queue()
 
         regenerate = True
@@ -324,7 +335,7 @@ class TestQueueRouting:
     def test_queue_created_if_missing(self):
         """Queue is created on-demand if it doesn't exist yet."""
         cid = "00000000-0000-0000-0000-000000000034"
-        _active_streams[cid] = True
+        _active_streams[cid] = _stream_entry()
 
         # Simulate the queue creation logic from chat()
         queue = _message_queues.get(cid)

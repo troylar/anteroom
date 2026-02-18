@@ -4,7 +4,7 @@ Anteroom uses token-based authentication with HttpOnly session cookies.
 
 ## Session Management
 
-- **Token generation**: 32-byte cryptographic random token via `secrets.token_urlsafe`
+- **Token generation**: Stable HMAC-SHA256 token derived from the Ed25519 identity key (`_derive_auth_token()` in `app.py`). Uses the private key PEM as HMAC key with context string `anteroom-session-v1`, producing a deterministic token that survives server restarts. Falls back to `secrets.token_urlsafe(32)` when no identity is configured
 - **Storage**: Token hash stored server-side, compared with `hmac.compare_digest` (timing-safe)
 - **Cookie flags**: `HttpOnly`, `Secure` (non-localhost), `SameSite=Strict`
 - **Session expiry**: 12-hour absolute timeout, 30-minute idle timeout
@@ -24,3 +24,7 @@ Anteroom uses the double-submit cookie pattern:
 On first visit, Anteroom generates a session token and sets it as an HttpOnly cookie. All subsequent API requests must include this cookie. For state-changing operations, the CSRF token must also be included as a request header.
 
 No passwords are involved --- this is a single-user local application. The session token prevents unauthorized access from other processes or users on the same machine.
+
+## Session Expiry Handling
+
+When an API request returns 401 (session expired or invalid token), the browser redirects to `/` to obtain a fresh session cookie. To prevent infinite reload loops (e.g., if the server is unreachable or the token is permanently invalid), the client tracks redirect timestamps in `sessionStorage`. If two 401 redirects occur within 5 seconds, a fixed banner is shown instead of reloading again, instructing the user to manually refresh.
