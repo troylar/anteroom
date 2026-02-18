@@ -24,18 +24,29 @@ If a PR number is provided as an argument, use it. Otherwise, detect the PR for 
 gh pr view --json number --jq '.number'
 ```
 
-### Step 2: Eligibility Check (Haiku agent)
+### Step 2: Eligibility and Context Detection
 
 Check if the PR is eligible for review. Run:
 ```bash
 gh pr view <PR> --json state,isDraft,author,title,body,reviews
+gh api repos/{owner}/{repo}/issues/<PR>/comments --jq '.[].body'
 ```
 
 Do NOT proceed if:
 - (a) PR is closed/merged
 - (b) PR is a draft
 - (c) PR is automated (dependabot, renovate) or trivially obvious (single-line typo fix)
-- (d) PR already has a code review comment containing "Generated with Claude Code"
+- (d) PR already has a **code review** comment (contains "### Code review" AND "Generated with Claude Code")
+
+**Submit-PR detection:** Check if a `/submit-pr` validation comment exists. Look for comments containing "Generated with Claude Code" that also contain "PR Validation" or "PR Created". If found, set `submit_pr_ran = true` — this means CLAUDE.md compliance, docs freshness, vision alignment, security scan, and test thoroughness were already checked. The code-review should only run its 3 unique agents.
+
+### Step 2b: PR Size Check
+
+Determine the PR size for agent scaling:
+```bash
+gh pr diff <PR> --stat | tail -1
+```
+Parse the total insertions + deletions. If under 300 lines, set `small_pr = true`.
 
 ### Step 3: Gather Context (parallel Haiku agents)
 
@@ -47,140 +58,127 @@ Launch 3 parallel Haiku agents:
 
 **Agent C — Run unit tests:** Run `pytest tests/unit/ -v --tb=short 2>&1 | tail -80` and return the results. Report pass/fail count and any failures.
 
-### Step 4: Deep Review (7 parallel Sonnet agents)
+### Step 4: Deep Review (conditional parallel agents)
 
-Launch 7 parallel Sonnet agents. Each agent works through a **structured checklist** against the diff — not open-ended scanning. This ensures consistent, reproducible results across runs.
+**Agent selection depends on context from Step 2/2b:**
+
+| Condition | Agents to run | Rationale |
+|-----------|--------------|-----------|
+| `submit_pr_ran = true` | #2 Bug scan, #4 Historical context, #5 Code comments | Submit-PR already ran compliance, docs, vision, security |
+| `small_pr = true` AND standalone | #2 Bug scan, #3 Security, #4 Historical context | Small PRs need fewer agents |
+| Standalone, large PR | All 7 agents | Full review needed |
+
+**Bug scan (#2) ALWAYS runs regardless of context — it is never skipped.**
+
+**IMPORTANT for ALL agents:** Report ONLY failures. Do not report PASS or N/A items. Keep response under 500 words.
 
 Every agent MUST:
 1. Read the full diff (`gh pr diff <PR>`)
-2. Walk through every checklist item, one by one
-3. For each item, report: PASS (no issue), FAIL (issue found with file:line), or N/A (not applicable to this diff)
-4. Only report FAIL items in the results — do not report PASS or N/A items
+2. Check each item on its checklist
+3. Report only FAIL items with file:line
 
 ---
 
-**Agent #1 — CLAUDE.md compliance checklist:**
+**Agent #1 — CLAUDE.md compliance (Sonnet):** *(skipped when `submit_pr_ran`)*
 
-Read all relevant CLAUDE.md files, then check each item against the diff:
-
-- [ ] New Python modules under `src/anteroom/` follow existing naming conventions
-- [ ] New routers use the same middleware/auth pattern as existing routers
-- [ ] New tools follow the ToolRegistry pattern (`_handlers` + `_definitions`)
-- [ ] Database queries use parameterized queries (no string concatenation)
+Read CLAUDE.md files, check the diff:
+- [ ] New modules follow existing naming conventions
+- [ ] New routers use same middleware/auth pattern
+- [ ] New tools follow ToolRegistry pattern (`_handlers` + `_definitions`)
+- [ ] Parameterized queries only (no SQL concatenation)
 - [ ] New endpoints have Content-Type validation for JSON bodies
-- [ ] Async functions use `await` correctly (no fire-and-forget without `asyncio.create_task`)
-- [ ] New config fields have env var overrides with `AI_CHAT_` prefix documented
-- [ ] Error responses don't expose internal details (stack traces, SQL errors)
-- [ ] Commit messages follow `type(scope): description (#issue)` format
+- [ ] Async functions use `await` correctly
+- [ ] New config fields have `AI_CHAT_` env var overrides documented
+- [ ] Error responses don't expose internals
+- [ ] Commits follow `type(scope): description (#issue)`
 
 ---
 
-**Agent #2 — Bug scan checklist:**
+**Agent #2 — Bug scan (Sonnet):** *(ALWAYS runs)*
 
-Read the diff, then check each line of changed code against this checklist:
-
-- [ ] **Return values**: Are return values checked? Any function that can return None used without a None check?
-- [ ] **Off-by-one**: Loop bounds, slice indices, range() calls — do they include/exclude the right endpoints?
-- [ ] **Type mismatches**: String where int expected? List where dict expected? Especially in JSON parsing and API responses.
-- [ ] **Null/empty handling**: What happens if a list is empty, a dict key is missing, a string is blank, or a query returns no rows?
-- [ ] **Resource leaks**: Are files, DB connections, HTTP sessions properly closed? Are `async with` / `with` used for context managers?
-- [ ] **Concurrency**: Any shared mutable state accessed without locks? Race conditions in async code?
-- [ ] **Exception handling**: Are exceptions caught too broadly (`except Exception`)? Are they swallowed silently? Is cleanup code in `finally` blocks?
-- [ ] **String formatting**: f-strings with user input that could break? SQL or command strings built with concatenation?
-- [ ] **Import errors**: Missing imports, circular imports, imports that only work in certain Python versions?
-- [ ] **Logic inversion**: Negated conditions that should be positive (or vice versa)? `and`/`or` confusion?
-
----
-
-**Agent #3 — Security audit checklist:**
-
-Read the diff and modified files, then check each item:
-
-- [ ] **SQL injection**: Any raw SQL with string formatting or concatenation? (Must use parameterized queries)
-- [ ] **Command injection**: Any `subprocess`, `os.system`, or tool execution with user-controlled input not sanitized?
-- [ ] **Path traversal**: File operations using user input without path validation? (`..` not blocked, symlinks not resolved)
-- [ ] **XSS**: User input rendered in HTML/JS without encoding? `innerHTML` with unsanitized data?
-- [ ] **CSRF**: State-changing endpoints missing CSRF protection? Origin header validation bypassed?
-- [ ] **Auth bypass**: New endpoints accessible without authentication? Missing session checks?
-- [ ] **Hardcoded secrets**: API keys, passwords, tokens in source code? (Check string literals and comments)
-- [ ] **Insecure defaults**: Debug mode enabled? Auth disabled? Permissive CORS? TLS verification skipped?
-- [ ] **Input validation**: User input accepted without type/length/range validation at system boundaries?
-- [ ] **Information disclosure**: Error messages that reveal internal paths, versions, or stack traces?
-- [ ] **Unsafe deserialization**: `pickle.loads`, `yaml.load` (not safe_load), `eval()`, `exec()` with external input?
-- [ ] **Cookie security**: New cookies missing HttpOnly, Secure, or SameSite flags?
-- [ ] **Rate limiting**: New public endpoints without rate limiting?
-- [ ] **Content-Type**: Endpoints accepting request bodies without Content-Type validation?
+Read the diff, check each line of changed code:
+- [ ] **Return values**: Unchecked None returns?
+- [ ] **Off-by-one**: Loop bounds, slice indices, range() endpoints
+- [ ] **Type mismatches**: Wrong types in JSON parsing, API responses
+- [ ] **Null/empty handling**: Empty lists, missing dict keys, blank strings, no rows
+- [ ] **Resource leaks**: Files/connections not closed? Missing `async with`/`with`?
+- [ ] **Concurrency**: Shared mutable state without locks? Race conditions?
+- [ ] **Exception handling**: Too broad (`except Exception`)? Swallowed silently?
+- [ ] **String formatting**: SQL/command concatenation with user input?
+- [ ] **Import errors**: Missing, circular, or version-specific imports?
+- [ ] **Logic inversion**: Negated conditions, `and`/`or` confusion?
 
 ---
 
-**Agent #4 — Historical context checklist:**
+**Agent #3 — Security audit (Sonnet):** *(skipped when `submit_pr_ran`)*
 
-Read git blame and history for each modified file:
-
-- [ ] **Reverted fixes**: Does this change undo or weaken a previous bug fix? Check `git log --oneline <file>` for fix commits.
-- [ ] **Recurring patterns**: Has this file had similar bugs before? Check recent `fix:` commits touching these files.
-- [ ] **TODO/FIXME regression**: Are there TODO or FIXME comments in the modified areas? Does this change address or ignore them?
-- [ ] **Previous review feedback**: Check `gh pr list --search "<file>" --state merged --limit 3` for previous PR comments on these files. Are past concerns addressed?
-- [ ] **Breaking change context**: Was the modified code written with specific assumptions (documented in comments or commit messages) that this change violates?
+Read the diff and modified files:
+- [ ] **SQL injection**: String formatting in queries?
+- [ ] **Command injection**: `subprocess` with `shell=True` + user input?
+- [ ] **Path traversal**: File ops with unsanitized `..`?
+- [ ] **XSS**: `innerHTML` with unsanitized input?
+- [ ] **CSRF**: State-changing endpoints missing protection?
+- [ ] **Auth bypass**: New endpoints without auth?
+- [ ] **Hardcoded secrets**: API keys/passwords/tokens in source?
+- [ ] **Insecure defaults**: Debug mode, disabled auth, permissive CORS?
+- [ ] **Input validation**: User input not validated server-side?
+- [ ] **Info disclosure**: Internals in error messages?
+- [ ] **Unsafe deserialization**: `pickle.loads`, `yaml.load`, `eval()`, `exec()`?
+- [ ] **Cookie security**: Missing HttpOnly, Secure, SameSite?
+- [ ] **Rate limiting**: New public endpoints without limits?
+- [ ] **Content-Type**: Missing Content-Type validation?
 
 ---
 
-**Agent #5 — Code comments and intent checklist:**
+**Agent #4 — Historical context (Haiku):** *(ALWAYS runs)*
+
+IMPORTANT: Maximum 15 tool calls. Prioritize:
+1. `git log -5` for each modified source file (not test files)
+2. Deep-dive (blame, PR search) only on files flagged as security-critical
+3. Stop after 15 tool calls even if not all files are checked.
+
+Checklist:
+- [ ] **Reverted fixes**: Does this undo/weaken a previous fix? Check `git log --oneline <file>` for `fix:` commits
+- [ ] **Recurring patterns**: Similar bugs in this file before?
+- [ ] **TODO/FIXME regression**: TODOs in modified areas addressed or ignored?
+- [ ] **Previous review feedback**: Past PR comments on these files — concerns addressed?
+- [ ] **Breaking assumptions**: Does the change violate documented assumptions in comments or commit messages?
+
+---
+
+**Agent #5 — Code comments and intent (Sonnet):** *(ALWAYS runs)*
 
 Read code comments in modified files:
-
-- [ ] **Invariant violations**: Are there comments stating invariants (e.g., "this must be called after X", "never modify this without Y") that the change violates?
-- [ ] **TODO completion**: Are there TODOs that this change was supposed to address but didn't fully resolve?
-- [ ] **Warning heeds**: Are there `# WARNING:` or `# IMPORTANT:` comments in the modified area? Does the change comply?
-- [ ] **Docstring accuracy**: Do modified functions still match their docstrings? Are parameter types still correct?
-- [ ] **Security comments**: Are there `# SECURITY:` or `# SECURITY-REVIEW:` comments? Does the change maintain the security properties described?
-
----
-
-**Agent #6 — Vision and scope alignment checklist:**
-
-Read `VISION.md`, then check each item:
-
-- [ ] **Not a walled garden**: Does this change introduce proprietary extension mechanisms, required infrastructure for extensibility, or Anteroom-specific plugin formats?
-- [ ] **Not a ChatGPT clone**: Does this change add a chat-only feature with no agentic/tool value?
-- [ ] **Not a configuration burden**: Does this change add features that don't work without configuration? Are there sensible defaults for every new option?
-- [ ] **Not enterprise software**: Does this change add license management, SSO, admin panels, or compliance features?
-- [ ] **Not a deployment project**: Does this change add Docker, Kubernetes, or external infrastructure requirements to core functionality?
-- [ ] **Not a model host**: Does this change add model management, serving, benchmarking, or training features?
-- [ ] **Scope check**: Does this change touch cloud/SaaS, model training, mobile native, complex deployment, admin dashboards, or IDE recreation?
-- [ ] **New dependencies**: Any new entries in `pyproject.toml` dependencies? Is each justified?
-- [ ] **New config options**: Any new config fields? Does each have a sensible default?
-- [ ] **Dual-interface**: If web-only, is CLI omission justified? If CLI-only, is web omission justified?
-- [ ] **Lean**: Could this change be simpler? Are there new abstractions for one-time operations?
-
-Flag only if the PR **introduces** scope drift — not for pre-existing patterns.
+- [ ] **Invariant violations**: Comments stating "must be called after X" / "never modify without Y" — violated?
+- [ ] **TODO completion**: TODOs this change should address but didn't?
+- [ ] **Warning heeds**: `# WARNING:` / `# IMPORTANT:` comments — complied with?
+- [ ] **Docstring accuracy**: Modified functions still match their docstrings?
+- [ ] **Security comments**: `# SECURITY:` / `# SECURITY-REVIEW:` — properties maintained?
 
 ---
 
-**Agent #7 — Documentation freshness checklist:**
+**Agent #6 — Vision and scope alignment (Haiku):** *(skipped when `submit_pr_ran`)*
 
-Read `CLAUDE.md`, `README.md`, `VISION.md`, and relevant `docs/` pages:
+Read `VISION.md` and the diff. Flag only issues **introduced by this PR**:
+- [ ] Not a walled garden / ChatGPT clone / config burden / enterprise software / deployment project / model host
+- [ ] New `pyproject.toml` dependencies justified
+- [ ] New config options have sensible defaults
+- [ ] Dual-interface parity (web-only or CLI-only justified?)
+- [ ] Lean: could this be simpler? Unnecessary abstractions?
 
-- [ ] **CLAUDE.md — Key Modules**: New Python modules under `src/anteroom/` not listed?
-- [ ] **CLAUDE.md — Module descriptions**: Modified modules whose description no longer matches reality?
-- [ ] **CLAUDE.md — Architecture diagram**: New routers, tools, or services that change the diagram?
-- [ ] **CLAUDE.md — Configuration**: New config fields in `config.py` not documented?
-- [ ] **CLAUDE.md — Database**: New tables or columns in `db.py` not documented?
-- [ ] **CLAUDE.md — Agent events**: New `AgentEvent(kind=...)` values not documented?
-- [ ] **CLAUDE.md — Security Model**: Auth, middleware, or security changes not reflected?
-- [ ] **README.md — CLI**: New commands or flags not mentioned?
-- [ ] **README.md — Features**: Feature descriptions that no longer match current behavior?
-- [ ] **VISION.md — Current Direction**: New capabilities not reflected?
-- [ ] **docs/ pages**: For each changed source file, check corresponding docs:
-  - `src/anteroom/cli/` → `docs/cli/`
-  - `src/anteroom/routers/` → `docs/api/` and `docs/web-ui/`
-  - `src/anteroom/tools/` → `docs/cli/tools.md`
-  - `src/anteroom/config.py` → `docs/configuration/`
-  - Security changes → `docs/security/`
-  - `app.py` middleware → `docs/security/` and `docs/advanced/architecture.md`
-- [ ] **New features**: Any new feature with no corresponding docs page?
+---
 
-Report stale or missing documentation as issues with `(docs: <which file> — <what's stale/missing>)`.
+**Agent #7 — Documentation freshness (Haiku):** *(skipped when `submit_pr_ran`)*
+
+Read `CLAUDE.md`, `README.md`, `VISION.md`, and relevant `docs/` pages. Check:
+- [ ] New modules not in CLAUDE.md "Key Modules"?
+- [ ] Modified modules with stale CLAUDE.md descriptions?
+- [ ] New config/DB/event fields undocumented?
+- [ ] Security model changes not reflected?
+- [ ] New CLI commands/flags missing from README?
+- [ ] docs/ pages stale for changed source files? (`cli/` → `docs/cli/`, `routers/` → `docs/api/`, `tools/` → `docs/cli/tools.md`, `config.py` → `docs/configuration/`, security → `docs/security/`)
+
+Report as `(docs: <file> — <what's stale/missing>)`.
 
 ### Step 5: Confidence Scoring (parallel Haiku agents)
 
@@ -288,8 +286,8 @@ If no issues found:
   ✅ No Issues Found
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  Checked: bugs, security, CLAUDE.md compliance,
-           vision alignment, documentation freshness
+  Checked: <list agents that actually ran>
+  Mode:    <"post-submit-pr (3 agents)" | "small PR (3 agents)" | "full (7 agents)">
 
 ────────────────────────────────────────────
 ```
@@ -339,7 +337,7 @@ Generated with [Claude Code](https://claude.ai/code)
 **Vision:** PASS
 **Docs:** UP TO DATE / NEEDS UPDATE (list files if any)
 
-No issues found. Checked for bugs, security, CLAUDE.md compliance, vision alignment, and documentation freshness.
+No issues found. <If submit_pr_ran: "Checked: bugs, historical context, code intent (post-submit-pr mode — compliance, security, vision, docs already verified)." Otherwise if small_pr: "Checked: bugs, security, historical context (small PR mode)." Otherwise: "Checked: bugs, security, CLAUDE.md compliance, vision alignment, documentation freshness, historical context, code intent.">
 
 Generated with [Claude Code](https://claude.ai/code)
 ```

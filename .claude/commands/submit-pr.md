@@ -117,149 +117,82 @@ Report format:
   src/anteroom/tools/canvas.py        -> ✅ OK (tests/unit/test_canvas.py exists)
 ```
 
-### Step 5: Deep Analysis (parallel Sonnet agents, unless --skip-checks)
+### Step 5: Deep Analysis (parallel agents, unless --skip-checks)
 
-Launch 5 parallel Sonnet agents:
+Launch 5 parallel agents. Use **Haiku** for Agents C and D (docs freshness, vision alignment — lightweight checks). Use **Sonnet** for Agents A, B, and E (test analysis, compliance, security — require deeper reasoning).
 
-**Agent A — Test Thoroughness:**
+**IMPORTANT for ALL agents:** Report ONLY failures and warnings. Do not report passing checks. Keep response under 500 words.
 
-For any test files that exist (from Step 4), evaluate test quality:
+**Agent A — Test Thoroughness (Sonnet):**
 
-1. Read the new/modified source files and their corresponding test files
-2. For each source file, identify:
-   - All public functions/methods and classes
-   - Branching logic (if/else, try/except, match/case)
-   - Error paths and edge cases (empty inputs, None values, timeouts, exceptions)
-   - Async patterns (locks, futures, concurrent access)
-   - External dependencies that should be mocked
-3. Check test thoroughness:
-   - **Coverage of public API**: Every public function/method should have at least one test. Flag untested functions.
-   - **Happy path + error paths**: Tests should cover both success and failure cases. Flag functions with only happy-path tests.
-   - **Edge cases**: For functions with branching logic, tests should exercise each branch. Flag branches with no coverage.
-   - **Async/concurrency**: For async code with locks, futures, or timeouts, tests should verify concurrent behavior and timeout handling.
-   - **Input validation**: If a function validates input, tests should cover valid and invalid inputs.
-   - **Mocking**: External dependencies (DB, API calls, file I/O) should be mocked in unit tests.
+Read the new/modified source files and their corresponding test files. Check:
+- [ ] Every public function/method has at least one test
+- [ ] Both happy path and error paths covered
+- [ ] Branching logic (if/else, try/except) has tests for each branch
+- [ ] Async code with locks/futures/timeouts has concurrency tests
+- [ ] External dependencies (DB, API, file I/O) are mocked
+- [ ] Input validation functions tested with valid and invalid inputs
 
-Rate overall thoroughness: GOOD (>80% of paths covered), WEAK (50-80%), POOR (<50%).
+Rate: GOOD (>80% paths), WEAK (50-80%), POOR (<50%).
 
-**Agent B — CLAUDE.md Compliance:**
+**Agent B — CLAUDE.md Compliance (Sonnet):**
 
-1. Get the diff: `git diff $BASE..HEAD`
-2. Read `CLAUDE.md`
-3. Check:
-   - Commit messages follow format: `type(scope): description (#issue)`
-   - Every commit references a GitHub issue
-   - New modules are documented in CLAUDE.md if architecturally significant
-   - Security patterns are followed (parameterized queries, input validation, no hardcoded secrets)
-   - New endpoints have appropriate auth/CSRF protection
+Get the diff (`git diff $BASE..HEAD`) and read `CLAUDE.md`. Check:
+- [ ] Commit messages follow `type(scope): description (#issue)`
+- [ ] Every commit references a GitHub issue
+- [ ] New architecturally significant modules documented in CLAUDE.md
+- [ ] Security patterns followed (parameterized queries, input validation, no hardcoded secrets)
+- [ ] New endpoints have auth/CSRF protection
 
-**Agent C — Documentation Freshness (Authoritative):**
+**Agent C — Documentation Freshness (Haiku, Authoritative):**
 
-This is the authoritative documentation review — it identifies stale or missing docs AND applies fixes. The `/deploy` skill only does a lightweight sanity check, so this is the primary gate.
+This is the authoritative doc review — identifies stale/missing docs AND applies fixes.
 
-1. Get the list of changed files: `git diff --name-only $BASE..HEAD`
+1. Get changed files: `git diff --name-only $BASE..HEAD`
 2. Read `CLAUDE.md`, `README.md`, `VISION.md`, and relevant `docs/` pages
-3. Check each documentation surface:
+3. Check each surface — flag as MISSING or STALE:
 
-**CLAUDE.md:**
-- New Python modules under `src/anteroom/` not listed in the "Key Modules" section? Flag as MISSING.
-- Modified modules whose CLAUDE.md description no longer matches reality? Flag as STALE.
-- New routers, tools, or services that change the architecture diagram? Flag as STALE.
-- New config fields in `config.py` not documented in the "Configuration" section? Flag as MISSING.
-- New database tables or columns in `db.py` not documented in the "Database" section? Flag as MISSING.
-- New `AgentEvent(kind=...)` values in `agent_loop.py` not documented? Flag as MISSING.
-- Changes to middleware, auth, or security not reflected in "Security Model"? Flag as STALE.
+**CLAUDE.md:** New modules not in "Key Modules"? Modified modules with stale descriptions? New config/DB/event fields undocumented? Security model changes not reflected?
 
-**README.md:**
-- New CLI commands or flags not mentioned in README? Flag as MISSING.
-- Feature descriptions that no longer match current behavior? Flag as STALE.
-- Installation or quickstart instructions still accurate? Verify.
+**README.md:** New CLI commands/flags missing? Feature descriptions stale? Install instructions accurate?
 
-**VISION.md:**
-- New capabilities that should be reflected in "Current Direction"? Flag as MISSING.
-- Changes that affect scope boundaries (in/out of scope)? Flag for review.
+**VISION.md:** New capabilities not in "Current Direction"? Scope boundary changes?
 
-**MkDocs docs/ pages:**
-- For each changed source file, identify the corresponding docs page(s):
-  - `src/anteroom/cli/` changes → check `docs/cli/`
-  - `src/anteroom/routers/` changes → check `docs/api/` and `docs/web-ui/`
-  - `src/anteroom/tools/` changes → check `docs/cli/tools.md`
-  - `src/anteroom/config.py` changes → check `docs/configuration/`
-  - Security changes → check `docs/security/`
-  - `app.py` middleware changes → check `docs/security/` and `docs/advanced/architecture.md`
-- Flag docs pages that reference behavior the PR changed but weren't updated.
-- Flag new features with no corresponding docs page.
+**docs/ pages:** For each changed source file, check corresponding docs:
+- `src/anteroom/cli/` → `docs/cli/`, `routers/` → `docs/api/` + `docs/web-ui/`, `tools/` → `docs/cli/tools.md`, `config.py` → `docs/configuration/`, security → `docs/security/`, `app.py` → `docs/security/` + `docs/advanced/architecture.md`
 
-4. **Apply fixes**: For any MISSING or STALE items, update the documentation files directly.
-5. Rate overall documentation: UP TO DATE / FIXED (list files updated) / NEEDS MANUAL REVIEW (items too complex to auto-fix).
+4. **Apply fixes** for MISSING/STALE items directly.
+5. Rate: UP TO DATE / FIXED (list files) / NEEDS MANUAL REVIEW.
 
-**Agent D — Vision Alignment:**
+**Agent D — Vision Alignment (Haiku):**
 
-1. Read `VISION.md`
-2. Read the diff: `git diff $BASE..HEAD`
-3. Check against **negative guardrails** ("What Anteroom Is Not"):
-   - Does this change make Anteroom more like a walled garden, ChatGPT clone, configuration burden, enterprise software, deployment project, or model host?
-4. Check for **complexity creep**:
-   - New dependencies added to `pyproject.toml`? Are they justified?
-   - New config options added? Could a default work instead?
-   - New infrastructure requirements? Do they degrade gracefully?
-5. Check **dual-interface parity**:
-   - Web-only feature without CLI consideration?
-   - CLI-only feature without web consideration?
-6. Check **lean principle**:
-   - Could this change be simpler?
-   - Are there new abstractions for one-time operations?
-   - Are there settings where defaults would suffice?
+Read `VISION.md` and the diff (`git diff $BASE..HEAD`). Check:
+- [ ] Not a walled garden / ChatGPT clone / config burden / enterprise software / deployment project / model host
+- [ ] New `pyproject.toml` dependencies justified
+- [ ] New config options have sensible defaults
+- [ ] New infra requirements degrade gracefully
+- [ ] Dual-interface parity (web-only or CLI-only justified?)
+- [ ] Lean: could this be simpler? Unnecessary abstractions?
 
-**Agent E — Security Scan (OWASP ASVS Level 2):**
+Flag only issues **introduced by this PR**, not pre-existing patterns.
 
-1. Get the diff: `git diff $BASE..HEAD`
-2. Read modified Python and JavaScript files
-3. Check against ASVS Level 2 categories:
+**Agent E — Security Scan, OWASP ASVS Level 2 (Sonnet):**
 
-   **V2 — Authentication:**
-   - New endpoints use established auth (no custom auth schemes)
-   - No credentials in logs, URLs, or error messages
-
-   **V3 — Session Management:**
-   - Cookies set with HttpOnly, Secure, SameSite
-   - Session invalidation on auth state changes
-
-   **V4 — Access Control:**
-   - Server-side auth/authz on every new endpoint
-   - Deny by default, least privilege
-   - IDOR protection (validate ownership)
-
-   **V5 — Input Validation:**
-   - All input validated server-side
-   - Parameterized queries (no SQL concatenation)
-   - No eval/exec/Function with user input
-   - Context-appropriate output encoding
-
-   **V6 — Cryptography:**
-   - No custom crypto, use standard algorithms
-   - Secrets from env/vault, never hardcoded
-   - CSPRNG for tokens/keys
-
-   **V7 — Error Handling & Logging:**
-   - No stack traces or internal details exposed to users
-   - Security events logged (auth, access denied, privilege changes)
-   - No sensitive data in logs
-
-   **V13 — API Security:**
-   - Rate limiting on new endpoints
-   - Content-Type validation
-   - CSRF protection on state-changing endpoints
-
-   **V14 — Configuration:**
-   - Security headers present (CSP, X-Content-Type-Options, X-Frame-Options)
-   - No server version headers exposed
-
-   Also check for:
-   - Command injection in tool/bash handling
-   - Path traversal
-   - XSS in HTML/JS output
-   - Insecure defaults
+Get the diff (`git diff $BASE..HEAD`) and read modified Python/JS files. Check:
+- [ ] **SQL injection**: No string formatting in queries (parameterized only)
+- [ ] **Command injection**: No `subprocess` with `shell=True` + user input
+- [ ] **Path traversal**: File ops validate paths (no unsanitized `..`)
+- [ ] **XSS**: No `innerHTML` with unsanitized input
+- [ ] **CSRF**: State-changing endpoints have CSRF protection
+- [ ] **Auth bypass**: New endpoints require authentication
+- [ ] **Hardcoded secrets**: No API keys/passwords/tokens in source
+- [ ] **Insecure defaults**: No debug mode, disabled auth, permissive CORS, skipped TLS verification
+- [ ] **Input validation**: User input validated server-side at boundaries
+- [ ] **Info disclosure**: Error messages don't reveal internals
+- [ ] **Unsafe deserialization**: No `pickle.loads`, `yaml.load`, `eval()`, `exec()` with external input
+- [ ] **Cookie security**: New cookies have HttpOnly, Secure, SameSite
+- [ ] **Rate limiting**: New public endpoints have rate limits
+- [ ] **Content-Type**: Endpoints validate Content-Type headers
 
 ### Step 6: Commit Documentation Fixes
 
