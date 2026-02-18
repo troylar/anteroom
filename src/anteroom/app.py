@@ -39,11 +39,12 @@ SESSION_IDLE_TIMEOUT = 30 * 60  # 30 minutes
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     config: AppConfig = app.state.config
 
-    # Ensure user identity exists (auto-generate if missing)
+    # Identity is normally ensured in create_app() before token derivation.
+    # This is a safety net for cases where create_app() was called with a
+    # pre-built config that skipped identity generation.
     if not config.identity:
         try:
-            identity = ensure_identity()
-            config.identity = identity
+            config.identity = ensure_identity()
         except Exception:
             logger.warning("Failed to auto-generate user identity")
 
@@ -300,9 +301,39 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
         return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
 
 
+def _derive_auth_token(config: AppConfig) -> str:
+    """Derive a stable auth token from the Ed25519 identity key.
+
+    Uses HMAC-SHA256 with the private key PEM as the key and a fixed context
+    string. This means browser cookies survive server restarts as long as the
+    identity key stays the same.
+
+    Falls back to a random token when no identity is configured.
+    """
+    import base64
+
+    identity = config.identity
+    if identity and identity.private_key:
+        raw = hmac.new(
+            identity.private_key.encode("utf-8"),
+            b"anteroom-session-v1",
+            hashlib.sha256,
+        ).digest()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")[:43]
+    return secrets.token_urlsafe(32)
+
+
 def create_app(config: AppConfig | None = None) -> FastAPI:
     if config is None:
         config = load_config()
+
+    # Ensure user identity exists before token derivation so first-run
+    # also gets a stable token (identity is auto-generated if missing).
+    if not config.identity:
+        try:
+            config.identity = ensure_identity()
+        except Exception:
+            logger.warning("Failed to auto-generate user identity in create_app")
 
     if not config.ai.verify_ssl:
         security_logger.warning(
@@ -345,7 +376,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.add_middleware(MaxBodySizeMiddleware)
     app.add_middleware(RateLimitMiddleware, max_requests=120, window_seconds=60)
 
-    auth_token = secrets.token_urlsafe(32)
+    auth_token = _derive_auth_token(config)
     token_hash = hashlib.sha256(auth_token.encode()).hexdigest()
     app.add_middleware(BearerTokenMiddleware, token_hash=token_hash)
     app.state.auth_token = auth_token

@@ -13,6 +13,7 @@ const App = (() => {
     };
 
     let _eventSource = null;
+    const _shownApprovalIds = new Set();
 
     // --- Theme System ---
 
@@ -115,6 +116,26 @@ const App = (() => {
         return match ? match.split('=')[1] : '';
     }
 
+    function _handle401() {
+        const now = Date.now();
+        const key = '_anteroom_401_ts';
+        const prev = parseInt(sessionStorage.getItem(key) || '0', 10);
+        sessionStorage.setItem(key, String(now));
+
+        if (now - prev < 5000) {
+            // Loop detected — show banner instead of reloading again
+            if (!document.getElementById('auth-error-banner')) {
+                const banner = document.createElement('div');
+                banner.id = 'auth-error-banner';
+                banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:var(--error,#dc2626);color:#fff;text-align:center;padding:12px 16px;font-size:14px;';
+                banner.textContent = 'Session expired. Please reload the page or navigate to / to get a fresh session.';
+                document.body.appendChild(banner);
+            }
+            return;
+        }
+        window.location.href = '/';
+    }
+
     async function api(url, options = {}) {
         if (state.currentDatabase) {
             const sep = url.includes('?') ? '&' : '?';
@@ -128,7 +149,7 @@ const App = (() => {
         }
         const response = await fetch(url, options);
         if (response.status === 401) {
-            window.location.reload();
+            _handle401();
             throw new Error('Session expired');
         }
         if (!response.ok) {
@@ -427,6 +448,10 @@ const App = (() => {
             _eventSource = null;
         }
 
+        // Clear stale approval prompts from DOM and dedup set on reconnect
+        document.querySelectorAll('.approval-prompt').forEach(el => el.remove());
+        _shownApprovalIds.clear();
+
         const db = state.currentDatabase || 'personal';
         const _safeParam = (v) => /^[a-zA-Z0-9_-]+$/.test(v);
         if (!_safeParam(db)) return;
@@ -494,12 +519,15 @@ const App = (() => {
         _eventSource.addEventListener('approval_required', (e) => {
             const data = JSON.parse(e.data);
             if (data.conversation_id === state.currentConversationId) {
+                if (_shownApprovalIds.has(data.approval_id)) return;
+                _shownApprovalIds.add(data.approval_id);
                 Chat.showApprovalPrompt(data);
             }
         });
 
         _eventSource.addEventListener('approval_resolved', (e) => {
             const data = JSON.parse(e.data);
+            _shownApprovalIds.delete(data.approval_id);
             Chat.resolveApprovalCard(data.approval_id, data.approved, data.reason);
         });
 

@@ -141,9 +141,17 @@ EOF
   ⚠️ Warnings: <any complexity warnings, or "none">
 
 ────────────────────────────────────────────
-  👉 Next: /commit again, or /submit-pr when ready
+  👉 Next: <context-aware suggestion>
 ────────────────────────────────────────────
 ```
+
+To determine the next step suggestion, check for an existing PR:
+```bash
+gh pr list --head "$(git branch --show-current)" --json number,url --jq '.[0]' 2>/dev/null
+```
+
+- **If a PR exists**: `👉 Next: push to update PR #<N>, or continue working`
+- **If no PR exists**: `👉 Next: /submit-pr when ready, or continue working`
 
 ## Amend Mode
 

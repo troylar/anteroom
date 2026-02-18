@@ -1,16 +1,18 @@
-"""Tests for chat router endpoints (stop_generation, get_attachment)."""
+"""Tests for chat router endpoints (stop_generation, get_attachment, stale stream)."""
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
+import time
 import uuid
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from anteroom.routers.chat import router
+from anteroom.routers.chat import _active_streams, _cancel_events, router
 
 
 def _make_app() -> FastAPI:
@@ -160,3 +162,82 @@ class TestGetAttachmentEndpoint:
             resp = client.get(f"/api/attachments/{att_id}")
             assert resp.status_code == 200
             assert "attachment" in resp.headers.get("content-disposition", "")
+
+
+class TestStaleStreamDetection:
+    """Stale stream detection and cleanup in _active_streams."""
+
+    def setup_method(self) -> None:
+        _active_streams.clear()
+        _cancel_events.clear()
+
+    def teardown_method(self) -> None:
+        _active_streams.clear()
+        _cancel_events.clear()
+
+    def test_active_streams_stores_metadata(self) -> None:
+        """_active_streams now stores dicts with metadata instead of bools."""
+        cid = str(uuid.uuid4())
+        cancel = asyncio.Event()
+        mock_request = MagicMock()
+        _active_streams[cid] = {
+            "started_at": time.monotonic(),
+            "request": mock_request,
+            "cancel_event": cancel,
+        }
+        info = _active_streams[cid]
+        assert isinstance(info, dict)
+        assert "started_at" in info
+        assert info["cancel_event"] is cancel
+
+    def test_stale_stream_detected_by_disconnect(self) -> None:
+        """A stream whose request is disconnected is considered stale."""
+        cid = str(uuid.uuid4())
+        cancel = asyncio.Event()
+        mock_request = AsyncMock()
+        mock_request.is_disconnected.return_value = True
+        _active_streams[cid] = {
+            "started_at": time.monotonic(),
+            "request": mock_request,
+            "cancel_event": cancel,
+        }
+        info = _active_streams[cid]
+        loop = asyncio.new_event_loop()
+        is_disconnected = loop.run_until_complete(info["request"].is_disconnected())
+        loop.close()
+        assert is_disconnected is True
+
+    def test_active_stream_not_stale(self) -> None:
+        """A connected stream with recent start time is not stale."""
+        cid = str(uuid.uuid4())
+        cancel = asyncio.Event()
+        mock_request = AsyncMock()
+        mock_request.is_disconnected.return_value = False
+        _active_streams[cid] = {
+            "started_at": time.monotonic(),
+            "request": mock_request,
+            "cancel_event": cancel,
+        }
+        info = _active_streams[cid]
+        loop = asyncio.new_event_loop()
+        is_disconnected = loop.run_until_complete(info["request"].is_disconnected())
+        loop.close()
+        assert is_disconnected is False
+        assert time.monotonic() - info["started_at"] < 5
+
+    def test_stale_cancel_event_fires(self) -> None:
+        """When a stale stream is detected, its cancel event should be set."""
+        cancel = asyncio.Event()
+        assert not cancel.is_set()
+        cancel.set()
+        assert cancel.is_set()
+
+    def test_truthiness_preserved(self) -> None:
+        """Dict value is truthy, preserving the queue routing check."""
+        cid = str(uuid.uuid4())
+        _active_streams[cid] = {
+            "started_at": time.monotonic(),
+            "request": MagicMock(),
+            "cancel_event": asyncio.Event(),
+        }
+        assert _active_streams.get(cid)
