@@ -13,6 +13,7 @@ const App = (() => {
     };
 
     let _eventSource = null;
+    let _sseFailCount = 0;
     const _shownApprovalIds = new Set();
 
     // --- Theme System ---
@@ -538,8 +539,15 @@ const App = (() => {
             }
         });
 
+        _eventSource.onopen = () => { _sseFailCount = 0; };
         _eventSource.onerror = () => {
-            // Reconnect after a delay
+            _sseFailCount++;
+            if (_sseFailCount >= 3) {
+                // Likely a persistent auth error — trigger 401 recovery
+                if (_eventSource) { _eventSource.close(); _eventSource = null; }
+                _handle401();
+                return;
+            }
             setTimeout(() => {
                 if (_eventSource && _eventSource.readyState === EventSource.CLOSED) {
                     _connectEventSource();
@@ -1112,7 +1120,7 @@ const App = (() => {
     document.addEventListener('DOMContentLoaded', init);
 
     return {
-        state, api, _getCsrfToken, _selectModel, newConversation, loadConversation,
+        state, api, _handle401, _getCsrfToken, _selectModel, newConversation, loadConversation,
         loadProjects, loadDatabases, addDatabase, refreshModels, formatTimestamp,
         getTheme, setTheme, THEMES, openMcpModal,
     };
