@@ -430,6 +430,20 @@ EOF
 - Derived from the primary issue title or the commit summary
 - Examples: `feat: add semantic search to CLI (#83)`, `fix: handle empty query in search endpoint (#91)`
 
+### Step 10b: Transition Issue Labels
+
+After the PR is created, transition the primary issue's label from `in-progress` to `ready-for-review`:
+
+1. Extract the primary issue number from the branch name (`issue-<N>-...`)
+2. Ensure the `ready-for-review` label exists:
+   ```bash
+   gh label create "ready-for-review" --color "0075CA" --description "PR submitted" --force
+   ```
+3. Transition the label:
+   ```bash
+   gh issue edit <N> --remove-label "in-progress" --add-label "ready-for-review"
+   ```
+
 ### Step 11: Post-creation Report
 
 ```bash

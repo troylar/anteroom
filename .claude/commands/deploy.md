@@ -182,6 +182,39 @@ Note any manual steps needed (usually none — migrations are automatic).
 gh release create vX.Y.Z --title "vX.Y.Z" --notes "<generated notes>"
 ```
 
+### Step 7b: Clean Up Issue Labels
+
+For each issue closed by the merged PR:
+
+1. Get closing issues:
+   ```bash
+   gh pr view <PR_NUMBER> --json closingIssuesReferences --jq '.closingIssuesReferences[].number'
+   ```
+
+2. For each closing issue, remove workflow labels:
+   ```bash
+   gh issue edit <N> --remove-label "in-progress" --remove-label "ready-for-review"
+   ```
+
+3. If any closing issue is still OPEN (not auto-closed by the merge), close it:
+   ```bash
+   gh issue close <N> --comment "Closed via deploy of vX.Y.Z"
+   ```
+
+### Step 7c: Suggest Cleanup
+
+Check for stale local branches:
+```bash
+git branch --list "issue-*"
+```
+
+For each, check if the corresponding issue is CLOSED. Count the stale ones.
+
+If any stale branches exist, add to the deploy report:
+```
+  💡 Tip: Run /cleanup to remove N stale branches
+```
+
 ### Step 8: Verify
 
 1. Wait 30 seconds for PyPI to index

@@ -39,6 +39,8 @@ Print the following formatted guide:
 
   The workflow follows this order:
 
+  📋 Prioritize    →  /next
+  🏷️ Triage        →  /triage <issue#> <priority>
   💭 Explore idea  →  /ideate
   💡 Create issue  →  /new-issue
   🚀 Start coding  →  /start-work <issue#>
@@ -46,6 +48,7 @@ Print the following formatted guide:
   📤 Submit + review → /submit-pr  (auto-runs /code-review)
   🔍 Review others →  /code-review <pr#>
   📦 Ship          →  /deploy
+  🧹 Clean up      →  /cleanup
 
 
 📋 Skills Reference
@@ -94,9 +97,28 @@ Print the following formatted guide:
     Posts condensed results as a PR comment.
     Shows full results locally in chat first.
 
+  /next [--all] [--area <area>]
+    Prioritized work queue sorted by priority labels.
+    Groups issues by VISION.md direction areas.
+    Recommends next item with rationale.
+    Creates priority labels if they don't exist.
+
+  /triage <issue#> <priority> | --reassess
+    Set priority on a single issue (critical/high/medium/low).
+    Mark issues as blocked or unblock them.
+    --reassess: AI evaluates all open issues against VISION.md.
+    Optionally updates ROADMAP.md.
+
+  /cleanup [--dry-run]
+    Post-work cleanup: stale branches, orphaned worktrees,
+    unclosed issues, stale labels.
+    --dry-run shows report without making changes.
+    Interactive: choose what to clean.
+
   /deploy [patch|minor|major]
     Merge PR, wait for CI, bump version, publish to PyPI,
     create GitHub release with user-friendly notes.
+    Cleans up issue labels and suggests /cleanup.
     Audits all documentation before merging.
 
   /write-docs <page-path>
@@ -180,6 +202,15 @@ Print the following formatted guide:
 
   Ship a release:
     /deploy
+
+  Find your next task:
+    /next
+
+  Triage after a sprint:
+    /triage --reassess
+
+  Post-deploy cleanup:
+    /cleanup
 
 
 📂 Project Structure

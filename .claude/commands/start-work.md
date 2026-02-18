@@ -31,7 +31,33 @@ gh issue view <N> --json number,title,body,labels,state,assignees
 - If the issue is closed, warn the user and ask if they want to proceed
 - If the issue is assigned to someone else, warn the user
 
-### Step 1b: Vision Alignment Check
+### Step 1c: Check Assignment and Status
+
+Ensure lifecycle labels exist (idempotent):
+```bash
+gh label create "in-progress" --color "6F42C1" --description "Actively being worked on" --force
+gh label create "ready-for-review" --color "0075CA" --description "PR submitted" --force
+gh label create "blocked" --color "9E9E9E" --description "Blocked by something" --force
+```
+
+Check if the issue is already being worked on:
+
+1. **Assignment check:** If the issue is assigned to someone else, warn:
+   ```
+   ⚠️ #<N> — <title> is assigned to @<user>. Continue anyway?
+   ```
+
+2. **Double-up check:** If the issue has the `in-progress` label, warn:
+   ```
+   ⚠️ #<N> — <title> is already marked as in-progress. Continue anyway?
+   ```
+
+3. If the user confirms, assign the issue and add the label:
+   ```bash
+   gh issue edit <N> --add-assignee @me --add-label "in-progress"
+   ```
+
+### Step 1d: Vision Alignment Check
 
 Read `VISION.md` and evaluate the issue against the product vision.
 
@@ -104,15 +130,17 @@ Create a branch and set up a worktree in a sibling directory:
 ```bash
 git fetch origin main
 git branch issue-<N>-<description> origin/main
-git worktree add ../<repo-name>-issue-<N> issue-<N>-<description>
+git worktree add ../<repo-name>-<N>-<short-description> issue-<N>-<description>
 ```
 
 Install dev dependencies in the worktree:
 ```bash
-cd ../<repo-name>-issue-<N> && pip install -e ".[dev]" -q
+cd ../<repo-name>-<N>-<short-description> && pip install -e ".[dev]" -q
 ```
 
-The worktree path follows the pattern: `../<repo-name>-issue-<N>` (sibling to the main repo directory).
+The worktree path follows the pattern: `../<repo-name>-<N>-<short-description>` (sibling to the main repo directory).
+- Example: issue #95 "Add sub-agent orchestration" → `../parlor-95-subagent-orchestration`
+- The `<short-description>` matches the branch name suffix for easy identification
 
 #### With `--no-worktree`: Traditional Branch
 
@@ -185,7 +213,9 @@ Print:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   🔀 Branch:     issue-<N>-<description>
-  📂 Worktree:   ../<repo>-issue-<N>  (or "current directory" if --no-worktree)
+  📂 Worktree:   ../<repo>-<N>-<description>  (or "current directory" if --no-worktree)
+  👤 Assigned:   @<user>
+  🏷️ Status:     in-progress
   📋 Plan:       <number> steps across <number> files
   🧪 Tests:      <number> existing, <number> new needed
   🎯 Vision:     ✅ supports <principles>
@@ -193,7 +223,7 @@ Print:
 <The implementation plan from Step 5>
 
 ────────────────────────────────────────────
-  👉 Next: cd ../<repo>-issue-<N> and say "go",
+  👉 Next: cd ../<repo>-<N>-<description> and say "go",
            or adjust the plan
 ────────────────────────────────────────────
 ```
