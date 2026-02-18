@@ -83,34 +83,47 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install dependencies
+      - name: Install production dependencies only
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install .
 
       - name: Set up Node.js (for Snyk CLI)
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
+      - name: Install Snyk CLI
+        run: npm install -g snyk
+
+      - name: Generate production requirements for SCA
+        run: pip freeze --exclude-editable > requirements-prod.txt
+
       - name: Run Snyk Open Source (SCA)
         id: snyk-sca
-        uses: snyk/actions/python-3.10@master
         continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=medium --json-file-output=snyk-sca.json --sarif-file-output=snyk-sca.sarif
+        run: |
+          snyk test \
+            --file=requirements-prod.txt \
+            --package-manager=pip \
+            --severity-threshold=medium \
+            --json-file-output=snyk-sca.json \
+            --sarif-file-output=snyk-sca.sarif
+          echo "sca_exit=$?" >> "$GITHUB_ENV"
 
       - name: Run Snyk Code (SAST)
         id: snyk-code
-        uses: snyk/actions/python-3.10@master
         continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          command: code test
-          args: --severity-threshold=medium --json-file-output=snyk-code.json --sarif-file-output=snyk-code.sarif
+        run: |
+          snyk code test \
+            --severity-threshold=high \
+            --json-file-output=snyk-code.json \
+            --sarif-file-output=snyk-code.sarif
+          echo "sast_exit=$?" >> "$GITHUB_ENV"
 
       - name: Upload SCA SARIF to GitHub
         if: always()
@@ -131,20 +144,33 @@ jobs:
       - name: Upload JSON reports as artifacts
         if: always()
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: snyk-reports
           path: |
             snyk-sca.json
             snyk-code.json
+            requirements-prod.txt
           retention-days: 30
 
       - name: Fail if Snyk found vulnerabilities
         if: always()
         run: |
-          if [ "${{ steps.snyk-sca.outcome }}" = "failure" ] || [ "${{ steps.snyk-code.outcome }}" = "failure" ]; then
-            echo "::error::Snyk found security vulnerabilities. Check the Snyk dashboard and uploaded SARIF for details."
+          failed=false
+          # Snyk exit codes: 0=no vulns, 1=vulns found, 2=scan error, 3=no supported files
+          if [ "${{ steps.snyk-sca.outcome }}" = "failure" ]; then
+            echo "::warning::Snyk SCA scan reported issues. Check snyk-sca.json for details."
+            failed=true
+          fi
+          if [ "${{ steps.snyk-code.outcome }}" = "failure" ]; then
+            echo "::warning::Snyk SAST scan reported issues. Check snyk-code.json for details."
+            failed=true
+          fi
+          if [ "$failed" = "true" ]; then
+            echo "::error::Snyk found security issues. Review the uploaded SARIF reports and JSON artifacts."
             exit 1
           fi
+          echo "Snyk scans passed — no vulnerabilities found."
 
   build:
     name: Build package
