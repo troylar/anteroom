@@ -390,7 +390,11 @@ def load_config(config_path: Path | None = None) -> AppConfig:
 
     verify_ssl_raw = ai_raw.get("verify_ssl", os.environ.get("AI_CHAT_VERIFY_SSL", "true"))
     verify_ssl = str(verify_ssl_raw).lower() not in ("false", "0", "no")
-    request_timeout = max(10, int(ai_raw.get("request_timeout", os.environ.get("AI_CHAT_REQUEST_TIMEOUT", 120))))
+    try:
+        _raw_timeout = ai_raw.get("request_timeout", os.environ.get("AI_CHAT_REQUEST_TIMEOUT", 120))
+        request_timeout = max(10, min(600, int(_raw_timeout)))
+    except (ValueError, TypeError):
+        request_timeout = 120
 
     ai = AIConfig(
         base_url=base_url,

@@ -11,12 +11,15 @@ Anteroom is configured through a YAML file with environment variable overrides.
 | Model | `ai.model` | `AI_CHAT_MODEL` | `gpt-4` |
 | System prompt | `ai.system_prompt` | `AI_CHAT_SYSTEM_PROMPT` | `You are a helpful assistant.` |
 | SSL verification | `ai.verify_ssl` | `AI_CHAT_VERIFY_SSL` | `true` |
+| Request timeout | `ai.request_timeout` | `AI_CHAT_REQUEST_TIMEOUT` | `120` |
 | Host | `app.host` | --- | `127.0.0.1` |
 | Port | `app.port` | --- | `8080` |
 | Data directory | `app.data_dir` | --- | `~/.anteroom` |
 | TLS | `app.tls` | --- | `false` |
 | Built-in tools | `cli.builtin_tools` | --- | `true` |
 | Max tool iterations | `cli.max_tool_iterations` | --- | `50` |
+| Context warn threshold | `cli.context_warn_tokens` | --- | `80000` |
+| Context auto-compact threshold | `cli.context_auto_compact_tokens` | --- | `100000` |
 
 ## Configuration Sources
 
