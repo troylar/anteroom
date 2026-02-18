@@ -779,12 +779,11 @@ def _patch_completion_menu_position(session: Any) -> None:
     """Patch PromptSession layout so the completion menu renders above the cursor.
 
     prompt_toolkit positions the completion menu below the cursor by default and
-    only flips above when there is more vertical space above than below.  With
-    ``reserve_space_for_menu=0`` (no whitespace gap) the menu may not appear at
-    all near the terminal bottom.  This walks the layout, finds the
-    ``FloatContainer`` that holds the ``CompletionsMenu``, and replaces the
-    ``_draw_float`` method with one that always places completion menus above
-    the cursor line.
+    only flips above when there is more vertical space above than below.  This
+    walks the layout, finds the ``FloatContainer`` that holds the
+    ``CompletionsMenu``, and monkey-patches ``_draw_float`` so completion menus
+    are always placed above the cursor line — eliminating clipping when the
+    prompt is near the terminal bottom.
     """
     import types
 
@@ -792,6 +791,19 @@ def _patch_completion_menu_position(session: Any) -> None:
     from prompt_toolkit.layout.containers import Float, FloatContainer
     from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
     from prompt_toolkit.layout.screen import WritePosition
+
+    target: FloatContainer | None = None
+    for container in session.layout.walk():
+        if isinstance(container, FloatContainer) and any(
+            isinstance(fl.content, (CompletionsMenu, MultiColumnCompletionsMenu)) for fl in container.floats
+        ):
+            target = container
+            break
+
+    if target is None:
+        return
+
+    _orig = FloatContainer._draw_float
 
     def _draw_float_above(
         self: Any,
@@ -803,63 +815,53 @@ def _patch_completion_menu_position(session: Any) -> None:
         erase_bg: bool,
         z_index: int | None,
     ) -> None:
-        is_completion = isinstance(fl.content, (CompletionsMenu, MultiColumnCompletionsMenu))
-        if not is_completion:
-            return _original_draw_float(fl, screen, mouse_handlers, write_position, style, erase_bg, z_index)
+        if not isinstance(fl.content, (CompletionsMenu, MultiColumnCompletionsMenu)):
+            return _orig(self, fl, screen, mouse_handlers, write_position, style, erase_bg, z_index)
 
-        from prompt_toolkit.application.current import get_app
+        try:
+            from prompt_toolkit.application.current import get_app
 
-        cpos = screen.get_menu_position(fl.attach_to_window or get_app().layout.current_window)
-        cursor = Point(x=cpos.x - write_position.xpos, y=cpos.y - write_position.ypos)
+            cpos = screen.get_menu_position(fl.attach_to_window or get_app().layout.current_window)
+            cursor = Point(x=cpos.x - write_position.xpos, y=cpos.y - write_position.ypos)
 
-        fl_w = fl.get_width()
-        width = (
-            fl_w
-            if fl_w is not None
-            else min(
-                write_position.width,
-                fl.content.preferred_width(write_position.width).preferred,
+            fl_w = fl.get_width()
+            width = (
+                fl_w
+                if fl_w is not None
+                else min(write_position.width, fl.content.preferred_width(write_position.width).preferred)
             )
-        )
-        xpos = cursor.x
-        if xpos + width > write_position.width:
-            xpos = max(0, write_position.width - width)
+            xpos = cursor.x
+            if xpos + width > write_position.width:
+                xpos = max(0, write_position.width - width)
 
-        fl_h = fl.get_height()
-        height = (
-            fl_h
-            if fl_h is not None
-            else fl.content.preferred_height(
-                width,
-                write_position.height,
-            ).preferred
-        )
-        height = min(height, cursor.y)
-        ypos = cursor.y - height
+            fl_h = fl.get_height()
+            height = fl_h if fl_h is not None else fl.content.preferred_height(width, write_position.height).preferred
 
-        if height > 0 and width > 0:
-            fl.content.write_to_screen(
-                screen,
-                mouse_handlers,
-                WritePosition(
-                    xpos=xpos + write_position.xpos,
-                    ypos=ypos + write_position.ypos,
-                    width=width,
-                    height=height,
-                ),
-                style,
-                erase_bg=not fl.transparent(),
-                z_index=z_index,
-            )
+            if cursor.y >= height:
+                height = min(height, cursor.y)
+                ypos = cursor.y - height
+            else:
+                ypos = cursor.y + 1
+                height = min(height, write_position.height - ypos)
 
-    for container in session.layout.walk():
-        if not isinstance(container, FloatContainer):
-            continue
-        has_menu = any(isinstance(fl.content, (CompletionsMenu, MultiColumnCompletionsMenu)) for fl in container.floats)
-        if has_menu:
-            _original_draw_float = container._draw_float
-            container._draw_float = types.MethodType(_draw_float_above, container)
-            break
+            if height > 0 and width > 0:
+                fl.content.write_to_screen(
+                    screen,
+                    mouse_handlers,
+                    WritePosition(
+                        xpos=xpos + write_position.xpos,
+                        ypos=ypos + write_position.ypos,
+                        width=width,
+                        height=height,
+                    ),
+                    style,
+                    erase_bg=not fl.transparent(),
+                    z_index=z_index,
+                )
+        except Exception:
+            return _orig(self, fl, screen, mouse_handlers, write_position, style, erase_bg, z_index)
+
+    target._draw_float = types.MethodType(_draw_float_above, target)
 
 
 async def _run_repl(
@@ -1047,7 +1049,7 @@ async def _run_repl(
         multiline=True,
         prompt_continuation=_continuation,
         completer=completer,
-        reserve_space_for_menu=0,
+        reserve_space_for_menu=4,
         style=_repl_style,
     )
 
