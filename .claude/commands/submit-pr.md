@@ -162,7 +162,6 @@ This is the authoritative documentation review — it identifies stale or missin
 3. Check each documentation surface:
 
 **CLAUDE.md:**
-- **Test count** — run `grep -r "def test_" tests/ | wc -l` and compare to CLAUDE.md. Update if stale.
 - New Python modules under `src/anteroom/` not listed in the "Key Modules" section? Flag as MISSING.
 - Modified modules whose CLAUDE.md description no longer matches reality? Flag as STALE.
 - New routers, tools, or services that change the architecture diagram? Flag as STALE.

@@ -35,9 +35,8 @@ Deploy the current branch to PyPI after merging, CI verification, and version bu
 
 Run a lightweight staleness check. The full documentation audit happens during `/submit-pr` — this step only catches things that slipped through or changed since PR creation.
 
-1. **Test count** — run `grep -r "def test_" tests/ | wc -l` and compare to the count in CLAUDE.md. Update if off by more than 10.
-2. **New modules** — check for any new `.py` files under `src/anteroom/` not listed in the "Key Modules" section of CLAUDE.md. Flag if any are missing.
-3. **Version** — note the pre-bump version in `pyproject.toml` for reference.
+1. **New modules** — check for any new `.py` files under `src/anteroom/` not listed in the "Key Modules" section of CLAUDE.md. Flag if any are missing.
+2. **Version** — note the pre-bump version in `pyproject.toml` for reference.
 
 If updates are needed, commit them before merging:
 ```bash
