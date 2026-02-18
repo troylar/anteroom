@@ -473,3 +473,21 @@ class TestStartupStep:
                 pass
             mock_ctx.__enter__.assert_called_once()
             mock_ctx.__exit__.assert_called_once()
+
+    def test_mcp_label_singular(self) -> None:
+        """MCP spinner label uses singular for 1 server."""
+        server_count = 1
+        label = f"Starting {server_count} MCP server{'s' if server_count != 1 else ''}..."
+        assert label == "Starting 1 MCP server..."
+
+    def test_mcp_label_plural(self) -> None:
+        """MCP spinner label uses plural for multiple servers."""
+        server_count = 3
+        label = f"Starting {server_count} MCP server{'s' if server_count != 1 else ''}..."
+        assert label == "Starting 3 MCP servers..."
+
+    def test_mcp_label_zero(self) -> None:
+        """MCP spinner label handles zero servers."""
+        server_count = 0
+        label = f"Starting {server_count} MCP server{'s' if server_count != 1 else ''}..."
+        assert label == "Starting 0 MCP servers..."

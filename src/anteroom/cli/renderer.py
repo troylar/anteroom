@@ -510,8 +510,9 @@ def render_error(message: str) -> None:
 def startup_step(message: str) -> Status:
     """Create a dim animated spinner for a startup step.
 
-    Use as a context manager around slow operations so the user
-    sees activity during CLI bootstrap::
+    Returns a **sync** context manager (Rich Status).  Use ``with``,
+    not ``async with`` — ``await`` inside a sync ``with`` block is
+    valid Python in async functions::
 
         with renderer.startup_step("Connecting to servers..."):
             await slow_operation()
