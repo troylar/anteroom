@@ -849,8 +849,8 @@ def render_subagent_start(agent_id: str, prompt: str, model: str, depth: int) ->
     }
     indent = "  " * depth
     truncated_prompt = prompt[:80] + "..." if len(prompt) > 80 else prompt
-    console.print(f"{indent}[#C5A059]▶ Agent[/] [bold]{escape(agent_id)}[/bold] [dim]({model})[/dim]")
-    console.print(f"{indent}  [grey62]{escape(truncated_prompt)}[/grey62]")
+    console.print(f"{indent}[{GOLD}]▶ Agent[/] [bold]{escape(agent_id)}[/bold] [{MUTED}]({model})[/{MUTED}]")
+    console.print(f"{indent}  [{CHROME}]{escape(truncated_prompt)}[/{CHROME}]")
 
 
 def render_subagent_tool(agent_id: str, tool_name: str, arguments: dict[str, Any] | None = None) -> None:
@@ -862,7 +862,7 @@ def render_subagent_tool(agent_id: str, tool_name: str, arguments: dict[str, Any
     depth = info.get("depth", 1)
     indent = "  " * depth
     summary = _humanize_tool(tool_name, arguments or {})
-    console.print(f"{indent}  [grey62]  ✓ {escape(summary)}[/grey62]")
+    console.print(f"{indent}  [{CHROME}]  ✓ {escape(summary)}[/{CHROME}]")
 
 
 def render_subagent_end(agent_id: str, elapsed: float, tool_calls: list[str], error: str | None = None) -> None:
@@ -877,7 +877,7 @@ def render_subagent_end(agent_id: str, elapsed: float, tool_calls: list[str], er
     else:
         console.print(
             f"{indent}[green]■ Agent {escape(agent_id)}[/green] "
-            f"[dim]done in {elapsed:.1f}s · {tool_count} tool call{'s' if tool_count != 1 else ''}[/dim]"
+            f"[{MUTED}]done in {elapsed:.1f}s · {tool_count} tool call{'s' if tool_count != 1 else ''}[/{MUTED}]"
         )
 
 
