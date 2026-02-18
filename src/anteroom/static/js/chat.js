@@ -1229,31 +1229,58 @@ const Chat = (() => {
     function renderToolCallStart(data) {
         if (!currentAssistantEl) return;
         const contentEl = currentAssistantEl.querySelector('.message-content');
+        const isSubagent = data.tool_name === 'run_agent';
         const details = document.createElement('details');
-        details.className = 'tool-call';
+        details.className = isSubagent ? 'tool-call tool-call-subagent subagent-running' : 'tool-call';
         details.id = `tool-${_sanitizeId(data.id)}`;
 
-        const summary = document.createElement('summary');
-        summary.textContent = `Tool: ${data.tool_name} `;
-        const spinner = document.createElement('span');
-        spinner.className = 'tool-spinner';
-        summary.appendChild(spinner);
-        details.appendChild(summary);
+        if (isSubagent) {
+            details.open = true;
 
-        const toolContent = document.createElement('div');
-        toolContent.className = 'tool-content';
-        const inputLabel = document.createElement('strong');
-        inputLabel.textContent = 'Input:';
-        toolContent.appendChild(inputLabel);
-        const inputPre = document.createElement('pre');
-        const inputCode = document.createElement('code');
-        inputCode.className = 'language-json';
-        inputCode.textContent = JSON.stringify(data.input, null, 2);
-        inputPre.appendChild(inputCode);
-        hljs.highlightElement(inputCode);
-        toolContent.appendChild(inputPre);
+            const summary = document.createElement('summary');
+            summary.textContent = 'Sub-agent running\u2026 ';
+            const spinner = document.createElement('span');
+            spinner.className = 'tool-spinner';
+            summary.appendChild(spinner);
+            details.appendChild(summary);
 
-        details.appendChild(toolContent);
+            const toolContent = document.createElement('div');
+            toolContent.className = 'tool-content';
+            const promptText = (data.input && data.input.prompt) || '';
+            if (promptText) {
+                const promptEl = document.createElement('div');
+                promptEl.className = 'subagent-loading-prompt';
+                promptEl.textContent = promptText;
+                toolContent.appendChild(promptEl);
+            }
+            const cardsContainer = document.createElement('div');
+            cardsContainer.className = 'subagent-cards-container';
+            toolContent.appendChild(cardsContainer);
+            details.appendChild(toolContent);
+        } else {
+            const summary = document.createElement('summary');
+            summary.textContent = `Tool: ${data.tool_name} `;
+            const spinner = document.createElement('span');
+            spinner.className = 'tool-spinner';
+            summary.appendChild(spinner);
+            details.appendChild(summary);
+
+            const toolContent = document.createElement('div');
+            toolContent.className = 'tool-content';
+            const inputLabel = document.createElement('strong');
+            inputLabel.textContent = 'Input:';
+            toolContent.appendChild(inputLabel);
+            const inputPre = document.createElement('pre');
+            const inputCode = document.createElement('code');
+            inputCode.className = 'language-json';
+            inputCode.textContent = JSON.stringify(data.input, null, 2);
+            inputPre.appendChild(inputCode);
+            hljs.highlightElement(inputCode);
+            toolContent.appendChild(inputPre);
+
+            details.appendChild(toolContent);
+        }
+
         contentEl.appendChild(details);
         scrollToBottom();
     }
@@ -1264,23 +1291,35 @@ const Chat = (() => {
         const spinner = details.querySelector('.tool-spinner');
         if (spinner) spinner.remove();
 
+        const isSubagent = details.classList.contains('tool-call-subagent');
+
         const summary = details.querySelector('summary');
         if (summary) {
             const statusClass = data.status === 'success' ? 'tool-status-success' : 'tool-status-error';
             details.classList.add(statusClass);
         }
 
-        const toolContent = details.querySelector('.tool-content');
-        const outputLabel = document.createElement('strong');
-        outputLabel.textContent = `Output (${data.status}):`;
-        toolContent.appendChild(outputLabel);
-        const outputPre = document.createElement('pre');
-        const outputCode = document.createElement('code');
-        outputCode.className = 'language-json';
-        outputCode.textContent = JSON.stringify(data.output, null, 2);
-        outputPre.appendChild(outputCode);
-        hljs.highlightElement(outputCode);
-        toolContent.appendChild(outputPre);
+        if (isSubagent) {
+            details.classList.remove('subagent-running');
+            if (summary) {
+                summary.textContent = data.status === 'success' ? 'Sub-agent complete' : 'Sub-agent failed';
+            }
+            // Hide loading prompt if still visible (no subagent_start events arrived)
+            const loadingPrompt = details.querySelector('.subagent-loading-prompt');
+            if (loadingPrompt) loadingPrompt.style.display = 'none';
+        } else {
+            const toolContent = details.querySelector('.tool-content');
+            const outputLabel = document.createElement('strong');
+            outputLabel.textContent = `Output (${data.status}):`;
+            toolContent.appendChild(outputLabel);
+            const outputPre = document.createElement('pre');
+            const outputCode = document.createElement('code');
+            outputCode.className = 'language-json';
+            outputCode.textContent = JSON.stringify(data.output, null, 2);
+            outputPre.appendChild(outputCode);
+            hljs.highlightElement(outputCode);
+            toolContent.appendChild(outputPre);
+        }
     }
 
     function renderSubagentEvent(data) {
@@ -1289,7 +1328,20 @@ const Chat = (() => {
         const kind = data.kind;
         const agentId = data.agent_id;
 
+        // Find the parent tool-call-subagent container to nest cards inside it
+        const parentToolCall = contentEl.querySelector('.tool-call-subagent');
+        const cardsContainer = parentToolCall
+            ? parentToolCall.querySelector('.subagent-cards-container')
+            : null;
+        const insertTarget = cardsContainer || contentEl;
+
         if (kind === 'subagent_start') {
+            // Hide the loading prompt once real cards start arriving
+            if (parentToolCall) {
+                const loadingPrompt = parentToolCall.querySelector('.subagent-loading-prompt');
+                if (loadingPrompt) loadingPrompt.style.display = 'none';
+            }
+
             const card = document.createElement('div');
             card.className = 'subagent-card';
             card.id = `subagent-${_sanitizeId(agentId)}`;
@@ -1315,7 +1367,7 @@ const Chat = (() => {
             card.appendChild(header);
             card.appendChild(prompt);
             card.appendChild(tools);
-            contentEl.appendChild(card);
+            insertTarget.appendChild(card);
             scrollToBottom();
         } else if (kind === 'tool_call_start' && agentId) {
             const card = document.getElementById(`subagent-${_sanitizeId(agentId)}`);
