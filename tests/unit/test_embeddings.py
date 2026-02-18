@@ -47,13 +47,36 @@ class TestEmbeddingService:
         client.embeddings.create.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_embed_returns_none_on_error(self) -> None:
+    async def test_embed_raises_transient_on_rate_limit(self) -> None:
+        from openai import RateLimitError
+
+        from anteroom.services.embeddings import EmbeddingTransientError
+
         client = AsyncMock()
-        client.embeddings.create = AsyncMock(side_effect=Exception("API error"))
+        client.embeddings.create = AsyncMock(
+            side_effect=RateLimitError(message="rate limited", response=MagicMock(status_code=429), body=None)
+        )
         service = EmbeddingService(client)
 
-        result = await service.embed("hello")
-        assert result is None
+        with pytest.raises(EmbeddingTransientError) as exc_info:
+            await service.embed("hello world test")
+        assert exc_info.value.status_code == 429
+
+    @pytest.mark.asyncio
+    async def test_embed_raises_permanent_on_not_found(self) -> None:
+        from openai import NotFoundError
+
+        from anteroom.services.embeddings import EmbeddingPermanentError
+
+        client = AsyncMock()
+        client.embeddings.create = AsyncMock(
+            side_effect=NotFoundError(message="not found", response=MagicMock(status_code=404), body=None)
+        )
+        service = EmbeddingService(client)
+
+        with pytest.raises(EmbeddingPermanentError) as exc_info:
+            await service.embed("hello world test")
+        assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
     async def test_embed_batch(self) -> None:
@@ -68,13 +91,32 @@ class TestEmbeddingService:
         assert results[1] == [0.3, 0.4]
 
     @pytest.mark.asyncio
-    async def test_embed_batch_handles_error(self) -> None:
+    async def test_embed_batch_raises_transient_on_error(self) -> None:
+        from openai import APIConnectionError
+
+        from anteroom.services.embeddings import EmbeddingTransientError
+
         client = AsyncMock()
-        client.embeddings.create = AsyncMock(side_effect=Exception("API error"))
+        client.embeddings.create = AsyncMock(side_effect=APIConnectionError(request=MagicMock()))
         service = EmbeddingService(client, dimensions=2)
 
-        results = await service.embed_batch(["hello", "world"])
-        assert results == [None, None]
+        with pytest.raises(EmbeddingTransientError):
+            await service.embed_batch(["hello", "world"])
+
+    @pytest.mark.asyncio
+    async def test_embed_batch_raises_permanent_on_not_found(self) -> None:
+        from openai import NotFoundError
+
+        from anteroom.services.embeddings import EmbeddingPermanentError
+
+        client = AsyncMock()
+        client.embeddings.create = AsyncMock(
+            side_effect=NotFoundError(message="not found", response=MagicMock(status_code=404), body=None)
+        )
+        service = EmbeddingService(client, dimensions=2)
+
+        with pytest.raises(EmbeddingPermanentError):
+            await service.embed_batch(["hello", "world"])
 
     @pytest.mark.asyncio
     async def test_embed_batch_multiple_batches(self) -> None:
@@ -133,9 +175,10 @@ class TestEmbeddingServiceTokenRefresh:
         provider.refresh.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_embed_returns_none_when_refresh_fails(self) -> None:
+    async def test_embed_raises_permanent_when_refresh_fails(self) -> None:
         from openai import AuthenticationError
 
+        from anteroom.services.embeddings import EmbeddingPermanentError
         from anteroom.services.token_provider import TokenProviderError
 
         client = AsyncMock()
@@ -150,8 +193,9 @@ class TestEmbeddingServiceTokenRefresh:
         provider.refresh = MagicMock(side_effect=TokenProviderError("failed"))
         service._set_token_provider(provider)
 
-        result = await service.embed("hello world")
-        assert result is None
+        with pytest.raises(EmbeddingPermanentError) as exc_info:
+            await service.embed("hello world")
+        assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
     async def test_embed_batch_refreshes_token_on_auth_error(self) -> None:
