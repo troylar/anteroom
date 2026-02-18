@@ -27,7 +27,7 @@ from ..services.rewind import rewind_conversation as rewind_service
 from ..tools import ToolRegistry, register_default_tools
 from . import renderer
 from .instructions import load_instructions
-from .renderer import CHROME, MUTED
+from .renderer import CHROME, GOLD, MUTED
 from .skills import SkillRegistry
 
 logger = logging.getLogger(__name__)
@@ -801,6 +801,7 @@ async def _run_repl(
     from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.styles import Style as PtStyle
 
     class ParlorCompleter(Completer):
         """Tab completer for / commands and @ file paths."""
@@ -943,13 +944,24 @@ async def _run_repl(
     def _prompt() -> HTML:
         return _prompt_dim if agent_busy.is_set() else _prompt_text
 
+    _repl_style = PtStyle.from_dict(
+        {
+            "completion-menu": f"bg:#1a1a2e {CHROME}",
+            "completion-menu.completion": f"bg:#1a1a2e {CHROME}",
+            "completion-menu.completion.current": f"bg:{GOLD} #1a1a2e",
+            "completion-menu.meta.completion": f"bg:#1a1a2e {MUTED}",
+            "completion-menu.meta.completion.current": f"bg:{GOLD} #1a1a2e",
+        }
+    )
+
     session: PromptSession[str] = PromptSession(
         history=FileHistory(str(history_path)),
         key_bindings=kb,
         multiline=True,
         prompt_continuation=_continuation,
         completer=completer,
-        reserve_space_for_menu=4,
+        reserve_space_for_menu=8,
+        style=_repl_style,
     )
 
     # Hook buffer changes for paste detection timing
