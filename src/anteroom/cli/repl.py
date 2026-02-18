@@ -775,37 +775,23 @@ async def _run_one_shot(
         _remove_signal_handler(loop, signal.SIGINT)
 
 
-def _patch_completion_menu_position(session: Any) -> None:
-    """Patch PromptSession layout so the completion menu renders above the cursor.
+def _patch_completion_menu_position() -> None:
+    """Patch FloatContainer so the completion menu renders above the cursor.
 
     prompt_toolkit positions the completion menu below the cursor by default and
     only flips above when there is more vertical space above than below.  This
-    walks the layout, finds the ``FloatContainer`` that holds the
-    ``CompletionsMenu``, and monkey-patches ``_draw_float`` so completion menus
-    are always placed above the cursor line — eliminating clipping when the
+    patches ``FloatContainer._draw_float`` at the **class** level so completion
+    menus are always placed above the cursor line — eliminating clipping when the
     prompt is near the terminal bottom.
     """
-    import types
-
     from prompt_toolkit.data_structures import Point
     from prompt_toolkit.layout.containers import Float, FloatContainer
     from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
     from prompt_toolkit.layout.screen import WritePosition
 
-    target: FloatContainer | None = None
-    for container in session.layout.walk():
-        if isinstance(container, FloatContainer) and any(
-            isinstance(fl.content, (CompletionsMenu, MultiColumnCompletionsMenu)) for fl in container.floats
-        ):
-            target = container
-            break
-
-    if target is None:
-        return
-
     _orig = FloatContainer._draw_float
 
-    def _draw_float_above(
+    def _draw_float_patched(
         self: Any,
         fl: Float,
         screen: Any,
@@ -861,7 +847,7 @@ def _patch_completion_menu_position(session: Any) -> None:
         except Exception:
             return _orig(self, fl, screen, mouse_handlers, write_position, style, erase_bg, z_index)
 
-    target._draw_float = types.MethodType(_draw_float_above, target)
+    FloatContainer._draw_float = _draw_float_patched  # type: ignore[assignment]
 
 
 async def _run_repl(
@@ -1053,7 +1039,7 @@ async def _run_repl(
         style=_repl_style,
     )
 
-    _patch_completion_menu_position(session)
+    _patch_completion_menu_position()
 
     # Hook buffer changes for paste detection timing
     def _on_buffer_change(_buf: Any) -> None:
