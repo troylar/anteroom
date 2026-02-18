@@ -25,7 +25,7 @@ aroom --approval-mode auto chat     # Works with subcommands too
 
 # Testing
 pytest tests/ -v                    # All tests
-pytest tests/unit/ -v               # Unit tests only (~1120 tests)
+pytest tests/unit/ -v               # Unit tests only (~1064 tests)
 pytest tests/e2e/ -v                # E2e tests (requires uvx/npx)
 pytest -m e2e -v                    # Run only e2e-marked tests
 pytest tests/unit/test_tools.py -v  # Single test file
@@ -89,9 +89,9 @@ Config file at `~/.anteroom/config.yaml` (falls back to `~/.parlor/config.yaml` 
 
 ### Developer Workflow
 
-This project uses Claude Code skills (`.claude/commands/`) and auto-loaded rules (`.claude/rules/`) to enforce development standards. See `VISION.md` for product identity and scope guardrails.
+This project uses Claude Code skills (`.claude/commands/`) and auto-loaded rules (`.claude/rules/`) to enforce development standards. See `VISION.md` for product identity and scope guardrails. See `ROADMAP.md` for the prioritized roadmap organized by VISION.md direction areas.
 
-**Skills** (invoke with `/command`): `/ideate`, `/new-issue`, `/start-work`, `/commit`, `/submit-pr`, `/pr-check`, `/code-review`, `/deploy`, `/write-docs`, `/dev-help`. Run `/dev-help` for a full guide.
+**Skills** (invoke with `/command`): `/ideate`, `/new-issue`, `/start-work`, `/commit`, `/submit-pr`, `/pr-check`, `/code-review`, `/deploy`, `/write-docs`, `/dev-help`, `/next`, `/triage`, `/cleanup`. Run `/dev-help` for a full guide.
 
 **Rules** (auto-loaded every session): commit format, issue requirement, output formatting, product vision alignment, security patterns, test requirements.
 
