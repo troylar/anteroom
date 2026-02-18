@@ -168,7 +168,6 @@ Launch parallel agents to understand the codebase context for this issue:
 1. Find test files related to the affected modules
 2. Understand testing patterns: fixtures, mocking approach, async test setup
 3. Identify what new tests will be needed
-4. Check current test count: `pytest tests/unit/ --collect-only -q 2>&1 | tail -3`
 
 ### Step 5: Create Implementation Plan
 
