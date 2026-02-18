@@ -389,6 +389,41 @@ def _expand_file_references(text: str, working_dir: str) -> str:
     return _FILE_REF_RE.sub(_replace, text)
 
 
+def _detect_project_context(working_dir: str) -> str:
+    """Detect project context from the working directory for the system prompt."""
+    from pathlib import Path
+
+    wd = Path(working_dir)
+    lines: list[str] = []
+
+    # Git awareness
+    git_dir = wd / ".git"
+    if git_dir.exists():
+        lines.append("This is a git repository.")
+
+    # Project type detection
+    markers = {
+        "pyproject.toml": "Python project (pyproject.toml)",
+        "setup.py": "Python project (setup.py)",
+        "package.json": "Node.js project (package.json)",
+        "Cargo.toml": "Rust project (Cargo.toml)",
+        "go.mod": "Go project (go.mod)",
+        "Makefile": "Has Makefile",
+    }
+    for marker, desc in markers.items():
+        if (wd / marker).exists():
+            lines.append(desc)
+            break
+
+    # Common directories
+    dirs = [d.name for d in wd.iterdir() if d.is_dir() and not d.name.startswith(".")]
+    notable = [d for d in dirs if d in ("src", "tests", "test", "lib", "docs", "scripts", "cmd", "pkg", "internal")]
+    if notable:
+        lines.append(f"Key directories: {', '.join(sorted(notable))}")
+
+    return "\n".join(lines)
+
+
 def _build_system_prompt(
     config: AppConfig,
     working_dir: str,
@@ -403,12 +438,15 @@ def _build_system_prompt(
         interface="cli",
         working_dir=working_dir,
     )
-    parts = [
-        runtime_ctx,
-        f"You are an AI coding assistant working in: {working_dir}",
-        "You have tools to read, write, and edit files, run shell commands, and search the codebase.",
-        "When given a task, break it down and execute it step by step using your tools.",
-    ]
+    parts = [runtime_ctx]
+
+    # Project context
+    project_ctx = _detect_project_context(working_dir)
+    if project_ctx:
+        parts.append(f"\n<project_context>\nWorking directory: {working_dir}\n{project_ctx}\n</project_context>")
+    else:
+        parts.append(f"\n<project_context>\nWorking directory: {working_dir}\n</project_context>")
+
     if instructions:
         parts.append(f"\n{instructions}")
     return "\n".join(parts)
