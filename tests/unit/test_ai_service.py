@@ -73,9 +73,7 @@ class TestTimeoutErrorHandling:
         service._token_provider = None
 
         mock_client = MagicMock()
-        mock_client.chat.completions.create = AsyncMock(
-            side_effect=APITimeoutError(request=MagicMock())
-        )
+        mock_client.chat.completions.create = AsyncMock(side_effect=APITimeoutError(request=MagicMock()))
         service.client = mock_client
 
         events = []
