@@ -36,7 +36,24 @@ class AIService:
         self._build_client()
 
     def _build_client(self) -> None:
-        """Build (or rebuild) the AsyncOpenAI client with the current API key."""
+        """Build (or rebuild) the AsyncOpenAI client with the current API key.
+
+        Closes the old client's HTTP connection pool to prevent resource leaks.
+        """
+        old_client = getattr(self, "client", None)
+        if old_client is not None:
+            try:
+                old_http = getattr(old_client, "_client", None)
+                if old_http and hasattr(old_http, "close"):
+                    # Schedule async close without blocking; best-effort cleanup
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(old_http.close())
+                    except RuntimeError:
+                        pass  # No running loop (e.g. during __init__)
+            except Exception:
+                logger.debug("Failed to close old HTTP client", exc_info=True)
+
         api_key = self._resolve_api_key()
         timeout = httpx.Timeout(
             connect=10.0,
@@ -74,6 +91,84 @@ class AIService:
             logger.exception("Token refresh failed")
             return False
 
+    @staticmethod
+    async def _iter_stream(
+        stream_iter: Any,
+        cancel_event: asyncio.Event | None,
+        total_timeout: float,
+    ) -> AsyncGenerator[Any, None]:
+        """Iterate an async stream with cancel-awareness and a hard total timeout.
+
+        Yields chunks from the stream. Stops if:
+        - cancel_event is set (user pressed Escape / disconnected)
+        - total_timeout seconds elapse since iteration started
+        - the stream is exhausted (StopAsyncIteration)
+        """
+        deadline = asyncio.get_event_loop().time() + total_timeout
+
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                logger.warning("Stream total timeout reached (%.0fs)", total_timeout)
+                try:
+                    await stream_iter.aclose()
+                except Exception:
+                    pass
+                raise APITimeoutError(request=None)  # type: ignore[arg-type]
+
+            next_chunk = asyncio.ensure_future(stream_iter.__anext__())
+            wait_tasks: list[asyncio.Future[Any]] = [next_chunk]
+
+            if cancel_event:
+                cancel_wait = asyncio.ensure_future(cancel_event.wait())
+                wait_tasks.append(cancel_wait)
+            else:
+                cancel_wait = None
+
+            try:
+                done, _pending = await asyncio.wait(
+                    wait_tasks,
+                    timeout=remaining,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            except Exception:
+                next_chunk.cancel()
+                if cancel_wait:
+                    cancel_wait.cancel()
+                raise
+
+            if not done:
+                # Timeout with no completion
+                next_chunk.cancel()
+                if cancel_wait:
+                    cancel_wait.cancel()
+                logger.warning("Stream total timeout reached (%.0fs)", total_timeout)
+                try:
+                    await stream_iter.aclose()
+                except Exception:
+                    pass
+                raise APITimeoutError(request=None)  # type: ignore[arg-type]
+
+            # Cancel was triggered
+            if cancel_wait and cancel_wait in done:
+                next_chunk.cancel()
+                try:
+                    await stream_iter.aclose()
+                except Exception:
+                    pass
+                return
+
+            # Stream produced a chunk (or ended)
+            if cancel_wait and cancel_wait not in done:
+                cancel_wait.cancel()
+
+            try:
+                chunk = next_chunk.result()
+            except StopAsyncIteration:
+                return
+
+            yield chunk
+
     async def stream_chat(
         self,
         messages: list[dict[str, Any]],
@@ -99,13 +194,10 @@ class AIService:
             stream = await self.client.chat.completions.create(**kwargs)
 
             current_tool_calls: dict[int, dict[str, Any]] = {}
+            stream_iter = stream.__aiter__()
+            total_timeout = float(self.config.request_timeout)
 
-            async for chunk in stream:
-                if cancel_event and cancel_event.is_set():
-                    await stream.close()
-                    yield {"event": "done", "data": {}}
-                    return
-
+            async for chunk in self._iter_stream(stream_iter, cancel_event, total_timeout):
                 choice = chunk.choices[0] if chunk.choices else None
                 if not choice:
                     continue

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -357,3 +358,255 @@ class TestGenericExceptionHandling:
         assert events[0]["event"] == "error"
         assert events[0]["data"]["message"] == "An internal error occurred"
         assert "something unexpected" not in events[0]["data"].get("message", "")
+
+
+class TestIterStream:
+    """Tests for _iter_stream: cancel-aware iteration with total timeout."""
+
+    @pytest.mark.asyncio
+    async def test_yields_chunks_normally(self):
+        """_iter_stream yields all chunks from a well-behaved async iterator."""
+        chunks = ["chunk1", "chunk2", "chunk3"]
+
+        async def _gen():
+            for c in chunks:
+                yield c
+
+        result = []
+        async for chunk in AIService._iter_stream(_gen(), cancel_event=None, total_timeout=10.0):
+            result.append(chunk)
+
+        assert result == chunks
+
+    @pytest.mark.asyncio
+    async def test_cancel_event_stops_stalled_stream(self):
+        """Setting cancel_event must stop iteration even when no chunks arrive."""
+        cancel = asyncio.Event()
+        stall_started = asyncio.Event()
+
+        async def _stalled_gen():
+            yield "first_chunk"
+            stall_started.set()
+            # Stall forever — simulates a hung API connection
+            await asyncio.sleep(999)
+            yield "never_reached"
+
+        result = []
+
+        async def _consume():
+            async for chunk in AIService._iter_stream(_stalled_gen(), cancel_event=cancel, total_timeout=60.0):
+                result.append(chunk)
+
+        task = asyncio.create_task(_consume())
+        await stall_started.wait()
+        cancel.set()
+        await asyncio.wait_for(task, timeout=2.0)
+
+        assert result == ["first_chunk"]
+
+    @pytest.mark.asyncio
+    async def test_total_timeout_fires_on_stalled_stream(self):
+        """Total timeout must raise APITimeoutError when deadline expires during a stall."""
+        from openai import APITimeoutError
+
+        async def _stalled_gen():
+            yield "first_chunk"
+            await asyncio.sleep(999)
+            yield "never_reached"
+
+        result = []
+        with pytest.raises(APITimeoutError):
+            async for chunk in AIService._iter_stream(_stalled_gen(), cancel_event=None, total_timeout=0.1):
+                result.append(chunk)
+
+        assert result == ["first_chunk"]
+
+    @pytest.mark.asyncio
+    async def test_total_timeout_fires_before_any_chunk(self):
+        """Total timeout must fire even if the stream never produces a single chunk."""
+        from openai import APITimeoutError
+
+        async def _forever_stalled():
+            await asyncio.sleep(999)
+            yield "never"
+
+        with pytest.raises(APITimeoutError):
+            async for _ in AIService._iter_stream(_forever_stalled(), cancel_event=None, total_timeout=0.1):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_cancel_takes_priority_over_timeout(self):
+        """If cancel fires before timeout, iteration stops gracefully (no APITimeoutError)."""
+        cancel = asyncio.Event()
+
+        async def _slow_gen():
+            yield "chunk"
+            await asyncio.sleep(999)
+
+        result = []
+
+        async def _consume():
+            async for chunk in AIService._iter_stream(_slow_gen(), cancel_event=cancel, total_timeout=60.0):
+                result.append(chunk)
+
+        task = asyncio.create_task(_consume())
+        await asyncio.sleep(0.05)
+        cancel.set()
+        await asyncio.wait_for(task, timeout=2.0)
+
+        assert result == ["chunk"]
+
+    @pytest.mark.asyncio
+    async def test_empty_stream_returns_immediately(self):
+        """An empty async generator should produce no chunks and return cleanly."""
+
+        async def _empty():
+            return
+            yield  # makes this an async generator
+
+        result = []
+        async for chunk in AIService._iter_stream(_empty(), cancel_event=None, total_timeout=10.0):
+            result.append(chunk)
+
+        assert result == []
+
+
+class TestStreamChatWithIterStream:
+    """Integration tests: stream_chat uses _iter_stream for cancel and timeout protection."""
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_cancel_stops_hung_stream(self):
+        """cancel_event must stop stream_chat even when API produces no chunks after initial response."""
+        cancel = asyncio.Event()
+
+        # Mock a stream that delivers one chunk then stalls
+        mock_choice = MagicMock()
+        mock_choice.delta.content = "hello"
+        mock_choice.delta.tool_calls = None
+        mock_choice.finish_reason = None
+
+        mock_chunk = MagicMock()
+        mock_chunk.choices = [mock_choice]
+
+        stall_started = asyncio.Event()
+
+        class MockStream:
+            def __aiter__(self):
+                return self._gen().__aiter__()
+
+            async def _gen(self):
+                yield mock_chunk
+                stall_started.set()
+                await asyncio.sleep(999)
+
+        config = _make_config(request_timeout=60)
+        service = AIService.__new__(AIService)
+        service.config = config
+        service._token_provider = None
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=MockStream())
+        service.client = mock_client
+
+        events = []
+
+        async def _consume():
+            async for event in service.stream_chat(
+                [{"role": "user", "content": "hi"}],
+                cancel_event=cancel,
+            ):
+                events.append(event)
+
+        task = asyncio.create_task(_consume())
+        await stall_started.wait()
+        cancel.set()
+        await asyncio.wait_for(task, timeout=2.0)
+
+        token_events = [e for e in events if e["event"] == "token"]
+        assert len(token_events) == 1
+        assert token_events[0]["data"]["content"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_total_timeout_yields_error(self):
+        """stream_chat must yield a timeout error when _iter_stream total timeout fires."""
+
+        class MockStream:
+            def __aiter__(self):
+                return self._gen().__aiter__()
+
+            async def _gen(self):
+                await asyncio.sleep(999)
+                yield MagicMock()
+
+        config = _make_config(request_timeout=1)
+        service = AIService.__new__(AIService)
+        service.config = config
+        service._token_provider = None
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=MockStream())
+        service.client = mock_client
+
+        events = []
+        with patch.object(service, "_build_client"):
+            async for event in service.stream_chat([{"role": "user", "content": "hi"}]):
+                events.append(event)
+
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 1
+        assert error_events[0]["data"]["code"] == "timeout"
+
+
+class TestBuildClientCleanup:
+    """Tests for _build_client closing old httpx connection pools."""
+
+    def test_old_http_client_closed_on_rebuild(self):
+        """_build_client must schedule close() on the old httpx client to prevent resource leaks."""
+        config = _make_config()
+
+        with patch("anteroom.services.ai_service.AsyncOpenAI"):
+            service = AIService.__new__(AIService)
+            service.config = config
+            service._token_provider = None
+
+            # Simulate an existing client with an internal httpx client
+            old_http = MagicMock()
+            old_openai = MagicMock()
+            old_openai._client = old_http
+            service.client = old_openai
+
+            # Rebuild — should schedule close on old_http
+            with patch("asyncio.get_running_loop") as mock_loop:
+                mock_event_loop = MagicMock()
+                mock_loop.return_value = mock_event_loop
+                service._build_client()
+                mock_event_loop.create_task.assert_called_once()
+                # The coroutine passed to create_task should be old_http.close()
+                old_http.close.assert_called_once()
+
+    def test_rebuild_without_existing_client(self):
+        """_build_client must not fail when called for the first time (no old client)."""
+        config = _make_config()
+        with patch("anteroom.services.ai_service.AsyncOpenAI"):
+            service = AIService(config)
+            # Should not raise — client attribute is set for the first time
+            assert service.client is not None
+
+    def test_rebuild_handles_no_running_loop(self):
+        """_build_client must not raise when no event loop is running (e.g., during __init__)."""
+        config = _make_config()
+
+        with patch("anteroom.services.ai_service.AsyncOpenAI"):
+            service = AIService.__new__(AIService)
+            service.config = config
+            service._token_provider = None
+
+            old_http = MagicMock()
+            old_http.close = MagicMock()
+            old_openai = MagicMock()
+            old_openai._client = old_http
+            service.client = old_openai
+
+            # No running loop — should swallow RuntimeError gracefully
+            service._build_client()
+            # No assertion needed — test passes if no exception is raised
