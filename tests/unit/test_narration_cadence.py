@@ -154,6 +154,4 @@ class TestNarrationCadence:
 
         # The final messages list must not contain any narration prompts
         narration_prompts = [m for m in messages if "summarize your progress" in m.get("content", "")]
-        assert narration_prompts == [], (
-            f"Narration prompt was not removed from message history: {narration_prompts}"
-        )
+        assert narration_prompts == [], f"Narration prompt was not removed from message history: {narration_prompts}"
