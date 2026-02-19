@@ -343,7 +343,11 @@
                     <button class="sources-close" id="sources-close" title="Close sources">&times;</button>
                 </div>
             </div>
-            <div class="sources-toolbar">
+            <div class="sources-view-tabs">
+                <button class="sources-view-tab active" data-view="sources" id="sources-view-tab-sources">Sources</button>
+                <button class="sources-view-tab" data-view="groups" id="sources-view-tab-groups">Groups</button>
+            </div>
+            <div class="sources-toolbar" id="sources-toolbar">
                 <input type="text" class="sources-search" id="sources-search" placeholder="Search sources..." autocomplete="off">
                 <select class="sources-type-filter" id="sources-type-filter">
                     <option value="">All types</option>
@@ -354,6 +358,12 @@
             </div>
             <div class="sources-list" id="sources-list">
                 <!-- Populated by JS -->
+            </div>
+            <div class="sources-groups-list" id="sources-groups-list" style="display:none">
+                <!-- Groups populated by JS -->
+            </div>
+            <div class="sources-group-detail" id="sources-group-detail" style="display:none">
+                <!-- Group detail/members view populated by JS -->
             </div>
             <div class="sources-detail" id="sources-detail" style="display:none">
                 <!-- Source detail/edit view populated by JS -->

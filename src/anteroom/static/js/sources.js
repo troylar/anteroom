@@ -8,6 +8,9 @@ const Sources = (() => {
     let _selectedFile = null;
     let _createType = 'text';
     let _isEditing = false;
+    let _viewMode = 'sources'; // sources | groups
+    let _groups = [];
+    let _currentGroup = null;
 
     // Source references attached to the next chat message
     let _attachedSources = [];   // [{id, title, type}]
@@ -27,7 +30,13 @@ const Sources = (() => {
 
         if (closeBtn) closeBtn.addEventListener('click', closePanel);
         if (toggleBtn) toggleBtn.addEventListener('click', togglePanel);
-        if (addBtn) addBtn.addEventListener('click', showCreateView);
+        if (addBtn) addBtn.addEventListener('click', () => {
+            if (_viewMode === 'groups') {
+                _createGroup();
+            } else {
+                showCreateView();
+            }
+        });
         if (createCancelBtn) createCancelBtn.addEventListener('click', showListView);
         if (createSaveBtn) createSaveBtn.addEventListener('click', saveSource);
 
@@ -51,6 +60,12 @@ const Sources = (() => {
                 _setCreateType(tab.dataset.type);
             });
         }
+
+        // View tabs (Sources vs Groups)
+        const viewTabs = document.querySelectorAll('.sources-view-tab');
+        viewTabs.forEach(tab => {
+            tab.addEventListener('click', () => _switchViewMode(tab.dataset.view));
+        });
 
         // File drop zone
         if (fileDrop && fileInput) {
@@ -130,11 +145,18 @@ const Sources = (() => {
     function showListView() {
         _currentView = 'list';
         _currentSource = null;
+        _currentGroup = null;
         _isEditing = false;
-        document.getElementById('sources-list').style.display = '';
+
+        const isGroups = _viewMode === 'groups';
+        document.getElementById('sources-list').style.display = isGroups ? 'none' : '';
+        document.getElementById('sources-groups-list').style.display = isGroups ? '' : 'none';
+        document.getElementById('sources-group-detail').style.display = 'none';
         document.getElementById('sources-detail').style.display = 'none';
         document.getElementById('sources-create').style.display = 'none';
-        document.querySelector('.sources-toolbar').style.display = '';
+
+        const toolbar = document.getElementById('sources-toolbar');
+        if (toolbar) toolbar.style.display = isGroups ? 'none' : '';
     }
 
     function showCreateView() {
@@ -142,9 +164,11 @@ const Sources = (() => {
         _selectedFile = null;
         _createType = 'text';
         document.getElementById('sources-list').style.display = 'none';
+        document.getElementById('sources-groups-list').style.display = 'none';
+        document.getElementById('sources-group-detail').style.display = 'none';
         document.getElementById('sources-detail').style.display = 'none';
         document.getElementById('sources-create').style.display = '';
-        document.querySelector('.sources-toolbar').style.display = 'none';
+        document.getElementById('sources-toolbar').style.display = 'none';
 
         // Reset form
         document.getElementById('source-title-input').value = '';
@@ -160,8 +184,10 @@ const Sources = (() => {
         _currentView = 'detail';
         _isEditing = false;
         document.getElementById('sources-list').style.display = 'none';
+        document.getElementById('sources-groups-list').style.display = 'none';
+        document.getElementById('sources-group-detail').style.display = 'none';
         document.getElementById('sources-create').style.display = 'none';
-        document.querySelector('.sources-toolbar').style.display = 'none';
+        document.getElementById('sources-toolbar').style.display = 'none';
 
         const detail = document.getElementById('sources-detail');
         detail.style.display = '';
@@ -444,8 +470,27 @@ const Sources = (() => {
         if (!listEl) return;
         listEl.innerHTML = '';
 
+        // "Attach by tag" link at the top
+        const tagLink = document.createElement('div');
+        tagLink.className = 'sources-attach-by-tag';
+        tagLink.innerHTML = _attachedTag
+            ? `<span class="source-ref-chip source-ref-tag" style="margin:0">tag: ${DOMPurify.sanitize(_attachedTag.name)}<button class="source-ref-remove" title="Remove">&times;</button></span>`
+            : '<button class="sources-attach-tag-btn" id="sources-attach-tag-btn">Attach by tag...</button>';
+        listEl.appendChild(tagLink);
+
+        if (_attachedTag) {
+            tagLink.querySelector('.source-ref-remove').addEventListener('click', () => {
+                _attachedTag = null;
+                _renderAttachedBar();
+                _renderList();
+            });
+        } else {
+            const btn = tagLink.querySelector('#sources-attach-tag-btn');
+            if (btn) btn.addEventListener('click', _showTagAttachPicker);
+        }
+
         if (_sources.length === 0) {
-            listEl.innerHTML = '<div class="sources-empty">No sources yet. Click + to add one.</div>';
+            listEl.innerHTML += '<div class="sources-empty">No sources yet. Click + to add one.</div>';
             return;
         }
 
@@ -559,6 +604,326 @@ const Sources = (() => {
                 saveBtn.disabled = false;
                 saveBtn.textContent = 'Save';
             }
+        }
+    }
+
+    // --- View mode switching (Sources vs Groups) ---
+
+    function _switchViewMode(mode) {
+        _viewMode = mode;
+        document.querySelectorAll('.sources-view-tab').forEach(t =>
+            t.classList.toggle('active', t.dataset.view === mode));
+
+        const toolbar = document.getElementById('sources-toolbar');
+        const addBtn = document.getElementById('sources-add-btn');
+
+        if (mode === 'sources') {
+            document.getElementById('sources-list').style.display = '';
+            document.getElementById('sources-groups-list').style.display = 'none';
+            document.getElementById('sources-group-detail').style.display = 'none';
+            document.getElementById('sources-detail').style.display = 'none';
+            document.getElementById('sources-create').style.display = 'none';
+            if (toolbar) toolbar.style.display = '';
+            if (addBtn) addBtn.title = 'Add source';
+            _currentGroup = null;
+            refreshList();
+        } else {
+            document.getElementById('sources-list').style.display = 'none';
+            document.getElementById('sources-groups-list').style.display = '';
+            document.getElementById('sources-group-detail').style.display = 'none';
+            document.getElementById('sources-detail').style.display = 'none';
+            document.getElementById('sources-create').style.display = 'none';
+            if (toolbar) toolbar.style.display = 'none';
+            if (addBtn) addBtn.title = 'Create group';
+            _currentGroup = null;
+            _refreshGroups();
+        }
+    }
+
+    // --- Group management ---
+
+    async function _refreshGroups() {
+        const listEl = document.getElementById('sources-groups-list');
+        if (!listEl) return;
+
+        try {
+            const data = await App.api('/api/source-groups');
+            _groups = data.groups || [];
+            _renderGroups();
+        } catch (err) {
+            listEl.innerHTML = `<div class="sources-error">${DOMPurify.sanitize(err.message)}</div>`;
+        }
+    }
+
+    function _renderGroups() {
+        const listEl = document.getElementById('sources-groups-list');
+        if (!listEl) return;
+        listEl.innerHTML = '';
+
+        if (_groups.length === 0) {
+            listEl.innerHTML = '<div class="sources-empty">No groups yet. Click + to create one.</div>';
+            return;
+        }
+
+        _groups.forEach(group => {
+            const item = document.createElement('div');
+            item.className = 'source-item source-group-item';
+            item.dataset.id = group.id;
+
+            const isAttached = _attachedGroup && _attachedGroup.id === group.id;
+            const name = DOMPurify.sanitize(group.name);
+            const desc = group.description ? DOMPurify.sanitize(group.description) : '';
+            const memberCount = group.source_count || 0;
+
+            item.innerHTML = `
+                <div class="source-item-main">
+                    <div class="source-item-title">${isAttached ? '<span class="source-attached-dot"></span>' : ''}${name}</div>
+                    <div class="source-item-meta">
+                        <span class="source-type-badge source-type-group"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="8" y1="3" x2="8" y2="21"/></svg> group</span>
+                        <span class="source-item-date">${memberCount} source${memberCount !== 1 ? 's' : ''}</span>
+                        ${desc ? `<span class="source-item-date">${desc}</span>` : ''}
+                    </div>
+                </div>
+                <button class="source-item-attach" title="${isAttached ? 'Detach' : 'Attach group to chat'}">
+                    ${isAttached ? '&times;' : '+'}
+                </button>
+            `;
+
+            item.querySelector('.source-item-main').addEventListener('click', () => _showGroupDetail(group.id));
+            item.querySelector('.source-item-attach').addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (isAttached) {
+                    _attachedGroup = null;
+                } else {
+                    _attachedGroup = { id: group.id, name: group.name };
+                }
+                _renderAttachedBar();
+                _renderGroups();
+            });
+            listEl.appendChild(item);
+        });
+    }
+
+    async function _showGroupDetail(groupId) {
+        const detailEl = document.getElementById('sources-group-detail');
+        const groupsListEl = document.getElementById('sources-groups-list');
+        if (!detailEl) return;
+
+        groupsListEl.style.display = 'none';
+        detailEl.style.display = '';
+        detailEl.innerHTML = '<div class="sources-loading">Loading...</div>';
+
+        try {
+            const group = await App.api(`/api/source-groups/${encodeURIComponent(groupId)}`);
+            _currentGroup = group;
+
+            // Fetch members - list sources filtered by group
+            let members = [];
+            try {
+                const data = await App.api(`/api/sources?group_id=${encodeURIComponent(groupId)}&limit=100`);
+                members = data.sources || [];
+            } catch { /* empty group */ }
+
+            _renderGroupDetail(group, members);
+        } catch (err) {
+            detailEl.innerHTML = `<div class="sources-error">${DOMPurify.sanitize(err.message)}</div>`;
+        }
+    }
+
+    function _renderGroupDetail(group, members) {
+        const detailEl = document.getElementById('sources-group-detail');
+        const isAttached = _attachedGroup && _attachedGroup.id === group.id;
+
+        let membersHtml = '';
+        if (members.length === 0) {
+            membersHtml = '<div class="sources-empty">No sources in this group yet.</div>';
+        } else {
+            membersHtml = members.map(src => `
+                <div class="source-item source-group-member">
+                    <div class="source-item-main">
+                        <div class="source-item-title">${DOMPurify.sanitize(src.title)}</div>
+                        <div class="source-item-meta">${_typeBadge(src.type)}</div>
+                    </div>
+                    <button class="source-item-attach source-group-remove-member" data-source-id="${DOMPurify.sanitize(src.id)}" title="Remove from group">&times;</button>
+                </div>
+            `).join('');
+        }
+
+        detailEl.innerHTML = `
+            <div class="source-detail-header">
+                <button class="source-back-btn" id="group-back-btn" title="Back to groups">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <div class="source-detail-title-row">
+                    <h3 class="source-detail-title">${DOMPurify.sanitize(group.name)}</h3>
+                    <span class="source-type-badge source-type-group">group</span>
+                </div>
+            </div>
+            ${group.description ? `<div class="source-detail-info"><span>${DOMPurify.sanitize(group.description)}</span></div>` : ''}
+            <div class="source-detail-actions">
+                <button class="btn-modal-save source-attach-btn" id="group-attach-btn">${isAttached ? 'Detach from chat' : 'Attach to chat'}</button>
+                <button class="btn-modal-save" id="group-add-source-btn">Add source</button>
+                <button class="btn-modal-cancel source-delete-btn" id="group-delete-btn">Delete group</button>
+            </div>
+            <div class="source-group-members-label">Members (${members.length})</div>
+            <div class="source-group-members" id="source-group-members">${membersHtml}</div>
+        `;
+
+        // Back button
+        document.getElementById('group-back-btn').addEventListener('click', () => {
+            detailEl.style.display = 'none';
+            document.getElementById('sources-groups-list').style.display = '';
+            _currentGroup = null;
+            _refreshGroups();
+        });
+
+        // Attach/detach
+        document.getElementById('group-attach-btn').addEventListener('click', () => {
+            if (isAttached) {
+                _attachedGroup = null;
+            } else {
+                _attachedGroup = { id: group.id, name: group.name };
+            }
+            _renderAttachedBar();
+            _renderGroupDetail(group, members);
+        });
+
+        // Add source to group
+        document.getElementById('group-add-source-btn').addEventListener('click', () => {
+            _showAddSourceToGroupPicker(group, members);
+        });
+
+        // Delete group
+        document.getElementById('group-delete-btn').addEventListener('click', async () => {
+            if (!confirm('Delete this group? Sources in the group will not be deleted.')) return;
+            try {
+                await App.api(`/api/source-groups/${encodeURIComponent(group.id)}`, { method: 'DELETE' });
+                if (_attachedGroup && _attachedGroup.id === group.id) {
+                    _attachedGroup = null;
+                    _renderAttachedBar();
+                }
+                detailEl.style.display = 'none';
+                document.getElementById('sources-groups-list').style.display = '';
+                _refreshGroups();
+            } catch (err) {
+                alert('Failed to delete group: ' + err.message);
+            }
+        });
+
+        // Remove member buttons
+        detailEl.querySelectorAll('.source-group-remove-member').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const sourceId = btn.dataset.sourceId;
+                try {
+                    await App.api(`/api/source-groups/${encodeURIComponent(group.id)}/sources/${encodeURIComponent(sourceId)}`, { method: 'DELETE' });
+                    _showGroupDetail(group.id);
+                } catch (err) {
+                    alert('Failed to remove: ' + err.message);
+                }
+            });
+        });
+    }
+
+    async function _showAddSourceToGroupPicker(group, currentMembers) {
+        const membersEl = document.getElementById('source-group-members');
+        if (!membersEl) return;
+
+        const memberIds = new Set(currentMembers.map(s => s.id));
+
+        try {
+            const data = await App.api('/api/sources?limit=100');
+            const allSources = (data.sources || []).filter(s => !memberIds.has(s.id));
+
+            if (allSources.length === 0) {
+                alert('No more sources to add.');
+                return;
+            }
+
+            const picker = document.createElement('div');
+            picker.className = 'source-tag-picker';
+            picker.innerHTML = '<div style="padding:4px 8px;opacity:0.6;font-size:12px">Pick a source to add:</div>';
+
+            allSources.slice(0, 20).forEach(src => {
+                const btn = document.createElement('button');
+                btn.className = 'source-tag-picker-item';
+                btn.textContent = src.title;
+                btn.addEventListener('click', async () => {
+                    try {
+                        await App.api(`/api/source-groups/${encodeURIComponent(group.id)}/sources/${encodeURIComponent(src.id)}`, { method: 'POST' });
+                        _showGroupDetail(group.id);
+                    } catch (err) {
+                        alert('Failed to add: ' + err.message);
+                    }
+                });
+                picker.appendChild(btn);
+            });
+
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'source-tag-picker-cancel';
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.addEventListener('click', () => _showGroupDetail(group.id));
+            picker.appendChild(cancelBtn);
+
+            membersEl.innerHTML = '';
+            membersEl.appendChild(picker);
+        } catch (err) {
+            alert('Failed to load sources: ' + err.message);
+        }
+    }
+
+    async function _showTagAttachPicker() {
+        const listEl = document.getElementById('sources-list');
+        const btn = document.getElementById('sources-attach-tag-btn');
+        if (!btn) return;
+
+        let allTags = [];
+        try {
+            allTags = await App.api('/api/tags');
+        } catch { return; }
+
+        if (allTags.length === 0) {
+            alert('No tags found. Tag some sources first.');
+            return;
+        }
+
+        const picker = document.createElement('div');
+        picker.className = 'source-tag-picker';
+        allTags.forEach(tag => {
+            const tagBtn = document.createElement('button');
+            tagBtn.className = 'source-tag-picker-item';
+            tagBtn.textContent = tag.name;
+            tagBtn.addEventListener('click', () => {
+                _attachedTag = { id: tag.id, name: tag.name };
+                _renderAttachedBar();
+                _renderList();
+            });
+            picker.appendChild(tagBtn);
+        });
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'source-tag-picker-cancel';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', () => _renderList());
+        picker.appendChild(cancelBtn);
+
+        btn.replaceWith(picker);
+    }
+
+    async function _createGroup() {
+        const name = prompt('Group name:');
+        if (!name || !name.trim()) return;
+        const desc = prompt('Description (optional):') || '';
+
+        try {
+            await App.api('/api/source-groups', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name.trim(), description: desc.trim() }),
+            });
+            _refreshGroups();
+        } catch (err) {
+            alert('Failed to create group: ' + err.message);
         }
     }
 

@@ -3457,6 +3457,31 @@ body {
     background: var(--bg-hover);
 }
 
+.sources-view-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+.sources-view-tab {
+    flex: 1;
+    padding: 8px 12px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+}
+.sources-view-tab:hover {
+    color: var(--text-primary);
+}
+.sources-view-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
 .sources-toolbar {
     display: flex;
     gap: 8px;
@@ -3569,6 +3594,7 @@ body {
 .source-type-text { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
 .source-type-file { background: rgba(168, 85, 247, 0.1); color: #a855f7; }
 .source-type-url { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
+.source-type-group { background: rgba(168, 85, 247, 0.1); color: #a855f7; }
 
 /* Source detail view */
 .source-detail-header {
@@ -3963,6 +3989,45 @@ body {
     background: var(--bg-input) !important;
     color: var(--text-primary) !important;
     border: 1px solid var(--border-color) !important;
+}
+
+.sources-attach-by-tag {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+.sources-attach-tag-btn {
+    background: none;
+    border: 1px dashed var(--border-color);
+    color: var(--text-secondary);
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+.sources-attach-tag-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+.source-group-members-label {
+    padding: 8px 16px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+}
+.source-group-members {
+    overflow-y: auto;
+    flex: 1;
+}
+.source-group-member .source-item-attach {
+    color: var(--text-error, #ef4444);
+}
+.sources-groups-list {
+    overflow-y: auto;
+    flex: 1;
 }
 
 /* Responsive: narrow screens -> sources overlays */
