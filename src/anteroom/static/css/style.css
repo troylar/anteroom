@@ -1566,6 +1566,49 @@ body {
 
 
 /* ============================================================
+   TOOL CALL GROUPS (dedup)
+   ============================================================ */
+
+.tool-call-group {
+    margin: 8px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+.tool-call-group > summary {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-muted);
+    list-style: none;
+    transition: background var(--transition-speed) var(--easing);
+}
+.tool-call-group > summary:hover {
+    background: var(--bg-hover);
+}
+.tool-call-group > summary::-webkit-details-marker {
+    display: none;
+}
+.tool-call-group > summary::before {
+    content: '\25B6 ';
+    font-size: 10px;
+    margin-right: 6px;
+    display: inline-block;
+    transition: transform var(--transition-speed) var(--easing);
+}
+.tool-call-group[open] > summary::before {
+    transform: rotate(90deg);
+}
+.tool-call-group > .tool-call {
+    margin: 0;
+    border: none;
+    border-top: 1px solid var(--border-color);
+    border-radius: 0;
+    box-shadow: none;
+}
+
+/* ============================================================
    ATTACHMENTS
    ============================================================ */
 

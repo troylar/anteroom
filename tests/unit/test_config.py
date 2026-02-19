@@ -670,3 +670,48 @@ class TestEnsureIdentity:
         identity2 = ensure_identity(config_path)
         assert identity1.user_id == identity2.user_id
         assert identity1.public_key == identity2.public_key
+
+
+class TestToolDedupConfig:
+    """Tests for cli.tool_dedup config field."""
+
+    def test_tool_dedup_default_true(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(tmp_path, {"ai": {"base_url": "http://test", "api_key": "sk-test"}})
+        config = load_config(cfg_file)
+        assert config.cli.tool_dedup is True
+
+    def test_tool_dedup_yaml_false(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path, {"ai": {"base_url": "http://test", "api_key": "sk-test"}, "cli": {"tool_dedup": False}}
+        )
+        config = load_config(cfg_file)
+        assert config.cli.tool_dedup is False
+
+    def test_tool_dedup_yaml_true_explicit(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path, {"ai": {"base_url": "http://test", "api_key": "sk-test"}, "cli": {"tool_dedup": True}}
+        )
+        config = load_config(cfg_file)
+        assert config.cli.tool_dedup is True
+
+    def test_tool_dedup_env_var_false(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AI_CHAT_TOOL_DEDUP", "false")
+        cfg_file = _write_config(tmp_path, {"ai": {"base_url": "http://test", "api_key": "sk-test"}})
+        config = load_config(cfg_file)
+        assert config.cli.tool_dedup is False
+
+    def test_tool_dedup_env_var_zero(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AI_CHAT_TOOL_DEDUP", "0")
+        cfg_file = _write_config(tmp_path, {"ai": {"base_url": "http://test", "api_key": "sk-test"}})
+        config = load_config(cfg_file)
+        assert config.cli.tool_dedup is False
+
+    def test_tool_dedup_env_var_takes_precedence_over_yaml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AI_CHAT_TOOL_DEDUP", "false")
+        cfg_file = _write_config(
+            tmp_path, {"ai": {"base_url": "http://test", "api_key": "sk-test"}, "cli": {"tool_dedup": True}}
+        )
+        config = load_config(cfg_file)
+        assert config.cli.tool_dedup is False
