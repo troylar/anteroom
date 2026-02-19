@@ -1,4 +1,4 @@
-/* Sources panel: global knowledge store management */
+/* Sources panel: global knowledge store management + chat reference picker */
 
 const Sources = (() => {
     let _sources = [];
@@ -7,6 +7,12 @@ const Sources = (() => {
     let _searchTimeout = null;
     let _selectedFile = null;
     let _createType = 'text';
+    let _isEditing = false;
+
+    // Source references attached to the next chat message
+    let _attachedSources = [];   // [{id, title, type}]
+    let _attachedTag = null;     // {id, name}
+    let _attachedGroup = null;   // {id, name}
 
     function init() {
         const closeBtn = document.getElementById('sources-close');
@@ -124,6 +130,7 @@ const Sources = (() => {
     function showListView() {
         _currentView = 'list';
         _currentSource = null;
+        _isEditing = false;
         document.getElementById('sources-list').style.display = '';
         document.getElementById('sources-detail').style.display = 'none';
         document.getElementById('sources-create').style.display = 'none';
@@ -151,6 +158,7 @@ const Sources = (() => {
 
     async function showDetailView(sourceId) {
         _currentView = 'detail';
+        _isEditing = false;
         document.getElementById('sources-list').style.display = 'none';
         document.getElementById('sources-create').style.display = 'none';
         document.querySelector('.sources-toolbar').style.display = 'none';
@@ -172,6 +180,7 @@ const Sources = (() => {
         const detail = document.getElementById('sources-detail');
         const typeBadge = _typeBadge(source.type);
         const created = App.formatTimestamp(source.created_at);
+        const isAttached = _attachedSources.some(s => s.id === source.id);
 
         let contentHtml = '';
         if (source.content) {
@@ -190,7 +199,7 @@ const Sources = (() => {
         }
 
         const tagsHtml = (source.tags || []).map(t =>
-            `<span class="source-tag">${DOMPurify.sanitize(t.name)}</span>`
+            `<span class="source-tag" data-tag-id="${DOMPurify.sanitize(t.id)}">${DOMPurify.sanitize(t.name)}<button class="source-tag-remove" data-tag-id="${DOMPurify.sanitize(t.id)}" title="Remove tag">&times;</button></span>`
         ).join('');
 
         const chunksCount = (source.chunks || []).length;
@@ -209,28 +218,200 @@ const Sources = (() => {
                 <span class="source-detail-date">${created}</span>
                 ${chunksCount > 0 ? `<span class="source-detail-chunks">${chunksCount} chunks</span>` : ''}
             </div>
-            ${tagsHtml ? `<div class="source-detail-tags">${tagsHtml}</div>` : ''}
+            <div class="source-detail-tags" id="source-detail-tags">
+                ${tagsHtml}
+                <button class="source-tag-add-btn" id="source-tag-add-btn" title="Add tag">+ tag</button>
+            </div>
             ${contentHtml}
             <div class="source-detail-actions">
+                <button class="btn-modal-save source-attach-btn" id="source-attach-btn">${isAttached ? 'Detach from chat' : 'Attach to chat'}</button>
+                <button class="btn-modal-save source-edit-btn" id="source-edit-btn">Edit</button>
+                ${App.state.currentProjectId ? `<button class="btn-modal-save source-link-project-btn" id="source-link-project-btn">Link to project</button>` : ''}
                 <button class="btn-modal-cancel source-delete-btn" id="source-delete-btn">Delete</button>
             </div>
         `;
 
+        // Back button
         document.getElementById('source-back-btn').addEventListener('click', async () => {
             showListView();
             await refreshList();
         });
 
+        // Attach/detach to chat
+        document.getElementById('source-attach-btn').addEventListener('click', () => {
+            if (isAttached) {
+                _attachedSources = _attachedSources.filter(s => s.id !== source.id);
+            } else {
+                _attachedSources.push({ id: source.id, title: source.title, type: source.type });
+            }
+            _renderAttachedBar();
+            _renderDetail(source); // refresh button label
+        });
+
+        // Edit button
+        document.getElementById('source-edit-btn').addEventListener('click', () => {
+            _showEditForm(source);
+        });
+
+        // Link to project
+        const linkBtn = document.getElementById('source-link-project-btn');
+        if (linkBtn) {
+            linkBtn.addEventListener('click', async () => {
+                try {
+                    await App.api(`/api/projects/${encodeURIComponent(App.state.currentProjectId)}/sources`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ source_id: source.id }),
+                    });
+                    linkBtn.textContent = 'Linked!';
+                    linkBtn.disabled = true;
+                    setTimeout(() => { linkBtn.textContent = 'Link to project'; linkBtn.disabled = false; }, 1500);
+                } catch (err) {
+                    alert('Failed to link: ' + err.message);
+                }
+            });
+        }
+
+        // Delete button
         document.getElementById('source-delete-btn').addEventListener('click', async () => {
             if (!confirm('Delete this source? This cannot be undone.')) return;
             try {
                 await App.api(`/api/sources/${encodeURIComponent(source.id)}`, { method: 'DELETE' });
+                _attachedSources = _attachedSources.filter(s => s.id !== source.id);
+                _renderAttachedBar();
                 showListView();
                 await refreshList();
             } catch (err) {
                 alert('Failed to delete: ' + err.message);
             }
         });
+
+        // Tag remove buttons
+        detail.querySelectorAll('.source-tag-remove').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const tagId = btn.dataset.tagId;
+                try {
+                    await App.api(`/api/sources/${encodeURIComponent(source.id)}/tags/${encodeURIComponent(tagId)}`, { method: 'DELETE' });
+                    await showDetailView(source.id);
+                } catch (err) {
+                    alert('Failed to remove tag: ' + err.message);
+                }
+            });
+        });
+
+        // Add tag button
+        document.getElementById('source-tag-add-btn').addEventListener('click', () => {
+            _showTagPicker(source);
+        });
+    }
+
+    function _showEditForm(source) {
+        _isEditing = true;
+        const detail = document.getElementById('sources-detail');
+        detail.innerHTML = `
+            <div class="source-detail-header">
+                <button class="source-back-btn" id="source-edit-cancel" title="Cancel editing">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <h3 class="source-detail-title">Edit Source</h3>
+            </div>
+            <div class="sources-create-form">
+                <div class="setting-group">
+                    <label for="source-edit-title">Title</label>
+                    <input type="text" id="source-edit-title" value="${DOMPurify.sanitize(source.title || '')}" autocomplete="off">
+                </div>
+                ${source.type === 'text' || source.type === 'file' ? `
+                <div class="setting-group">
+                    <label for="source-edit-content">Content</label>
+                    <textarea id="source-edit-content" rows="12">${DOMPurify.sanitize(source.content || '')}</textarea>
+                </div>` : ''}
+                ${source.type === 'url' ? `
+                <div class="setting-group">
+                    <label for="source-edit-url">URL</label>
+                    <input type="url" id="source-edit-url" value="${DOMPurify.sanitize(source.url || '')}" autocomplete="off">
+                </div>` : ''}
+                <div class="sources-create-actions">
+                    <button class="btn-modal-cancel" id="source-edit-cancel-btn">Cancel</button>
+                    <button class="btn-modal-save" id="source-edit-save-btn">Save</button>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('source-edit-cancel').addEventListener('click', () => showDetailView(source.id));
+        document.getElementById('source-edit-cancel-btn').addEventListener('click', () => showDetailView(source.id));
+        document.getElementById('source-edit-save-btn').addEventListener('click', async () => {
+            const payload = {};
+            const newTitle = document.getElementById('source-edit-title').value.trim();
+            if (newTitle && newTitle !== source.title) payload.title = newTitle;
+
+            const contentEl = document.getElementById('source-edit-content');
+            if (contentEl && contentEl.value !== (source.content || '')) payload.content = contentEl.value;
+
+            const urlEl = document.getElementById('source-edit-url');
+            if (urlEl && urlEl.value.trim() !== (source.url || '')) payload.url = urlEl.value.trim();
+
+            if (Object.keys(payload).length === 0) {
+                showDetailView(source.id);
+                return;
+            }
+
+            try {
+                await App.api(`/api/sources/${encodeURIComponent(source.id)}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                await showDetailView(source.id);
+            } catch (err) {
+                alert('Failed to save: ' + err.message);
+            }
+        });
+    }
+
+    async function _showTagPicker(source) {
+        const tagsContainer = document.getElementById('source-detail-tags');
+        const addBtn = document.getElementById('source-tag-add-btn');
+        if (!tagsContainer || !addBtn) return;
+
+        // Replace add button with inline picker
+        const existingTagIds = new Set((source.tags || []).map(t => t.id));
+        let allTags = [];
+        try {
+            allTags = await App.api('/api/tags');
+        } catch { return; }
+
+        const available = allTags.filter(t => !existingTagIds.has(t.id));
+
+        const picker = document.createElement('div');
+        picker.className = 'source-tag-picker';
+
+        if (available.length === 0) {
+            picker.innerHTML = '<span class="source-tag-picker-empty">No more tags</span>';
+        } else {
+            available.forEach(tag => {
+                const btn = document.createElement('button');
+                btn.className = 'source-tag-picker-item';
+                btn.textContent = tag.name;
+                btn.addEventListener('click', async () => {
+                    try {
+                        await App.api(`/api/sources/${encodeURIComponent(source.id)}/tags/${encodeURIComponent(tag.id)}`, { method: 'POST' });
+                        await showDetailView(source.id);
+                    } catch (err) {
+                        alert('Failed to add tag: ' + err.message);
+                    }
+                });
+                picker.appendChild(btn);
+            });
+        }
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'source-tag-picker-cancel';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', () => showDetailView(source.id));
+        picker.appendChild(cancelBtn);
+
+        addBtn.replaceWith(picker);
     }
 
     async function refreshList() {
@@ -273,21 +454,35 @@ const Sources = (() => {
             item.className = 'source-item';
             item.dataset.id = source.id;
 
+            const isAttached = _attachedSources.some(s => s.id === source.id);
             const typeBadge = _typeBadge(source.type);
             const title = DOMPurify.sanitize(source.title || 'Untitled');
             const date = App.formatTimestamp(source.created_at);
 
             item.innerHTML = `
                 <div class="source-item-main">
-                    <div class="source-item-title">${title}</div>
+                    <div class="source-item-title">${isAttached ? '<span class="source-attached-dot"></span>' : ''}${title}</div>
                     <div class="source-item-meta">
                         ${typeBadge}
                         <span class="source-item-date">${date}</span>
                     </div>
                 </div>
+                <button class="source-item-attach" title="${isAttached ? 'Detach' : 'Attach to chat'}">
+                    ${isAttached ? '&times;' : '+'}
+                </button>
             `;
 
-            item.addEventListener('click', () => showDetailView(source.id));
+            item.querySelector('.source-item-main').addEventListener('click', () => showDetailView(source.id));
+            item.querySelector('.source-item-attach').addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (isAttached) {
+                    _attachedSources = _attachedSources.filter(s => s.id !== source.id);
+                } else {
+                    _attachedSources.push({ id: source.id, title: source.title, type: source.type });
+                }
+                _renderAttachedBar();
+                _renderList();
+            });
             listEl.appendChild(item);
         });
     }
@@ -367,8 +562,105 @@ const Sources = (() => {
         }
     }
 
+    // --- Attached sources bar (shown above input area) ---
+
+    function _renderAttachedBar() {
+        let bar = document.getElementById('sources-attached-bar');
+        const inputArea = document.getElementById('input-area');
+        if (!inputArea) return;
+
+        const hasRefs = _attachedSources.length > 0 || _attachedTag || _attachedGroup;
+
+        if (!hasRefs) {
+            if (bar) bar.remove();
+            return;
+        }
+
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = 'sources-attached-bar';
+            bar.className = 'sources-attached-bar';
+            inputArea.insertBefore(bar, inputArea.firstChild);
+        }
+
+        bar.innerHTML = '';
+        _attachedSources.forEach(src => {
+            const chip = document.createElement('span');
+            chip.className = 'source-ref-chip';
+            chip.innerHTML = `<span class="source-ref-icon">${_typeIcon(src.type)}</span>${DOMPurify.sanitize(src.title)}<button class="source-ref-remove" title="Remove">&times;</button>`;
+            chip.querySelector('.source-ref-remove').addEventListener('click', () => {
+                _attachedSources = _attachedSources.filter(s => s.id !== src.id);
+                _renderAttachedBar();
+                if (_currentView === 'list') _renderList();
+            });
+            bar.appendChild(chip);
+        });
+
+        if (_attachedTag) {
+            const chip = document.createElement('span');
+            chip.className = 'source-ref-chip source-ref-tag';
+            chip.innerHTML = `tag: ${DOMPurify.sanitize(_attachedTag.name)}<button class="source-ref-remove" title="Remove">&times;</button>`;
+            chip.querySelector('.source-ref-remove').addEventListener('click', () => {
+                _attachedTag = null;
+                _renderAttachedBar();
+            });
+            bar.appendChild(chip);
+        }
+
+        if (_attachedGroup) {
+            const chip = document.createElement('span');
+            chip.className = 'source-ref-chip source-ref-group';
+            chip.innerHTML = `group: ${DOMPurify.sanitize(_attachedGroup.name)}<button class="source-ref-remove" title="Remove">&times;</button>`;
+            chip.querySelector('.source-ref-remove').addEventListener('click', () => {
+                _attachedGroup = null;
+                _renderAttachedBar();
+            });
+            bar.appendChild(chip);
+        }
+    }
+
+    function _typeIcon(type) {
+        if (type === 'text') return '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/></svg>';
+        if (type === 'file') return '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/></svg>';
+        if (type === 'url') return '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>';
+        return '';
+    }
+
+    // --- Public API for Chat.js ---
+
+    function getAttachedSources() {
+        return {
+            source_ids: _attachedSources.map(s => s.id),
+            source_tag: _attachedTag ? _attachedTag.id : null,
+            source_group_id: _attachedGroup ? _attachedGroup.id : null,
+        };
+    }
+
+    function clearAttached() {
+        _attachedSources = [];
+        _attachedTag = null;
+        _attachedGroup = null;
+        _renderAttachedBar();
+    }
+
+    function hasAttached() {
+        return _attachedSources.length > 0 || _attachedTag !== null || _attachedGroup !== null;
+    }
+
+    function attachTag(tag) {
+        _attachedTag = tag;
+        _renderAttachedBar();
+    }
+
+    function attachGroup(group) {
+        _attachedGroup = group;
+        _renderAttachedBar();
+    }
+
     return {
         init, togglePanel, openPanel, closePanel,
         refreshList, showCreateView, showDetailView,
+        getAttachedSources, clearAttached, hasAttached,
+        attachTag, attachGroup,
     };
 })();

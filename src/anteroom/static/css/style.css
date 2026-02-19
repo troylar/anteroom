@@ -3793,6 +3793,178 @@ body {
     background: var(--accent-subtle);
 }
 
+/* Source attached indicator in list */
+.source-attached-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-right: 6px;
+    vertical-align: middle;
+}
+
+/* Source item attach button */
+.source-item-attach {
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    cursor: pointer;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+    transition: all 0.12s var(--easing);
+}
+.source-item-attach:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+.source-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Source reference chips bar (above chat input) */
+.sources-attached-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 12px;
+}
+.source-ref-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: var(--accent-subtle);
+    color: var(--accent);
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.source-ref-icon {
+    display: inline-flex;
+    flex-shrink: 0;
+}
+.source-ref-remove {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0 2px;
+    opacity: 0.6;
+    flex-shrink: 0;
+}
+.source-ref-remove:hover {
+    opacity: 1;
+}
+.source-ref-tag {
+    background: rgba(59, 130, 246, 0.1);
+    color: #3b82f6;
+}
+.source-ref-group {
+    background: rgba(168, 85, 247, 0.1);
+    color: #a855f7;
+}
+
+/* Tag picker inline */
+.source-tag-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 0;
+}
+.source-tag-picker-item {
+    padding: 3px 10px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    color: var(--text-primary);
+    font-size: 11px;
+    cursor: pointer;
+    font-family: var(--font-ui);
+    transition: all 0.12s var(--easing);
+}
+.source-tag-picker-item:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.source-tag-picker-cancel {
+    padding: 3px 10px;
+    background: none;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+    font-family: var(--font-ui);
+}
+.source-tag-picker-empty {
+    color: var(--text-muted);
+    font-size: 11px;
+    padding: 4px 0;
+}
+
+/* Tag remove button inside tag chip */
+.source-tag-remove {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0 1px;
+    opacity: 0.5;
+    margin-left: 2px;
+}
+.source-tag-remove:hover {
+    opacity: 1;
+}
+
+/* Tag add button */
+.source-tag-add-btn {
+    padding: 2px 8px;
+    background: none;
+    border: 1px dashed var(--border-color);
+    border-radius: 10px;
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+    font-family: var(--font-ui);
+    transition: all 0.12s var(--easing);
+}
+.source-tag-add-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* Source action buttons row */
+.source-attach-btn {
+    background: var(--accent-subtle) !important;
+    color: var(--accent) !important;
+    border: 1px solid var(--accent) !important;
+}
+.source-edit-btn {
+    background: var(--bg-input) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-color) !important;
+}
+.source-link-project-btn {
+    background: var(--bg-input) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-color) !important;
+}
+
 /* Responsive: narrow screens -> sources overlays */
 @media (max-width: 900px) {
     .sources-panel {
