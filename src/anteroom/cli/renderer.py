@@ -62,9 +62,17 @@ _last_spinner_update: float = 0
 # Tool call timing
 _tool_start: float = 0
 
-# Dedup tracking for repeated identical tool results
-_dedup_summary: str = ""
+# Dedup tracking for repeated similar tool calls
+_dedup_key: str = ""  # tool action type (e.g. "Editing", "Reading", "bash")
 _dedup_count: int = 0
+_dedup_first_summary: str = ""  # first summary in the group (printed immediately)
+_dedup_targets: list[str] = []  # targets accumulated after the first
+
+# Legacy alias used by tests — kept in sync with _dedup_key
+_dedup_summary: str = ""
+
+# Whether dedup is enabled (set from config)
+_tool_dedup_enabled: bool = True
 
 # Track whether we've started a tool call batch (for spacing)
 _tool_batch_active: bool = False
@@ -95,6 +103,11 @@ def get_verbosity() -> Verbosity:
 def set_verbosity(v: Verbosity) -> None:
     global _verbosity
     _verbosity = v
+
+
+def set_tool_dedup(enabled: bool) -> None:
+    global _tool_dedup_enabled
+    _tool_dedup_enabled = enabled
 
 
 def cycle_verbosity() -> Verbosity:
@@ -170,6 +183,39 @@ def _humanize_tool(tool_name: str, arguments: dict[str, Any]) -> str:
     if first_str:
         return f"{tool_name} {first_str}"
     return tool_name
+
+
+def _dedup_key_from_summary(summary: str) -> str:
+    """Extract a dedup grouping key from a humanized tool summary.
+
+    Groups by the action verb (e.g. "Editing", "Reading", "Writing", "bash")
+    so consecutive edits to different files collapse together.
+    """
+    # Known action prefixes from _humanize_tool
+    for prefix in ("Editing", "Reading", "Writing", "Searching", "Finding", "Listing", "Sub-agent:"):
+        if summary.startswith(prefix):
+            return prefix
+    # bash commands: group all bash calls together
+    if summary.startswith("bash "):
+        return "bash"
+    # MCP / unknown tools: use the tool name (first word)
+    return summary.split(" ", 1)[0] if " " in summary else summary
+
+
+def _dedup_flush_label(key: str, count: int, targets: list[str]) -> str:
+    """Build a human-readable summary for a flushed dedup group."""
+    verb_map = {
+        "Editing": "edited",
+        "Reading": "read",
+        "Writing": "wrote",
+        "Searching": "searched",
+        "Finding": "found patterns in",
+        "Listing": "listed",
+        "bash": "ran",
+    }
+    verb = verb_map.get(key, f"called {key}")
+    noun = "files" if key in ("Editing", "Reading", "Writing") else "times"
+    return f"... {verb} {count} {noun} total"
 
 
 def _short_path(path: str) -> str:
@@ -367,11 +413,15 @@ def flush_buffered_text() -> None:
 
 def _flush_dedup() -> None:
     """Flush accumulated dedup counter if needed."""
-    global _dedup_summary, _dedup_count
+    global _dedup_key, _dedup_count, _dedup_first_summary, _dedup_targets, _dedup_summary
     if _dedup_count > 1:
-        console.print(f"    [{MUTED}]... repeated {_dedup_count} times total[/{MUTED}]")
-    _dedup_summary = ""
+        label = _dedup_flush_label(_dedup_key, _dedup_count, _dedup_targets)
+        console.print(f"    [{MUTED}]{label}[/{MUTED}]")
+    _dedup_key = ""
     _dedup_count = 0
+    _dedup_first_summary = ""
+    _dedup_targets = []
+    _dedup_summary = ""
 
 
 def render_token(content: str) -> None:
@@ -482,16 +532,18 @@ def render_tool_call_end(tool_name: str, status: str, output: Any) -> None:
         return
 
     # Build the result line
-    global _dedup_summary, _dedup_count
+    global _dedup_key, _dedup_count, _dedup_first_summary, _dedup_targets, _dedup_summary
     status_icon = "[green]  ✓[/green]" if status == "success" else "[red]  ✗[/red]"
     elapsed_str = f" {elapsed:.1f}s" if elapsed >= 0.1 else ""
 
-    # Dedup: collapse identical consecutive tool results (compact/detailed only)
-    if status == "success" and summary == _dedup_summary:
+    # Dedup: collapse consecutive similar tool calls (compact/detailed only)
+    key = _dedup_key_from_summary(summary) if _tool_dedup_enabled else ""
+    if _tool_dedup_enabled and status == "success" and key == _dedup_key and _dedup_count >= 1:
         _dedup_count += 1
+        _dedup_targets.append(summary)
         return
 
-    # Different tool or first occurrence — flush previous dedup, print new line
+    # Different tool type or first occurrence — flush previous dedup, print new line
     _flush_dedup()
 
     if status != "success":
@@ -499,20 +551,25 @@ def render_tool_call_end(tool_name: str, status: str, output: Any) -> None:
         err = _error_summary(output)
         if err:
             console.print(f"    [red]{escape(err)}[/red]")
-        _dedup_summary = ""
+        _dedup_key = ""
         _dedup_count = 0
+        _dedup_summary = ""
     elif _verbosity == Verbosity.DETAILED:
         detail = _output_summary(output)
         console.print(f"{status_icon} [{MUTED}]{escape(summary)}{elapsed_str}[/{MUTED}]")
         if detail:
             console.print(f"    [{CHROME}]{escape(detail)}[/{CHROME}]")
-        _dedup_summary = summary
+        _dedup_key = key
         _dedup_count = 1
+        _dedup_first_summary = summary
+        _dedup_summary = summary
     else:
         # Compact: just result line
         console.print(f"{status_icon} [{MUTED}]{escape(summary)}{elapsed_str}[/{MUTED}]")
-        _dedup_summary = summary
+        _dedup_key = key
         _dedup_count = 1
+        _dedup_first_summary = summary
+        _dedup_summary = summary
 
 
 # ---------------------------------------------------------------------------

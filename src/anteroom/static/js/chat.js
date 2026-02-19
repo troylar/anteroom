@@ -262,6 +262,7 @@ const Chat = (() => {
                 break;
             case 'token':
                 hideThinking();
+                _webDedupFlush();
                 currentAssistantContent += data.content;
                 renderAssistantContent();
                 break;
@@ -1226,6 +1227,30 @@ const Chat = (() => {
         scrollToBottom();
     }
 
+    // Tool call dedup state for web UI
+    let _webDedupToolName = '';
+    let _webDedupGroup = null;  // the <details> wrapper for grouped calls
+    let _webDedupCount = 0;
+
+    function _webDedupKey(toolName) {
+        // Normalize tool name for grouping (same tool type = same group)
+        return toolName || '';
+    }
+
+    function _webDedupFlush() {
+        _webDedupToolName = '';
+        _webDedupGroup = null;
+        _webDedupCount = 0;
+    }
+
+    function _webDedupUpdateSummary() {
+        if (!_webDedupGroup || _webDedupCount < 2) return;
+        const summary = _webDedupGroup.querySelector(':scope > summary');
+        if (summary) {
+            summary.textContent = `${_webDedupToolName} \u00d7 ${_webDedupCount} `;
+        }
+    }
+
     function renderToolCallStart(data) {
         if (!currentAssistantEl) {
             currentAssistantEl = appendMessage('assistant', '');
@@ -1237,6 +1262,7 @@ const Chat = (() => {
         details.id = `tool-${_sanitizeId(data.id)}`;
 
         if (isSubagent) {
+            _webDedupFlush();
             details.open = true;
 
             const summary = document.createElement('summary');
@@ -1259,6 +1285,8 @@ const Chat = (() => {
             cardsContainer.className = 'subagent-cards-container';
             toolContent.appendChild(cardsContainer);
             details.appendChild(toolContent);
+
+            contentEl.appendChild(details);
         } else {
             const summary = document.createElement('summary');
             summary.textContent = `Tool: ${data.tool_name} `;
@@ -1281,9 +1309,43 @@ const Chat = (() => {
             toolContent.appendChild(inputPre);
 
             details.appendChild(toolContent);
+
+            // Dedup grouping: consecutive same-type tool calls
+            const key = _webDedupKey(data.tool_name);
+            if (key && key === _webDedupToolName && _webDedupCount >= 1) {
+                // Same tool type — add to existing group
+                if (_webDedupCount === 1 && !_webDedupGroup) {
+                    // Create group wrapper, move the previous tool call into it
+                    const group = document.createElement('details');
+                    group.className = 'tool-call-group';
+                    const groupSummary = document.createElement('summary');
+                    groupSummary.textContent = `${key} \u00d7 2 `;
+                    group.appendChild(groupSummary);
+
+                    // Find the previous tool call element and wrap it
+                    const prevTools = contentEl.querySelectorAll(':scope > .tool-call:not(.tool-call-subagent)');
+                    const prevTool = prevTools[prevTools.length - 1];
+                    if (prevTool) {
+                        contentEl.insertBefore(group, prevTool);
+                        group.appendChild(prevTool);
+                    }
+                    group.appendChild(details);
+                    _webDedupGroup = group;
+                } else if (_webDedupGroup) {
+                    // Group already exists — append
+                    _webDedupGroup.appendChild(details);
+                }
+                _webDedupCount++;
+                _webDedupUpdateSummary();
+            } else {
+                // Different tool type — flush and start new tracking
+                _webDedupFlush();
+                _webDedupToolName = key;
+                _webDedupCount = 1;
+                contentEl.appendChild(details);
+            }
         }
 
-        contentEl.appendChild(details);
         scrollToBottom();
     }
 

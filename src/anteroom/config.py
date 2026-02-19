@@ -276,6 +276,7 @@ class CliConfig:
     max_tool_iterations: int = 50
     context_warn_tokens: int = 80_000
     context_auto_compact_tokens: int = 100_000
+    tool_dedup: bool = True  # collapse consecutive similar tool calls; False = show all
 
 
 @dataclass
@@ -495,11 +496,15 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         context_auto_compact_tokens = int(cli_raw.get("context_auto_compact_tokens", 100_000))
     except (ValueError, TypeError):
         context_auto_compact_tokens = 100_000
+    tool_dedup_raw = cli_raw.get("tool_dedup", os.environ.get("AI_CHAT_TOOL_DEDUP", "true"))
+    tool_dedup = str(tool_dedup_raw).lower() not in ("false", "0", "no", "off")
+
     cli_config = CliConfig(
         builtin_tools=cli_raw.get("builtin_tools", True),
         max_tool_iterations=int(cli_raw.get("max_tool_iterations", 50)),
         context_warn_tokens=context_warn_tokens,
         context_auto_compact_tokens=context_auto_compact_tokens,
+        tool_dedup=tool_dedup,
     )
 
     identity_raw = raw.get("identity", {})

@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 from anteroom.cli.renderer import (
     Verbosity,
+    _dedup_flush_label,
+    _dedup_key_from_summary,
     _flush_dedup,
     _format_tokens,
     _humanize_tool,
@@ -19,6 +21,7 @@ from anteroom.cli.renderer import (
     render_tool_call_end,
     render_tool_call_start,
     save_turn_history,
+    set_tool_dedup,
     set_verbosity,
     start_thinking,
     startup_step,
@@ -220,16 +223,22 @@ class TestDedup:
     def setup_method(self) -> None:
         import anteroom.cli.renderer as r
 
-        r._dedup_summary = ""
+        r._dedup_key = ""
         r._dedup_count = 0
+        r._dedup_first_summary = ""
+        r._dedup_targets = []
+        r._dedup_summary = ""
+        r._tool_dedup_enabled = True
 
     def test_flush_dedup_resets_state(self) -> None:
         import anteroom.cli.renderer as r
 
-        r._dedup_summary = "Reading test.py"
+        r._dedup_key = "Editing"
+        r._dedup_summary = "Editing test.py"
         r._dedup_count = 3
         _flush_dedup()
         assert r._dedup_summary == ""
+        assert r._dedup_key == ""
         assert r._dedup_count == 0
 
     def test_flush_dedup_noop_when_empty(self) -> None:
@@ -242,13 +251,18 @@ class TestStartThinkingFlushesDedup:
     def setup_method(self) -> None:
         import anteroom.cli.renderer as r
 
-        r._dedup_summary = ""
+        r._dedup_key = ""
         r._dedup_count = 0
+        r._dedup_first_summary = ""
+        r._dedup_targets = []
+        r._dedup_summary = ""
         r._tool_batch_active = False
+        r._tool_dedup_enabled = True
 
     def test_start_thinking_flushes_dedup(self) -> None:
         import anteroom.cli.renderer as r
 
+        r._dedup_key = "bash"
         r._dedup_summary = "bash git status"
         r._dedup_count = 3
         with patch("anteroom.cli.renderer._write_thinking_line"):
@@ -256,6 +270,7 @@ class TestStartThinkingFlushesDedup:
             start_thinking()
             r._repl_mode = False
         assert r._dedup_summary == ""
+        assert r._dedup_key == ""
         assert r._dedup_count == 0
 
     def test_start_thinking_resets_tool_batch(self) -> None:
@@ -273,15 +288,18 @@ class TestStartThinkingFlushesDedup:
         import anteroom.cli.renderer as r
 
         set_verbosity(Verbosity.COMPACT)
-        r._dedup_summary = ""
+        r._dedup_key = ""
         r._dedup_count = 0
+        r._dedup_first_summary = ""
+        r._dedup_targets = []
+        r._dedup_summary = ""
         r._tool_batch_active = False
         r._current_turn_tools.clear()
 
         # First tool call
         render_tool_call_start("bash", {"command": "git status"})
         render_tool_call_end("bash", "success", {"stdout": "clean"})
-        assert r._dedup_summary == "bash git status"
+        assert r._dedup_key == "bash"
         assert r._dedup_count == 1
 
         # Thinking boundary (new iteration)
@@ -291,13 +309,13 @@ class TestStartThinkingFlushesDedup:
             r._repl_mode = False
 
         # Dedup state should be flushed
-        assert r._dedup_summary == ""
+        assert r._dedup_key == ""
         assert r._dedup_count == 0
 
         # Same tool again — should NOT be deduped
         render_tool_call_start("bash", {"command": "git status"})
         render_tool_call_end("bash", "success", {"stdout": "clean"})
-        assert r._dedup_summary == "bash git status"
+        assert r._dedup_key == "bash"
         assert r._dedup_count == 1  # Fresh count, not accumulated
 
 
@@ -333,10 +351,14 @@ class TestToolCallDimming:
         import anteroom.cli.renderer as r
 
         set_verbosity(Verbosity.COMPACT)
-        r._dedup_summary = ""
+        r._dedup_key = ""
         r._dedup_count = 0
+        r._dedup_first_summary = ""
+        r._dedup_targets = []
+        r._dedup_summary = ""
         r._tool_batch_active = False
         r._current_turn_tools.clear()
+        r._tool_dedup_enabled = True
 
     def _set_tool_start(self) -> None:
         """Set _tool_start to a recent time so elapsed is small."""
@@ -432,8 +454,12 @@ class TestToolBatchSpacing:
         r._tool_batch_active = False
         r._current_turn_tools.clear()
         r._streaming_buffer.clear()
-        r._dedup_summary = ""
+        r._dedup_key = ""
         r._dedup_count = 0
+        r._dedup_first_summary = ""
+        r._dedup_targets = []
+        r._dedup_summary = ""
+        r._tool_dedup_enabled = True
 
     def test_first_tool_call_adds_blank_line(self) -> None:
         import anteroom.cli.renderer as r
@@ -561,3 +587,175 @@ class TestStartupStep:
         server_count = 0
         label = f"Starting {server_count} MCP server{'s' if server_count != 1 else ''}..."
         assert label == "Starting 0 MCP servers..."
+
+
+class TestDedupKeyFromSummary:
+    """Tests for _dedup_key_from_summary grouping logic."""
+
+    def test_editing_key(self) -> None:
+        assert _dedup_key_from_summary("Editing src/main.py") == "Editing"
+
+    def test_reading_key(self) -> None:
+        assert _dedup_key_from_summary("Reading config.py") == "Reading"
+
+    def test_writing_key(self) -> None:
+        assert _dedup_key_from_summary("Writing output.txt") == "Writing"
+
+    def test_searching_key(self) -> None:
+        assert _dedup_key_from_summary("Searching for 'TODO'") == "Searching"
+
+    def test_bash_key(self) -> None:
+        assert _dedup_key_from_summary("bash git status") == "bash"
+
+    def test_mcp_tool_key(self) -> None:
+        assert _dedup_key_from_summary("my_mcp_tool query") == "my_mcp_tool"
+
+    def test_single_word_tool(self) -> None:
+        assert _dedup_key_from_summary("my_tool") == "my_tool"
+
+    def test_finding_key(self) -> None:
+        assert _dedup_key_from_summary("Finding **/*.py") == "Finding"
+
+    def test_listing_key(self) -> None:
+        assert _dedup_key_from_summary("Listing /tmp") == "Listing"
+
+    def test_subagent_key(self) -> None:
+        assert _dedup_key_from_summary("Sub-agent: do something") == "Sub-agent:"
+
+
+class TestDedupFlushLabel:
+    """Tests for _dedup_flush_label human-readable summaries."""
+
+    def test_editing_label(self) -> None:
+        result = _dedup_flush_label("Editing", 5, ["a", "b", "c", "d", "e"])
+        assert "edited" in result
+        assert "5" in result
+        assert "files" in result
+
+    def test_reading_label(self) -> None:
+        result = _dedup_flush_label("Reading", 3, [])
+        assert "read" in result
+        assert "3" in result
+
+    def test_bash_label(self) -> None:
+        result = _dedup_flush_label("bash", 4, [])
+        assert "ran" in result
+        assert "4" in result
+
+    def test_unknown_tool_label(self) -> None:
+        result = _dedup_flush_label("my_mcp_tool", 2, [])
+        assert "my_mcp_tool" in result
+        assert "2" in result
+
+
+class TestEnhancedDedup:
+    """Tests for #59: enhanced tool call dedup grouping by tool type."""
+
+    def setup_method(self) -> None:
+        import anteroom.cli.renderer as r
+
+        set_verbosity(Verbosity.COMPACT)
+        r._dedup_key = ""
+        r._dedup_count = 0
+        r._dedup_first_summary = ""
+        r._dedup_targets = []
+        r._dedup_summary = ""
+        r._tool_batch_active = False
+        r._current_turn_tools.clear()
+        r._tool_dedup_enabled = True
+
+    def _set_tool_start(self) -> None:
+        import time
+
+        import anteroom.cli.renderer as r
+
+        r._tool_start = time.monotonic()
+
+    def test_consecutive_edits_different_files_collapse(self) -> None:
+        """Editing foo.py then bar.py should collapse (same dedup key 'Editing')."""
+        import anteroom.cli.renderer as r
+
+        with patch("anteroom.cli.renderer.console"):
+            # First edit
+            render_tool_call_start("edit_file", {"path": "foo.py"})
+            self._set_tool_start()
+            render_tool_call_end("edit_file", "success", {"content": "ok"})
+            assert r._dedup_key == "Editing"
+            assert r._dedup_count == 1
+
+            # Second edit — different file, same tool type → collapsed
+            render_tool_call_start("edit_file", {"path": "bar.py"})
+            self._set_tool_start()
+            render_tool_call_end("edit_file", "success", {"content": "ok"})
+            assert r._dedup_key == "Editing"
+            assert r._dedup_count == 2
+
+    def test_different_tool_types_dont_collapse(self) -> None:
+        """Editing then Reading should NOT collapse."""
+        import anteroom.cli.renderer as r
+
+        with patch("anteroom.cli.renderer.console"):
+            render_tool_call_start("edit_file", {"path": "foo.py"})
+            self._set_tool_start()
+            render_tool_call_end("edit_file", "success", {"content": "ok"})
+            assert r._dedup_key == "Editing"
+
+            render_tool_call_start("read_file", {"file_path": "bar.py"})
+            self._set_tool_start()
+            render_tool_call_end("read_file", "success", {"content": "data"})
+            assert r._dedup_key == "Reading"
+            assert r._dedup_count == 1  # Fresh, not accumulated
+
+    def test_dedup_disabled_shows_all(self) -> None:
+        """With dedup disabled, consecutive identical calls should all print."""
+        set_tool_dedup(False)
+        with patch("anteroom.cli.renderer.console") as mock_console:
+            for i in range(3):
+                render_tool_call_start("edit_file", {"path": "foo.py"})
+                self._set_tool_start()
+                render_tool_call_end("edit_file", "success", {"content": "ok"})
+
+            # Each call should print (no dedup suppression)
+            print_calls = [c for c in mock_console.print.call_args_list if "Editing" in str(c)]
+            assert len(print_calls) == 3
+
+    def test_flush_dedup_prints_summary_for_edits(self) -> None:
+        """Flushing a group of 3 edits should print '... edited 3 files total'."""
+        import anteroom.cli.renderer as r
+
+        r._dedup_key = "Editing"
+        r._dedup_count = 3
+        r._dedup_first_summary = "Editing foo.py"
+        r._dedup_targets = ["Editing bar.py", "Editing baz.py"]
+        r._dedup_summary = "Editing foo.py"
+
+        with patch("anteroom.cli.renderer.console") as mock_console:
+            _flush_dedup()
+            printed = str(mock_console.print.call_args_list)
+            assert "edited" in printed
+            assert "3" in printed
+
+    def test_error_breaks_dedup_group(self) -> None:
+        """An error tool call should break the dedup group."""
+        import anteroom.cli.renderer as r
+
+        with patch("anteroom.cli.renderer.console"):
+            render_tool_call_start("edit_file", {"path": "foo.py"})
+            self._set_tool_start()
+            render_tool_call_end("edit_file", "success", {"content": "ok"})
+            assert r._dedup_key == "Editing"
+
+            render_tool_call_start("edit_file", {"path": "bar.py"})
+            self._set_tool_start()
+            render_tool_call_end("edit_file", "error", {"error": "file not found"})
+            assert r._dedup_key == ""
+            assert r._dedup_count == 0
+
+    def test_set_tool_dedup(self) -> None:
+        """set_tool_dedup() should update the module-level flag."""
+        import anteroom.cli.renderer as r
+
+        set_tool_dedup(False)
+        assert r._tool_dedup_enabled is False
+        set_tool_dedup(True)
+        assert r._tool_dedup_enabled is True
