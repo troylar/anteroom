@@ -254,6 +254,23 @@ async def chat(conversation_id: str, request: Request):
         source_group_id = body.source_group_id
         files = []
 
+    # Validate source reference UUIDs
+    for sid in source_ids:
+        try:
+            uuid_mod.UUID(sid)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid source_id format: {sid[:50]}")
+    if source_tag:
+        try:
+            uuid_mod.UUID(source_tag)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid source_tag format")
+    if source_group_id:
+        try:
+            uuid_mod.UUID(source_group_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid source_group_id format")
+
     if not regenerate and not message_text.strip():
         raise HTTPException(status_code=400, detail="Message content cannot be empty")
 

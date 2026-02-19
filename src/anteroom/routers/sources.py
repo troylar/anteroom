@@ -119,16 +119,19 @@ async def upload_source(
     user_id, display_name = _get_identity(request)
 
     file_data = await file.read()
-    source = storage.save_source_file(
-        db,
-        title=title or file.filename or "Untitled",
-        filename=file.filename or "unnamed",
-        mime_type=file.content_type or "application/octet-stream",
-        data=file_data,
-        data_dir=data_dir,
-        user_id=user_id,
-        user_display_name=display_name,
-    )
+    try:
+        source = storage.save_source_file(
+            db,
+            title=title or file.filename or "Untitled",
+            filename=file.filename or "unnamed",
+            mime_type=file.content_type or "application/octet-stream",
+            data=file_data,
+            data_dir=data_dir,
+            user_id=user_id,
+            user_display_name=display_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     worker = getattr(request.app.state, "embedding_worker", None)
     if worker and source.get("content"):

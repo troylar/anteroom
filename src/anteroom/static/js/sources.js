@@ -215,7 +215,12 @@ const Sources = (() => {
         }
         if (source.url) {
             const safeUrl = DOMPurify.sanitize(source.url);
-            contentHtml += `<div class="source-detail-url"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeUrl}</a></div>`;
+            const isHttpUrl = /^https?:\/\//i.test(safeUrl);
+            if (isHttpUrl) {
+                contentHtml += `<div class="source-detail-url"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeUrl}</a></div>`;
+            } else {
+                contentHtml += `<div class="source-detail-url">${safeUrl}</div>`;
+            }
         }
         if (source.filename) {
             contentHtml += `<div class="source-detail-meta">File: ${DOMPurify.sanitize(source.filename)}</div>`;

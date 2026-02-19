@@ -1417,8 +1417,9 @@ def list_sources(
     params: list[Any] = []
 
     if search:
-        conditions.append("(s.title LIKE ? OR s.content LIKE ?)")
-        like = f"%{search}%"
+        conditions.append("(s.title LIKE ? ESCAPE '\\' OR s.content LIKE ? ESCAPE '\\')")
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped}%"
         params.extend([like, like])
 
     if source_type:
@@ -1821,7 +1822,8 @@ def link_source_to_project(
         raise ValueError("Exactly one of source_id, group_id, or tag_filter must be provided")
     now = _now()
     db.execute(
-        "INSERT INTO project_sources (project_id, source_id, group_id, tag_filter, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO project_sources"
+        " (project_id, source_id, group_id, tag_filter, created_at) VALUES (?, ?, ?, ?, ?)",
         (project_id, source_id, group_id, tag_filter, now),
     )
     db.commit()
