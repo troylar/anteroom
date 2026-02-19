@@ -166,6 +166,8 @@ CREATE TABLE IF NOT EXISTS message_embeddings (
 
 def _make_vec_schema(dimensions: int = 384) -> str:
     """Build vec_messages DDL with the configured embedding dimensions."""
+    if not isinstance(dimensions, int) or not (1 <= dimensions <= 4096):
+        raise ValueError(f"Invalid embedding dimensions: {dimensions!r}")
     return f"""
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_messages USING vec0(
     embedding float[{dimensions}],

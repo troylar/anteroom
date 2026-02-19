@@ -259,12 +259,24 @@ class LocalEmbeddingService:
         return results
 
 
+_VALID_PROVIDERS = {"local", "api"}
+
+
 def create_embedding_service(config: AppConfig) -> EmbeddingService | LocalEmbeddingService | None:
     """Factory: create an embedding service from app config. Returns None if unavailable."""
     if not config.embeddings.enabled:
         return None
 
-    if config.embeddings.provider == "local":
+    provider = config.embeddings.provider
+    if provider not in _VALID_PROVIDERS:
+        logger.error(
+            "Invalid embedding provider %r (must be one of %s), disabling embeddings",
+            provider,
+            _VALID_PROVIDERS,
+        )
+        return None
+
+    if provider == "local":
         dims = config.embeddings.dimensions
         if dims == 0:
             dims = get_local_model_dimensions(config.embeddings.local_model)

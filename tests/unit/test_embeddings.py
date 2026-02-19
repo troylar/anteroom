@@ -337,6 +337,15 @@ class TestCreateEmbeddingService:
         assert service is not None
         assert isinstance(service, LocalEmbeddingService)
 
+    def test_returns_none_for_invalid_provider(self) -> None:
+        from anteroom.config import AIConfig, AppConfig, EmbeddingsConfig
+
+        config = AppConfig(
+            ai=AIConfig(base_url="https://api.test", api_key="sk-test"),
+            embeddings=EmbeddingsConfig(enabled=True, provider="bogus"),
+        )
+        assert create_embedding_service(config) is None
+
 
 class TestLocalEmbeddingService:
     def test_model_and_dimensions_properties(self) -> None:
