@@ -27,6 +27,10 @@ class _FirstTokenTimeoutError(Exception):
     """Raised when the first token does not arrive within first_token_timeout."""
 
 
+class _StreamTimeoutError(Exception):
+    """Raised when the stream stalls mid-response after first token was received."""
+
+
 def create_ai_service(config: AIConfig) -> "AIService":
     """Factory: create an AIService with TokenProvider if api_key_command is configured."""
     provider = TokenProvider(config.api_key_command) if config.api_key_command else None
@@ -119,7 +123,7 @@ class AIService:
                     await stream_iter.aclose()
                 except Exception:
                     pass
-                raise APITimeoutError(request=None)  # type: ignore[arg-type]
+                raise _StreamTimeoutError()
 
             next_chunk = asyncio.ensure_future(stream_iter.__anext__())
             wait_tasks: list[asyncio.Future[Any]] = [next_chunk]
@@ -152,7 +156,7 @@ class AIService:
                     await stream_iter.aclose()
                 except Exception:
                     pass
-                raise APITimeoutError(request=None)  # type: ignore[arg-type]
+                raise _StreamTimeoutError()
 
             # Cancel was triggered
             if cancel_wait and cancel_wait in done:
@@ -337,6 +341,21 @@ class AIService:
                     "data": {
                         "message": "AI provider rate limit reached. Please wait a moment and try again.",
                         "code": "rate_limit",
+                    },
+                }
+                return
+            except _StreamTimeoutError:
+                logger.warning("Stream timed out mid-response after first token")
+                self._build_client()
+                yield {
+                    "event": "error",
+                    "data": {
+                        "message": (
+                            f"AI response timed out after {self.config.request_timeout}s. "
+                            "The API may be slow or unreachable. Try again, or increase "
+                            "`ai.request_timeout` in your config."
+                        ),
+                        "code": "timeout",
                     },
                 }
                 return

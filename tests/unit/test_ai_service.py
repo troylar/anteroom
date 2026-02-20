@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from anteroom.config import AIConfig
-from anteroom.services.ai_service import AIService
+from anteroom.services.ai_service import AIService, _StreamTimeoutError
 
 
 def _make_config(**overrides) -> AIConfig:
@@ -414,8 +414,7 @@ class TestIterStream:
 
     @pytest.mark.asyncio
     async def test_total_timeout_fires_on_stalled_stream(self):
-        """Total timeout must raise APITimeoutError when deadline expires during a stall."""
-        from openai import APITimeoutError
+        """Total timeout must raise _StreamTimeoutError when deadline expires during a stall."""
 
         async def _stalled_gen():
             yield "first_chunk"
@@ -423,7 +422,7 @@ class TestIterStream:
             yield "never_reached"
 
         result = []
-        with pytest.raises(APITimeoutError):
+        with pytest.raises(_StreamTimeoutError):
             async for chunk in AIService._iter_stream(_stalled_gen(), cancel_event=None, total_timeout=0.1):
                 result.append(chunk)
 
@@ -432,13 +431,12 @@ class TestIterStream:
     @pytest.mark.asyncio
     async def test_total_timeout_fires_before_any_chunk(self):
         """Total timeout must fire even if the stream never produces a single chunk."""
-        from openai import APITimeoutError
 
         async def _forever_stalled():
             await asyncio.sleep(999)
             yield "never"
 
-        with pytest.raises(APITimeoutError):
+        with pytest.raises(_StreamTimeoutError):
             async for _ in AIService._iter_stream(_forever_stalled(), cancel_event=None, total_timeout=0.1):
                 pass
 
@@ -527,8 +525,6 @@ class TestIterStream:
     @pytest.mark.asyncio
     async def test_deadline_already_expired_at_loop_entry(self):
         """If deadline expires between chunks, timeout fires at the top of the loop."""
-        from openai import APITimeoutError
-
         call_count = 0
 
         async def _slow_chunks():
@@ -541,7 +537,7 @@ class TestIterStream:
             yield "second"
 
         result = []
-        with pytest.raises(APITimeoutError):
+        with pytest.raises(_StreamTimeoutError):
             async for chunk in AIService._iter_stream(_slow_chunks(), cancel_event=None, total_timeout=0.1):
                 result.append(chunk)
 
@@ -577,8 +573,6 @@ class TestIterStream:
     @pytest.mark.asyncio
     async def test_aclose_called_on_timeout(self):
         """Stream aclose() must be called when total timeout fires for resource cleanup."""
-        from openai import APITimeoutError
-
         aclose_called = asyncio.Event()
 
         class TrackingStream:
@@ -590,7 +584,7 @@ class TestIterStream:
                 aclose_called.set()
 
         stream = TrackingStream()
-        with pytest.raises(APITimeoutError):
+        with pytest.raises(_StreamTimeoutError):
             async for _ in AIService._iter_stream(stream, cancel_event=None, total_timeout=0.1):
                 pass
 
@@ -695,24 +689,39 @@ class TestStreamChatWithIterStream:
         assert token_events[0]["data"]["content"] == "hello"
 
     @pytest.mark.asyncio
-    async def test_stream_chat_total_timeout_yields_error(self):
-        """stream_chat must yield a timeout error when _iter_stream total timeout fires."""
+    async def test_stream_chat_mid_stream_timeout_yields_error_no_retry(self):
+        """Mid-stream timeout (_StreamTimeoutError) must yield error and NOT retry."""
+        first_chunk = MagicMock()
+        first_chunk.choices = [MagicMock()]
+        first_chunk.choices[0].delta = MagicMock()
+        first_chunk.choices[0].delta.content = "hi"
+        first_chunk.choices[0].delta.tool_calls = None
+        first_chunk.choices[0].finish_reason = None
 
         class MockStream:
             def __aiter__(self):
                 return self._gen().__aiter__()
 
             async def _gen(self):
-                await asyncio.sleep(999)
+                yield first_chunk
+                await asyncio.sleep(999)  # stall mid-stream
                 yield MagicMock()
 
-        config = _make_config(request_timeout=1)
+        config = _make_config(request_timeout=1, first_token_timeout=30, retry_max_attempts=3)
         service = AIService.__new__(AIService)
         service.config = config
         service._token_provider = None
 
+        call_count = 0
+        original_stream = MockStream()
+
+        async def fake_create(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            return original_stream
+
         mock_client = MagicMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=MockStream())
+        mock_client.chat.completions.create = AsyncMock(side_effect=fake_create)
         service.client = mock_client
 
         events = []
@@ -723,6 +732,11 @@ class TestStreamChatWithIterStream:
         error_events = [e for e in events if e["event"] == "error"]
         assert len(error_events) == 1
         assert error_events[0]["data"]["code"] == "timeout"
+        # Mid-stream timeout must NOT trigger retry — only 1 API call
+        assert call_count == 1
+        # No retrying events emitted
+        retry_events = [e for e in events if e["event"] == "retrying"]
+        assert len(retry_events) == 0
 
 
 class TestBuildClientCleanup:
