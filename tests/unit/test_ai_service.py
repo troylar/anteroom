@@ -1532,3 +1532,85 @@ class TestRetryableFlag:
         error_events = [e for e in events if e["event"] == "error"]
         assert len(error_events) == 1
         assert error_events[0]["data"]["retryable"] is False
+
+
+class TestCancelEventSkipsRetryableError:
+    """When cancel_event is already set, retryable error handlers must return cleanly."""
+
+    @pytest.mark.asyncio
+    async def test_stream_timeout_with_cancel_event_skips_retry(self):
+        """_StreamTimeoutError with cancel_event set must not emit error event."""
+
+        class TimeoutStream:
+            def __aiter__(self):
+                return self._gen().__aiter__()
+
+            async def _gen(self):
+                raise _StreamTimeoutError()
+                yield  # pragma: no cover
+
+            async def close(self):
+                pass
+
+        service = _make_service()
+        service.client.chat.completions.create = AsyncMock(return_value=TimeoutStream())
+
+        cancel_event = asyncio.Event()
+        cancel_event.set()  # user already pressed Escape
+
+        events = []
+        with patch.object(service, "_build_client"):
+            async for event in service.stream_chat([{"role": "user", "content": "hi"}], cancel_event=cancel_event):
+                events.append(event)
+
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 0, "No error event should be emitted when cancel_event is set"
+        retry_events = [e for e in events if e["event"] == "retrying"]
+        assert len(retry_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_with_cancel_event_skips_retry(self):
+        """RateLimitError with cancel_event set must not emit error event."""
+        from openai import RateLimitError
+
+        service = _make_service()
+        service.client.chat.completions.create = AsyncMock(
+            side_effect=RateLimitError("rate limited", response=MagicMock(), body=None)
+        )
+
+        cancel_event = asyncio.Event()
+        cancel_event.set()
+
+        events = []
+        async for event in service.stream_chat([{"role": "user", "content": "hi"}], cancel_event=cancel_event):
+            events.append(event)
+
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 0, "No error event should be emitted when cancel_event is set"
+
+    @pytest.mark.asyncio
+    async def test_stream_timeout_without_cancel_still_emits_error(self):
+        """_StreamTimeoutError without cancel_event must still emit retryable error."""
+
+        class TimeoutStream:
+            def __aiter__(self):
+                return self._gen().__aiter__()
+
+            async def _gen(self):
+                raise _StreamTimeoutError()
+                yield  # pragma: no cover
+
+            async def close(self):
+                pass
+
+        service = _make_service()
+        service.client.chat.completions.create = AsyncMock(return_value=TimeoutStream())
+
+        events = []
+        with patch.object(service, "_build_client"):
+            async for event in service.stream_chat([{"role": "user", "content": "hi"}]):
+                events.append(event)
+
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 1
+        assert error_events[0]["data"]["retryable"] is True

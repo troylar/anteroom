@@ -341,6 +341,8 @@ class AIService:
                 return
             except RateLimitError as e:
                 logger.warning("Rate limited by AI provider: %s", e)
+                if cancel_event and cancel_event.is_set():
+                    return  # user cancelled — don't emit retryable error
                 yield {
                     "event": "error",
                     "data": {
@@ -353,6 +355,8 @@ class AIService:
             except _StreamTimeoutError:
                 logger.warning("Stream timed out mid-response after first token")
                 self._build_client()
+                if cancel_event and cancel_event.is_set():
+                    return  # user cancelled — don't emit retryable error
                 yield {
                     "event": "error",
                     "data": {
