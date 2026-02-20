@@ -170,11 +170,10 @@ def check_trust(
                 return "trusted"
             return "changed"
 
-        # Recursive match: trusted parent covers subdirectories
+        # Recursive match: trusted parent covers subdirectories unconditionally
+        # (the parent's hash is for the parent's ANTEROOM.md, not the child's)
         if d.recursive and _is_subpath(resolved, d_resolved):
-            if d.content_hash == content_hash:
-                return "trusted"
-            return "changed"
+            return "trusted"
 
     return "untrusted"
 

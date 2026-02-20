@@ -93,21 +93,22 @@ class TestCheckTrust:
         assert check_trust("/some/project", "hash2", data_dir=tmp_path) == "changed"
 
     def test_recursive_trust_covers_subdirectory(self, tmp_path: Path):
-        # Trust /some/parent recursively
         parent = tmp_path / "parent"
         parent.mkdir()
         child = parent / "child"
         child.mkdir()
         save_trust_decision(str(parent), "hash1", recursive=True, data_dir=tmp_path)
+        # Recursive trust covers children regardless of content hash
         assert check_trust(str(child), "hash1", data_dir=tmp_path) == "trusted"
 
-    def test_recursive_trust_changed_hash(self, tmp_path: Path):
+    def test_recursive_trust_covers_child_any_hash(self, tmp_path: Path):
         parent = tmp_path / "parent"
         parent.mkdir()
         child = parent / "child"
         child.mkdir()
         save_trust_decision(str(parent), "hash1", recursive=True, data_dir=tmp_path)
-        assert check_trust(str(child), "hash2", data_dir=tmp_path) == "changed"
+        # Different hash still trusted under recursive parent
+        assert check_trust(str(child), "different_hash", data_dir=tmp_path) == "trusted"
 
     def test_non_recursive_does_not_cover_child(self, tmp_path: Path):
         parent = tmp_path / "parent"
@@ -122,15 +123,6 @@ class TestCheckProjectTrust:
     """Tests for the async _check_project_trust function in repl.py."""
 
     @pytest.mark.asyncio
-    async def test_no_project_context_returns_none(self, tmp_path: Path):
-        from anteroom.cli.repl import _check_project_trust
-
-        md = tmp_path / "ANTEROOM.md"
-        md.write_text("instructions")
-        result = await _check_project_trust(md, "instructions", no_project_context=True, data_dir=tmp_path)
-        assert result is None
-
-    @pytest.mark.asyncio
     async def test_trust_project_flag_auto_trusts(self, tmp_path: Path):
         from anteroom.cli.repl import _check_project_trust
 
@@ -140,6 +132,17 @@ class TestCheckProjectTrust:
         assert result == "instructions"
         # Should be persisted
         assert check_trust(str(tmp_path), compute_content_hash("instructions"), data_dir=tmp_path) == "trusted"
+
+    @pytest.mark.asyncio
+    async def test_trust_project_flag_updates_existing_hash(self, tmp_path: Path):
+        from anteroom.cli.repl import _check_project_trust
+
+        save_trust_decision(str(tmp_path), "old_hash", data_dir=tmp_path)
+        md = tmp_path / "ANTEROOM.md"
+        md.write_text("new instructions")
+        result = await _check_project_trust(md, "new instructions", trust_project=True, data_dir=tmp_path)
+        assert result == "new instructions"
+        assert check_trust(str(tmp_path), compute_content_hash("new instructions"), data_dir=tmp_path) == "trusted"
 
     @pytest.mark.asyncio
     async def test_already_trusted_returns_content(self, tmp_path: Path):
@@ -206,7 +209,6 @@ class TestCheckProjectTrust:
 
         with (
             patch("anteroom.cli.repl.renderer"),
-            patch("anteroom.cli.repl._check_project_trust.__module__", "anteroom.cli.repl"),
             patch("prompt_toolkit.PromptSession", return_value=mock_session),
         ):
             result = await _check_project_trust(md, content, data_dir=tmp_path)
@@ -316,14 +318,20 @@ class TestCheckProjectTrust:
 
         assert result == content
 
+    @pytest.mark.asyncio
+    async def test_empty_anteroom_md_trusted(self, tmp_path: Path):
+        from anteroom.cli.repl import _check_project_trust
+
+        md = tmp_path / "ANTEROOM.md"
+        md.write_text("")
+        result = await _check_project_trust(md, "", trust_project=True, data_dir=tmp_path)
+        assert result == ""
+
 
 class TestLoadInstructionsWithTrust:
     @pytest.mark.asyncio
     async def test_global_instructions_always_loaded(self, tmp_path: Path):
         from anteroom.cli.repl import _load_instructions_with_trust
-
-        global_md = tmp_path / "ANTEROOM.md"
-        global_md.write_text("global rules")
 
         with patch("anteroom.cli.repl.find_global_instructions", return_value="global rules"):
             with patch("anteroom.cli.repl.find_project_instructions_path", return_value=None):
@@ -345,3 +353,24 @@ class TestLoadInstructionsWithTrust:
                 mock_find.assert_not_called()
 
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_global_and_trusted_project_combined(self, tmp_path: Path):
+        from anteroom.cli.repl import _load_instructions_with_trust
+
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        md = project_dir / "ANTEROOM.md"
+        md.write_text("project rules")
+        save_trust_decision(str(project_dir), compute_content_hash("project rules"), data_dir=tmp_path)
+
+        with patch("anteroom.cli.repl.find_global_instructions", return_value="global rules"):
+            with patch(
+                "anteroom.cli.repl.find_project_instructions_path",
+                return_value=(md, "project rules"),
+            ):
+                result = await _load_instructions_with_trust(str(project_dir), data_dir=tmp_path)
+
+        assert result is not None
+        assert "# Global Instructions\nglobal rules" in result
+        assert "# Project Instructions\nproject rules" in result

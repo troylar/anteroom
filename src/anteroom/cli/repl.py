@@ -465,17 +465,14 @@ async def _check_project_trust(
     file_path: Path,
     content: str,
     trust_project: bool = False,
-    no_project_context: bool = False,
     data_dir: Path | None = None,
 ) -> str | None:
     """Gate project-level ANTEROOM.md behind user trust consent.
 
     Returns the file content if trusted, or None if denied/skipped.
+    Caller must check no_project_context before calling this function.
     """
     from ..services.trust import check_trust, compute_content_hash, save_trust_decision
-
-    if no_project_context:
-        return None
 
     folder_path = str(file_path.parent)
     content_hash = compute_content_hash(content)
@@ -572,10 +569,9 @@ async def _load_instructions_with_trust(
                 file_path,
                 content,
                 trust_project=trust_project,
-                no_project_context=no_project_context,
                 data_dir=data_dir,
             )
-            if trusted_content:
+            if trusted_content is not None:
                 parts.append(f"# Project Instructions\n{trusted_content}")
 
     if not parts:
