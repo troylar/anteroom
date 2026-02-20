@@ -48,7 +48,8 @@ class AIService:
                     # Schedule async close without blocking; best-effort cleanup
                     try:
                         loop = asyncio.get_running_loop()
-                        loop.create_task(old_http.close())
+                        task = loop.create_task(old_http.close())
+                        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
                     except RuntimeError:
                         pass  # No running loop (e.g. during __init__)
             except Exception:
@@ -199,59 +200,63 @@ class AIService:
             stream_iter = stream.__aiter__()
             total_timeout = float(self.config.request_timeout)
 
-            async for chunk in self._iter_stream(stream_iter, cancel_event, total_timeout):
-                choice = chunk.choices[0] if chunk.choices else None
-                if not choice:
-                    continue
+            try:
+                async for chunk in self._iter_stream(stream_iter, cancel_event, total_timeout):
+                    choice = chunk.choices[0] if chunk.choices else None
+                    if not choice:
+                        continue
 
-                delta = choice.delta
+                    delta = choice.delta
 
-                if delta.content:
-                    yield {"event": "token", "data": {"content": delta.content}}
+                    if delta.content:
+                        yield {"event": "token", "data": {"content": delta.content}}
 
-                if delta.tool_calls:
-                    for tc in delta.tool_calls:
-                        idx = tc.index
-                        if idx not in current_tool_calls:
-                            current_tool_calls[idx] = {
-                                "id": tc.id or "",
-                                "function_name": "",
-                                "arguments": "",
-                            }
-                        if tc.id:
-                            current_tool_calls[idx]["id"] = tc.id
-                        if tc.function and tc.function.name:
-                            current_tool_calls[idx]["function_name"] = tc.function.name
-                        if tc.function and tc.function.arguments:
-                            current_tool_calls[idx]["arguments"] += tc.function.arguments
+                    if delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in current_tool_calls:
+                                current_tool_calls[idx] = {
+                                    "id": tc.id or "",
+                                    "function_name": "",
+                                    "arguments": "",
+                                }
+                            if tc.id:
+                                current_tool_calls[idx]["id"] = tc.id
+                            if tc.function and tc.function.name:
+                                current_tool_calls[idx]["function_name"] = tc.function.name
+                            if tc.function and tc.function.arguments:
+                                current_tool_calls[idx]["arguments"] += tc.function.arguments
+                                yield {
+                                    "event": "tool_call_args_delta",
+                                    "data": {
+                                        "index": idx,
+                                        "tool_name": current_tool_calls[idx]["function_name"],
+                                        "delta": tc.function.arguments,
+                                    },
+                                }
+
+                    if choice.finish_reason == "tool_calls":
+                        for _idx, tc_data in sorted(current_tool_calls.items()):
+                            try:
+                                args = json.loads(tc_data["arguments"])
+                            except json.JSONDecodeError:
+                                args = {}
                             yield {
-                                "event": "tool_call_args_delta",
+                                "event": "tool_call",
                                 "data": {
-                                    "index": idx,
-                                    "tool_name": current_tool_calls[idx]["function_name"],
-                                    "delta": tc.function.arguments,
+                                    "id": tc_data["id"],
+                                    "function_name": tc_data["function_name"],
+                                    "arguments": args,
                                 },
                             }
+                        return
 
-                if choice.finish_reason == "tool_calls":
-                    for _idx, tc_data in sorted(current_tool_calls.items()):
-                        try:
-                            args = json.loads(tc_data["arguments"])
-                        except json.JSONDecodeError:
-                            args = {}
-                        yield {
-                            "event": "tool_call",
-                            "data": {
-                                "id": tc_data["id"],
-                                "function_name": tc_data["function_name"],
-                                "arguments": args,
-                            },
-                        }
-                    return
-
-                if choice.finish_reason == "stop":
-                    yield {"event": "done", "data": {}}
-                    return
+                    if choice.finish_reason == "stop":
+                        yield {"event": "done", "data": {}}
+                        return
+            finally:
+                if hasattr(stream, "close"):
+                    await stream.close()
 
         except AuthenticationError:
             if self._try_refresh_token():
