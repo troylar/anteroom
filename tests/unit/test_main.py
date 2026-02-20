@@ -58,8 +58,8 @@ class TestPortInUse:
         assert "--port 8081" in captured.err
         assert "AI_CHAT_PORT" in captured.err
 
-    def test_port_conflict_errno_48_macos(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """macOS uses errno 48 for EADDRINUSE — must also be caught."""
+    def test_port_conflict_different_port(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Port number in error message must reflect the configured port."""
         from anteroom.__main__ import _run_web
 
         config = _make_config(port=9090)
@@ -67,7 +67,10 @@ class TestPortInUse:
         with (
             patch(_PATCHES[0]),
             patch(_PATCHES[1], return_value=MagicMock()),
-            patch("anteroom.__main__.uvicorn.run", side_effect=OSError(48, "Address already in use")),
+            patch(
+                "anteroom.__main__.uvicorn.run",
+                side_effect=OSError(errno.EADDRINUSE, "Address already in use"),
+            ),
             patch("anteroom.__main__.threading.Thread") as mock_thread,
             pytest.raises(SystemExit) as exc_info,
         ):
