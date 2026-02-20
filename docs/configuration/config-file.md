@@ -14,7 +14,10 @@ ai:
   verify_ssl: true                            # SSL cert verification (default: true)
   request_timeout: 120                        # API request timeout in seconds (default: 120, clamped 10–600)
   connect_timeout: 5                           # TCP connect timeout in seconds (default: 5, clamped 1–30)
+  write_timeout: 30                            # Time to send request body in seconds (default: 30, clamped 5–120)
+  pool_timeout: 10                             # Wait for free connection from pool in seconds (default: 10, clamped 1–60)
   first_token_timeout: 30                      # Max wait for first token after connect (default: 30, clamped 5–120)
+  chunk_stall_timeout: 30                      # Max silence between chunks mid-stream in seconds (default: 30, clamped 10–600)
   retry_max_attempts: 3                        # Retries on transient errors; 0 disables (default: 3, clamped 0–10)
   retry_backoff_base: 1.0                      # Exponential backoff base in seconds (default: 1.0, clamped 0.1–30.0)
 
@@ -29,6 +32,14 @@ cli:
   max_tool_iterations: 50          # Max tool calls per response (default: 50)
   context_warn_tokens: 80000       # Token count at which context warning is shown (default: 80000)
   context_auto_compact_tokens: 100000  # Token count at which auto-compaction triggers (default: 100000)
+  retry_delay: 5.0                 # Seconds between CLI auto-retry countdown ticks (default: 5.0, clamped 1–60)
+  max_retries: 3                   # Max CLI auto-retry attempts for retryable errors (default: 3, clamped 0–10)
+  esc_hint_delay: 3.0              # Seconds before showing "esc to cancel" hint (default: 3.0, clamped 0+)
+  stall_display_threshold: 5.0     # Seconds of chunk silence before showing "stalled" indicator (default: 5.0, clamped 1+)
+  stall_warning_threshold: 15.0    # Seconds before showing full stall warning (default: 15.0, clamped 1+)
+  tool_output_max_chars: 2000      # Max chars per tool result before truncation (default: 2000, clamped 100+)
+  file_reference_max_chars: 100000 # Max chars from @file references (default: 100000, clamped 1000+)
+  model_context_window: 128000     # Model context window size for usage bar (default: 128000, clamped 1000+)
 
 identity:
   user_id: "auto-generated-uuid"
@@ -97,7 +108,10 @@ embeddings:
 | `verify_ssl` | boolean | `true` | Verify SSL certificates when connecting to the API |
 | `request_timeout` | integer | `120` | Overall stream timeout in seconds (clamped 10–600); env: `AI_CHAT_REQUEST_TIMEOUT` |
 | `connect_timeout` | integer | `5` | TCP connect timeout in seconds (clamped 1–30); env: `AI_CHAT_CONNECT_TIMEOUT` |
+| `write_timeout` | integer | `30` | Time to send request body in seconds (clamped 5–120); env: `AI_CHAT_WRITE_TIMEOUT` |
+| `pool_timeout` | integer | `10` | Wait for free connection from pool in seconds (clamped 1–60); env: `AI_CHAT_POOL_TIMEOUT` |
 | `first_token_timeout` | integer | `30` | Max seconds to wait for first token after connect (clamped 5–120); env: `AI_CHAT_FIRST_TOKEN_TIMEOUT` |
+| `chunk_stall_timeout` | integer | `30` | Max silence between chunks mid-stream in seconds (clamped 10–600); env: `AI_CHAT_CHUNK_STALL_TIMEOUT` |
 | `retry_max_attempts` | integer | `3` | Retries on transient errors (timeout, connection); 0 disables (clamped 0–10); env: `AI_CHAT_RETRY_MAX_ATTEMPTS` |
 | `retry_backoff_base` | float | `1.0` | Exponential backoff base delay in seconds (clamped 0.1–30.0); env: `AI_CHAT_RETRY_BACKOFF_BASE` |
 
@@ -118,6 +132,14 @@ embeddings:
 | `max_tool_iterations` | integer | `50` | Max agentic loop iterations per turn |
 | `context_warn_tokens` | integer | `80000` | Token count at which a context warning is shown in the CLI |
 | `context_auto_compact_tokens` | integer | `100000` | Token count at which context is automatically compacted |
+| `retry_delay` | float | `5.0` | Seconds between CLI auto-retry countdown ticks (clamped 1–60) |
+| `max_retries` | integer | `3` | Max CLI auto-retry attempts for retryable errors (clamped 0–10) |
+| `esc_hint_delay` | float | `3.0` | Seconds before showing "esc to cancel" hint |
+| `stall_display_threshold` | float | `5.0` | Seconds of chunk silence before showing "stalled" indicator (clamped 1+) |
+| `stall_warning_threshold` | float | `15.0` | Seconds before showing full stall warning (clamped 1+) |
+| `tool_output_max_chars` | integer | `2000` | Max chars per tool result before truncation (clamped 100+) |
+| `file_reference_max_chars` | integer | `100000` | Max chars from @file references (clamped 1000+) |
+| `model_context_window` | integer | `128000` | Model context window size for usage bar (clamped 1000+) |
 
 ### identity
 
