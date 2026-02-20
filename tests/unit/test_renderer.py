@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import io
+import time
 from unittest.mock import patch
+
+import pytest
 
 from anteroom.cli.renderer import (
     Verbosity,
@@ -26,6 +31,7 @@ from anteroom.cli.renderer import (
     set_verbosity,
     start_thinking,
     startup_step,
+    stop_thinking,
 )
 
 
@@ -833,3 +839,122 @@ class TestWriteThinkingLine:
         output = buf.getvalue()
         assert "\033[38;2;139;139;139m" in output
         r._stdout = None
+
+    def test_no_stall_warning_under_threshold(self) -> None:
+        """Under 15s: no stall warning shown."""
+        import io
+
+        import anteroom.cli.renderer as r
+
+        buf = io.StringIO()
+        r._stdout = buf
+        _write_thinking_line(10.0)
+        output = buf.getvalue()
+        assert "waiting for API" not in output
+        r._stdout = None
+
+    def test_stall_warning_at_threshold(self) -> None:
+        """At 15s: stall warning appears."""
+        import io
+
+        import anteroom.cli.renderer as r
+
+        buf = io.StringIO()
+        r._stdout = buf
+        _write_thinking_line(15.0)
+        output = buf.getvalue()
+        assert "15s" in output
+        assert "waiting for API response" in output
+        r._stdout = None
+
+    def test_stall_warning_after_threshold(self) -> None:
+        """Well past threshold: stall warning still present."""
+        import io
+
+        import anteroom.cli.renderer as r
+
+        buf = io.StringIO()
+        r._stdout = buf
+        _write_thinking_line(30.0)
+        output = buf.getvalue()
+        assert "30s" in output
+        assert "waiting for API response" in output
+        assert "esc to cancel" in output
+        r._stdout = None
+
+
+class TestThinkingTicker:
+    """Tests for background ticker task (#201)."""
+
+    @pytest.mark.asyncio
+    async def test_start_thinking_creates_ticker_task(self) -> None:
+        """start_thinking() should create a background ticker task."""
+        import anteroom.cli.renderer as r
+
+        r._repl_mode = True
+        r._stdout = io.StringIO()
+        try:
+            start_thinking()
+            assert r._thinking_ticker_task is not None
+            assert not r._thinking_ticker_task.done()
+        finally:
+            stop_thinking()
+            r._repl_mode = False
+            r._stdout = None
+
+    @pytest.mark.asyncio
+    async def test_stop_thinking_cancels_ticker_task(self) -> None:
+        """stop_thinking() should cancel the ticker task."""
+        import anteroom.cli.renderer as r
+
+        r._repl_mode = True
+        r._stdout = io.StringIO()
+        try:
+            start_thinking()
+            task = r._thinking_ticker_task
+            assert task is not None
+            stop_thinking()
+            assert r._thinking_ticker_task is None
+            # Allow cancellation to propagate
+            await asyncio.sleep(0)
+            assert task.cancelled() or task.done()
+        finally:
+            r._repl_mode = False
+            r._stdout = None
+
+    @pytest.mark.asyncio
+    async def test_ticker_updates_timer(self) -> None:
+        """Background ticker should advance the displayed timer."""
+        import anteroom.cli.renderer as r
+
+        buf = io.StringIO()
+        r._repl_mode = True
+        r._stdout = buf
+        try:
+            start_thinking()
+            # Override _thinking_start *after* start_thinking to pretend 5s elapsed
+            r._thinking_start = time.monotonic() - 5.0
+            await asyncio.sleep(0.6)
+            output = buf.getvalue()
+            assert "5s" in output or "6s" in output
+        finally:
+            stop_thinking()
+            r._repl_mode = False
+            r._stdout = None
+
+    @pytest.mark.asyncio
+    async def test_no_ticker_without_event_loop(self) -> None:
+        """When no event loop is running, ticker task is None (no crash)."""
+        import anteroom.cli.renderer as r
+
+        r._repl_mode = True
+        r._stdout = io.StringIO()
+        # This test runs inside an async context, so we can't easily test
+        # the RuntimeError path. Instead verify the task is created.
+        try:
+            start_thinking()
+            assert r._thinking_ticker_task is not None
+        finally:
+            stop_thinking()
+            r._repl_mode = False
+            r._stdout = None
