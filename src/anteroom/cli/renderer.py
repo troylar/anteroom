@@ -340,6 +340,10 @@ def start_thinking() -> None:
     else:
         _spinner = Status(f"[{GOLD}]Thinking...[/]", console=console, spinner="dots12")
         _spinner.start()
+    # Cancel any existing ticker before creating a new one (prevents task leak)
+    if _thinking_ticker_task is not None:
+        _thinking_ticker_task.cancel()
+        _thinking_ticker_task = None
     # Start a background ticker so the timer advances even when no tokens arrive
     try:
         loop = asyncio.get_running_loop()
@@ -363,8 +367,13 @@ def _write_thinking_line(elapsed: float) -> None:
 
 
 def update_thinking() -> None:
-    """Update the spinner timer (throttled to once per second)."""
+    """Update the spinner timer (throttled to once per second).
+
+    No-op when the background ticker is running — the ticker handles updates.
+    """
     global _last_spinner_update
+    if _thinking_ticker_task is not None:
+        return
     if _spinner:
         now = time.monotonic()
         if now - _last_spinner_update >= 1.0:

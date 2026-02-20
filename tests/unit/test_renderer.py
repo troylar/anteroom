@@ -942,18 +942,35 @@ class TestThinkingTicker:
             r._repl_mode = False
             r._stdout = None
 
-    @pytest.mark.asyncio
-    async def test_no_ticker_without_event_loop(self) -> None:
+    def test_start_thinking_without_event_loop_is_safe(self) -> None:
         """When no event loop is running, ticker task is None (no crash)."""
+        import anteroom.cli.renderer as r
+
+        r._repl_mode = False
+        r._stdout = None
+        try:
+            start_thinking()
+            assert r._thinking_ticker_task is None
+        finally:
+            stop_thinking()
+
+    @pytest.mark.asyncio
+    async def test_double_start_cancels_previous_ticker(self) -> None:
+        """Calling start_thinking() twice cancels the first ticker (no task leak)."""
         import anteroom.cli.renderer as r
 
         r._repl_mode = True
         r._stdout = io.StringIO()
-        # This test runs inside an async context, so we can't easily test
-        # the RuntimeError path. Instead verify the task is created.
         try:
             start_thinking()
-            assert r._thinking_ticker_task is not None
+            first_task = r._thinking_ticker_task
+            assert first_task is not None
+            start_thinking()
+            second_task = r._thinking_ticker_task
+            assert second_task is not None
+            assert second_task is not first_task
+            await asyncio.sleep(0)
+            assert first_task.cancelled() or first_task.done()
         finally:
             stop_thinking()
             r._repl_mode = False
