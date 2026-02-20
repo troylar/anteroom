@@ -178,7 +178,7 @@ async def _execute_tool(
             for p in pending:
                 p.cancel()
                 try:
-                    await asyncio.wait_for(asyncio.shield(p), timeout=5.0)
+                    await asyncio.wait_for(p, timeout=5.0)
                 except (asyncio.CancelledError, asyncio.TimeoutError):
                     pass
             if exec_task in done:
