@@ -1919,6 +1919,11 @@ async def _run_repl(
     with _patch_stdout():
         renderer.use_stdout_console()
         renderer.set_tool_dedup(config.cli.tool_dedup)
+        renderer.configure_thresholds(
+            esc_hint_delay=config.cli.esc_hint_delay,
+            stall_display=config.cli.stall_display_threshold,
+            stall_warning=config.cli.stall_warning_threshold,
+        )
         input_task = asyncio.create_task(_collect_input())
         runner_task = asyncio.create_task(_agent_runner())
 

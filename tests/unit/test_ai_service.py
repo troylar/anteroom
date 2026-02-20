@@ -441,6 +441,39 @@ class TestIterStream:
                 pass
 
     @pytest.mark.asyncio
+    async def test_stall_timeout_fires_before_total_timeout(self):
+        """Stall timeout must fire after per-chunk silence, even with large total budget."""
+
+        async def _stalled_gen():
+            yield "first_chunk"
+            await asyncio.sleep(999)
+            yield "never_reached"
+
+        result = []
+        with pytest.raises(_StreamTimeoutError):
+            async for chunk in AIService._iter_stream(
+                _stalled_gen(), cancel_event=None, total_timeout=999, stall_timeout=0.1
+            ):
+                result.append(chunk)
+
+        assert result == ["first_chunk"]
+
+    @pytest.mark.asyncio
+    async def test_stall_timeout_does_not_affect_active_stream(self):
+        """Stall timeout must not fire when chunks arrive within the stall window."""
+
+        async def _fast_gen():
+            yield "a"
+            yield "b"
+            yield "c"
+
+        result = []
+        async for chunk in AIService._iter_stream(_fast_gen(), cancel_event=None, total_timeout=999, stall_timeout=0.1):
+            result.append(chunk)
+
+        assert result == ["a", "b", "c"]
+
+    @pytest.mark.asyncio
     async def test_cancel_takes_priority_over_timeout(self):
         """If cancel fires before timeout, iteration stops gracefully (no APITimeoutError)."""
         cancel = asyncio.Event()
