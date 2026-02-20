@@ -2068,3 +2068,62 @@ class TestAPIStatusErrorHandling:
                 events.append(event)
 
         assert not any(e["event"] == "error" for e in events)
+
+
+class TestStreamCloseTimeout:
+    """Tests for bounded stream.close() in finally block (#253)."""
+
+    @pytest.mark.asyncio
+    async def test_slow_stream_close_does_not_hang(self):
+        """stream.close() that takes too long must not block stream_chat."""
+
+        class SlowCloseStream:
+            """Mock stream whose close() hangs."""
+
+            def __aiter__(self):
+                return self._gen().__aiter__()
+
+            async def _gen(self):
+                yield MagicMock(
+                    choices=[MagicMock(delta=MagicMock(content=None, tool_calls=None), finish_reason="stop")]
+                )
+
+            async def close(self):
+                await asyncio.sleep(999)  # would hang without timeout
+
+        service = _make_service()
+        service.client.chat.completions.create = AsyncMock(return_value=SlowCloseStream())
+
+        events = []
+        # This should complete in ~2s (the close timeout), not 999s
+        async for event in service.stream_chat([{"role": "user", "content": "hi"}]):
+            events.append(event)
+
+        # stream_chat should have returned without hanging
+        assert any(e["event"] == "done" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_normal_stream_close_still_called(self):
+        """stream.close() should still be called when it completes quickly."""
+        close_called = False
+
+        class TrackableStream:
+            def __aiter__(self):
+                return self._gen().__aiter__()
+
+            async def _gen(self):
+                yield MagicMock(
+                    choices=[MagicMock(delta=MagicMock(content=None, tool_calls=None), finish_reason="stop")]
+                )
+
+            async def close(self):
+                nonlocal close_called
+                close_called = True
+
+        service = _make_service()
+        service.client.chat.completions.create = AsyncMock(return_value=TrackableStream())
+
+        async for _ in service.stream_chat([{"role": "user", "content": "hi"}]):
+            pass
+
+        assert close_called

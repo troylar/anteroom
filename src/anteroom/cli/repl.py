@@ -845,11 +845,12 @@ async def _run_one_shot(
             if not should_retry:
                 break
 
-        try:
-            title = await ai_service.generate_title(prompt)
-            storage.update_conversation_title(db, conv["id"], title)
-        except Exception:
-            pass
+        if not cancel_event.is_set():
+            try:
+                title = await ai_service.generate_title(prompt)
+                storage.update_conversation_title(db, conv["id"], title)
+            except Exception:
+                pass
 
     except KeyboardInterrupt:
         if thinking:
@@ -1899,8 +1900,8 @@ async def _run_repl(
                     if not should_retry:
                         break
 
-                # Generate title on first exchange
-                if is_first_message:
+                # Generate title on first exchange (skip if user cancelled)
+                if is_first_message and not cancel_event.is_set():
                     is_first_message = False
                     try:
                         title = await ai_service.generate_title(user_input)
