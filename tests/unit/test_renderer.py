@@ -1193,6 +1193,17 @@ class TestThinkingPhases:
         assert "stalled" not in result
         assert "streaming (6 tokens)" == result
 
+    def test_phase_suffix_streaming_with_zero_chunk_time(self) -> None:
+        """_phase_suffix with _last_chunk_time=0 skips stall check, returns token count."""
+        import anteroom.cli.renderer as r
+
+        r._thinking_phase = "streaming"
+        r._thinking_tokens = 7
+        r._last_chunk_time = 0  # falsy — stall check skipped
+        result = _phase_suffix(20.0)
+        assert "stalled" not in result
+        assert result == "streaming (7 tokens)"
+
 
 class TestWriteThinkingLinePhases:
     """Tests for phase text in _write_thinking_line() ANSI output (#203)."""
@@ -1388,6 +1399,39 @@ class TestThinkingTickerPhases:
 
             output = buf.getvalue()
             assert "streaming (150 tokens)" in output
+        finally:
+            r._repl_mode = False
+            r._stdout = None
+            r._thinking_phase = ""
+            r._thinking_tokens = 0
+
+    @pytest.mark.asyncio
+    async def test_ticker_shows_stalled_during_streaming(self) -> None:
+        """Background ticker shows 'stalled' when no chunks arrive for >5s."""
+        import anteroom.cli.renderer as r
+
+        set_verbosity(Verbosity.DETAILED)
+        r._repl_mode = True
+        buf = io.StringIO()
+        r._stdout = buf
+        r._thinking_start = time.monotonic() - 10.0
+        r._thinking_phase = "streaming"
+        r._thinking_tokens = 20
+        r._last_chunk_time = time.monotonic() - 8.0  # 8s since last chunk
+
+        try:
+            from anteroom.cli.renderer import _thinking_ticker
+
+            task = asyncio.create_task(_thinking_ticker())
+            await asyncio.sleep(0.6)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+            output = buf.getvalue()
+            assert "stalled" in output
         finally:
             r._repl_mode = False
             r._stdout = None
