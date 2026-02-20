@@ -31,6 +31,24 @@ Deploy the current branch to PyPI after merging, CI verification, and version bu
    ```
    Every commit message MUST contain a `(#NNN)` issue reference. If any commit is missing one, warn the user and ask them to fix it before proceeding.
 
+### Step 1b: PR Queue Context
+
+Show the user all other open PRs so they understand the deploy queue:
+
+```bash
+gh pr list --state open --json number,title,headRefName,mergeable --jq '.[] | "\(.number)\t\(.mergeable)\t\(.title)"'
+```
+
+Display as a compact table:
+```
+📋 Open PRs:
+  #192 ✅ MERGEABLE  fix: handle API connection errors (#121)    ← deploying this one
+  #190 ✅ MERGEABLE  feat: add planning mode (#165)
+  #189 ⚠️ UNKNOWN    feat: webhook agent backend (#176)
+```
+
+This gives the user visibility into what else is in flight and what might be affected by this merge.
+
 ### Step 2: Quick Documentation Check
 
 Run a lightweight staleness check. The full documentation audit happens during `/submit-pr` — this step only catches things that slipped through or changed since PR creation.
@@ -45,24 +63,116 @@ git commit -m "docs: update CLAUDE.md for vX.Y.Z release (#<primary issue>)"
 git push
 ```
 
-### Step 3: Merge PR
+### Step 3: Rebase, Validate Freshness, and Merge
 
-1. Rebase the feature branch on main to ensure it's up to date:
+#### 3a. Check if main has moved
+
+Before rebasing, detect whether `main` has advanced since the PR branch was last based on it:
+
+```bash
+git fetch origin main
+MERGE_BASE=$(git merge-base HEAD origin/main)
+MAIN_HEAD=$(git rev-parse origin/main)
+```
+
+If `$MERGE_BASE` != `$MAIN_HEAD`, main has moved — the PR's CI results were validated against a stale base. Report this:
+```
+  ⚠️ main has moved: <N> new commit(s) since this branch was last rebased.
+     Rebasing and waiting for CI to re-validate against current main.
+```
+
+If `$MERGE_BASE` == `$MAIN_HEAD`, main is unchanged — the existing CI results are still valid. Report this:
+```
+  ✅ main is unchanged since CI ran — results are fresh.
+```
+
+#### 3b. Rebase
+
+Always rebase to ensure a clean merge, even if main hasn't moved (catches local drift):
+
+```bash
+git rebase origin/main
+git push --force-with-lease
+```
+
+#### 3c. Wait for CI
+
+If main had moved (Step 3a detected new commits), the rebase will trigger new CI runs. Wait for them:
+
+Poll every 15 seconds, up to 10 minutes:
+```bash
+gh pr checks <PR> --json name,state
+```
+
+Check until all checks have resolved (no `PENDING`, `QUEUED`, or `IN_PROGRESS` states remain).
+
+If main had NOT moved, CI from the prior push is still valid — check that existing results are all passing rather than waiting for new runs.
+
+#### 3d. Evaluate check results
+
+- **All checks pass**: proceed to merge
+- **Only non-required checks fail** (e.g., `security/snyk (troylar)`): proceed with `--admin` — log which checks were bypassed and why
+- **Required checks fail** (tests, lint): abort and show the failure URL. Do not proceed.
+
+#### 3e. Merge (worktree-aware)
+
+When running from a worktree, `gh pr merge --delete-branch` fails because git cannot delete a branch checked out in a worktree or switch to `main` when it's checked out elsewhere. Handle this:
+
+1. Merge the PR on GitHub (without local branch deletion):
    ```bash
-   git fetch origin main
-   git rebase origin/main
-   git push --force-with-lease
+   gh pr merge <PR> --squash
    ```
-2. Wait for CI checks to complete. Poll every 15 seconds, up to 10 minutes:
+   Add `--admin` if bypassing non-required checks (see 3d).
+
+2. The remote branch is deleted by GitHub automatically.
+
+3. Clean up the local worktree and branch:
    ```bash
-   gh pr checks <PR> --json name,state
+   # If running from a worktree, remove it first
+   WORKTREE_PATH=$(git rev-parse --show-toplevel)
+   MAIN_WORKTREE=$(git worktree list --porcelain | grep -A0 'worktree ' | head -1 | sed 's/worktree //')
+   if [ "$WORKTREE_PATH" != "$MAIN_WORKTREE" ]; then
+       BRANCH=$(git branch --show-current)
+       cd "$MAIN_WORKTREE"
+       git worktree remove "$WORKTREE_PATH"
+       git branch -d "$BRANCH" 2>/dev/null || true
+   fi
    ```
-   Check until all checks have resolved (no `PENDING` or `QUEUED` states remain).
-3. Evaluate check results:
-   - **All checks pass**: `gh pr merge <PR> --squash --delete-branch`
-   - **Only non-required checks fail** (e.g., Snyk): `gh pr merge <PR> --squash --delete-branch --admin` — log which checks were bypassed and why
-   - **Required checks fail** (tests, lint): abort and show the failure URL. Do not proceed.
-4. Switch to main: `git checkout main && git pull`
+
+4. Pull the merged changes into main:
+   ```bash
+   cd <main worktree path>
+   git checkout main && git pull
+   ```
+   If main has unstaged changes, stash before pulling: `git stash && git pull && git stash pop`
+
+### Step 3f: Post-Merge Queue Check
+
+After merging, check whether other open PRs are affected:
+
+```bash
+gh pr list --state open --json number,title,headRefName,mergeable
+```
+
+For each remaining open PR, report its mergeable status:
+```
+📋 Remaining PRs after merge:
+  #190 ✅ MERGEABLE  feat: add planning mode (#165)
+  #189 ❌ CONFLICTING feat: webhook agent backend (#176) — needs rebase
+```
+
+If any PRs are now `CONFLICTING`:
+```
+  ⚠️ <N> open PR(s) now have merge conflicts after this merge.
+     They will need rebasing before they can be deployed.
+```
+
+If all PRs are still `MERGEABLE`:
+```
+  ✅ All remaining PRs are still mergeable.
+```
+
+Note: GitHub's mergeable status may take a few seconds to update after a merge. If any PR shows `UNKNOWN`, wait 10 seconds and re-check once.
 
 ### Step 4: Determine Version Bump
 
@@ -242,11 +352,13 @@ On success:
 
   🔗 PR:       #NN (merged)
   🧪 CI:       ✅ passed
+  🔄 Freshness: ✅ CI ran against current main / ⚠️ rebased and re-validated
   📖 Docs:     ✅ up to date / ⚠️ N updates committed
   📦 PyPI:     https://pypi.org/project/anteroom/X.Y.Z/
   🏷️ Tag:      vX.Y.Z
   🏷️ Release:  https://github.com/troylar/anteroom/releases/tag/vX.Y.Z
   📊 Version:  X.Y.Z-1 → X.Y.Z (<type> bump)
+  📋 Queue:    N open PRs remaining (N mergeable, N conflicting)
 
 ────────────────────────────────────────────
   ✅ Deploy complete
