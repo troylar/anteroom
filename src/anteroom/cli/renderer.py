@@ -440,8 +440,11 @@ def increment_thinking_tokens() -> None:
     """
     global _thinking_tokens, _thinking_phase, _last_chunk_time
     _thinking_tokens += 1
-    _thinking_phase = "streaming"
+    # Set chunk time before phase to avoid a race with the background ticker:
+    # if the ticker reads _thinking_phase=="streaming" before _last_chunk_time
+    # is updated, it could briefly show "stalled" on a fresh phase transition.
     _last_chunk_time = time.monotonic()
+    _thinking_phase = "streaming"
 
 
 def _phase_suffix(elapsed: float) -> str:
@@ -457,8 +460,9 @@ def _phase_suffix(elapsed: float) -> str:
     if phase == "waiting":
         return "waiting for first token"
     if phase == "streaming":
-        if _last_chunk_time and time.monotonic() - _last_chunk_time > _MID_STREAM_STALL:
-            stall_secs = time.monotonic() - _last_chunk_time
+        now = time.monotonic()
+        if _last_chunk_time and now - _last_chunk_time > _MID_STREAM_STALL:
+            stall_secs = now - _last_chunk_time
             return f"stalled {stall_secs:.0f}s"
         return f"streaming ({_thinking_tokens} tokens)"
     return phase
