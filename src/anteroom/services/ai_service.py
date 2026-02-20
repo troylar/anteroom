@@ -496,6 +496,8 @@ class AIService:
                 else:
                     # Client errors (4xx not already caught) — non-retryable
                     logger.warning("API client error %d: %s", e.status_code, type(e).__name__)
+                    if cancel_event and cancel_event.is_set():
+                        return  # user cancelled — don't emit error
                     yield {
                         "event": "error",
                         "data": {

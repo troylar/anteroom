@@ -2018,3 +2018,53 @@ class TestAPIStatusErrorHandling:
             async for _ in service.stream_chat([{"role": "user", "content": "hi"}]):
                 pass
             assert mock_build.call_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_server_error_cancel_during_backoff(self):
+        """Setting cancel_event during 5xx backoff must stop retry loop without error."""
+        from openai import APIStatusError
+
+        config = _make_config(retry_max_attempts=3, retry_backoff_base=10.0)
+        service = _make_service(config)
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        service.client.chat.completions.create = AsyncMock(
+            side_effect=APIStatusError("Internal Server Error", response=mock_response, body=None)
+        )
+        cancel_event = asyncio.Event()
+
+        async def set_cancel_soon():
+            await asyncio.sleep(0.05)
+            cancel_event.set()
+
+        events = []
+        with patch.object(service, "_build_client"):
+            task = asyncio.create_task(set_cancel_soon())
+            async for event in service.stream_chat([{"role": "user", "content": "hi"}], cancel_event=cancel_event):
+                events.append(event)
+            await task
+
+        retry_events = [e for e in events if e["event"] == "retrying"]
+        assert len(retry_events) == 1
+        assert not any(e["event"] == "error" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_client_4xx_cancel_skips_error(self):
+        """4xx with cancel_event already set must return without emitting error."""
+        from openai import APIStatusError
+
+        service = _make_service()
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        service.client.chat.completions.create = AsyncMock(
+            side_effect=APIStatusError("Not Found", response=mock_response, body=None)
+        )
+        cancel_event = asyncio.Event()
+        cancel_event.set()
+
+        events = []
+        with patch.object(service, "_build_client"):
+            async for event in service.stream_chat([{"role": "user", "content": "hi"}], cancel_event=cancel_event):
+                events.append(event)
+
+        assert not any(e["event"] == "error" for e in events)
