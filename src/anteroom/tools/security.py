@@ -158,7 +158,7 @@ def sanitize_command(command: str) -> tuple[str, str | None]:
 
     description = check_hard_block(command)
     if description:
-        logger.info("Hard-block pattern matched (%s): %s", description, command[:100])
+        logger.warning("Hard-block fallback triggered (%s): %s", description, command[:100])
         return "", f"Blocked: {description}"
 
     return command, None

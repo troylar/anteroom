@@ -726,13 +726,15 @@ class TestHardBlockUX:
 
     @pytest.mark.asyncio
     async def test_bypass_hard_block_skips_sanitize(self) -> None:
-        """When _bypass_hard_block=True, sanitize_command is skipped."""
+        """When _bypass_hard_block=True, sanitize_command is skipped and command executes."""
         from anteroom.tools import bash
 
         bash.set_working_dir("/tmp")
         result = await bash.handle(command="rm -rf /tmp/nonexistent_test_dir_222", _bypass_hard_block=True)
-        # Should not be blocked by sanitize_command
+        # Should not be blocked by sanitize_command — command should execute
         assert "Blocked" not in result.get("error", "")
+        assert "exit_code" in result
+        assert result["exit_code"] != -1
 
     @pytest.mark.asyncio
     async def test_null_bytes_blocked_even_with_bypass(self) -> None:
