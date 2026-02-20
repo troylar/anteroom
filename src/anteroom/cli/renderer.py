@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -31,6 +32,7 @@ MUTED = "#8b8b8b"  # secondary text (tool results, approval feedback, version in
 CHROME = "#6b7280"  # UI chrome (status messages, hints, MCP info)
 
 _ESC_HINT_DELAY = 3.0  # seconds before showing "esc to cancel" hint
+_STALL_THRESHOLD = 15.0  # seconds before showing API stall warning
 
 
 def use_stdout_console() -> None:
@@ -60,6 +62,7 @@ _streaming_buffer: list[str] = []
 _thinking_start: float = 0
 _spinner: Status | None = None
 _last_spinner_update: float = 0
+_thinking_ticker_task: asyncio.Task[None] | None = None
 
 # Tool call timing
 _tool_start: float = 0
@@ -303,9 +306,27 @@ def _output_summary(output: Any) -> str:
 _repl_mode: bool = False
 
 
+async def _thinking_ticker() -> None:
+    """Background task that updates the thinking spinner every 0.5s."""
+    try:
+        while True:
+            await asyncio.sleep(0.5)
+            if _thinking_start:
+                elapsed = time.monotonic() - _thinking_start
+                if _spinner:
+                    label = f"[{GOLD}]Thinking...[/] [{CHROME}]{elapsed:.0f}s[/{CHROME}]"
+                    if elapsed >= _STALL_THRESHOLD:
+                        label += f" [{CHROME}](waiting for API response)[/{CHROME}]"
+                    _spinner.update(label)
+                elif _repl_mode:
+                    _write_thinking_line(elapsed)
+    except asyncio.CancelledError:
+        return
+
+
 def start_thinking() -> None:
     """Show a spinner with timer while AI is generating."""
-    global _thinking_start, _spinner, _last_spinner_update, _tool_batch_active
+    global _thinking_start, _spinner, _last_spinner_update, _tool_batch_active, _thinking_ticker_task
     _flush_dedup()
     _tool_batch_active = False
     _thinking_start = time.monotonic()
@@ -319,6 +340,16 @@ def start_thinking() -> None:
     else:
         _spinner = Status(f"[{GOLD}]Thinking...[/]", console=console, spinner="dots12")
         _spinner.start()
+    # Cancel any existing ticker before creating a new one (prevents task leak)
+    if _thinking_ticker_task is not None:
+        _thinking_ticker_task.cancel()
+        _thinking_ticker_task = None
+    # Start a background ticker so the timer advances even when no tokens arrive
+    try:
+        loop = asyncio.get_running_loop()
+        _thinking_ticker_task = loop.create_task(_thinking_ticker())
+    except RuntimeError:
+        _thinking_ticker_task = None
 
 
 def _write_thinking_line(elapsed: float) -> None:
@@ -327,15 +358,22 @@ def _write_thinking_line(elapsed: float) -> None:
         text = "\r\033[2K\033[38;2;197;160;89mThinking...\033[0m"
     else:
         hint = "  \033[38;2;139;139;139mesc to cancel\033[0m" if elapsed >= _ESC_HINT_DELAY else ""
-        text = f"\r\033[2K\033[38;2;197;160;89mThinking...\033[0m \033[38;2;107;114;128m{elapsed:.0f}s\033[0m{hint}"
+        stall = "  \033[38;2;139;139;139m(waiting for API response)\033[0m" if elapsed >= _STALL_THRESHOLD else ""
+        timer = f"\033[38;2;107;114;128m{elapsed:.0f}s\033[0m"
+        text = f"\r\033[2K\033[38;2;197;160;89mThinking...\033[0m {timer}{stall}{hint}"
     if _stdout:
         _stdout.write(text)
         _stdout.flush()
 
 
 def update_thinking() -> None:
-    """Update the spinner timer (throttled to once per second)."""
+    """Update the spinner timer (throttled to once per second).
+
+    No-op when the background ticker is running — the ticker handles updates.
+    """
     global _last_spinner_update
+    if _thinking_ticker_task is not None:
+        return
     if _spinner:
         now = time.monotonic()
         if now - _last_spinner_update >= 1.0:
@@ -352,8 +390,11 @@ def update_thinking() -> None:
 
 def stop_thinking() -> float:
     """Stop the spinner, return elapsed seconds."""
-    global _spinner
+    global _spinner, _thinking_ticker_task
     elapsed = 0.0
+    if _thinking_ticker_task is not None:
+        _thinking_ticker_task.cancel()
+        _thinking_ticker_task = None
     if _spinner:
         elapsed = time.monotonic() - _thinking_start
         _spinner.stop()

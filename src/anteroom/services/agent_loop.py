@@ -374,6 +374,7 @@ async def run_agent_loop(
         # The injected message is removed from history immediately after the narration response
         # so it does not pollute the conversation context for subsequent tool calls.
         if narration_cadence > 0 and total_tool_calls > 0 and total_tool_calls % narration_cadence == 0:
+            yield AgentEvent(kind="thinking", data={})
             narration_idx = len(messages)
             messages.append({"role": "user", "content": _NARRATION_PROMPT})
             try:
