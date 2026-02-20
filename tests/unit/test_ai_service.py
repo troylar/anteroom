@@ -2095,11 +2095,38 @@ class TestStreamCloseTimeout:
         service.client.chat.completions.create = AsyncMock(return_value=SlowCloseStream())
 
         events = []
-        # This should complete in ~2s (the close timeout), not 999s
+
+        async def _consume():
+            async for event in service.stream_chat([{"role": "user", "content": "hi"}]):
+                events.append(event)
+
+        # Must complete within 5s (close timeout is 2s) — not 999s
+        await asyncio.wait_for(_consume(), timeout=5.0)
+        assert any(e["event"] == "done" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_stream_close_exception_does_not_propagate(self):
+        """stream.close() raising an exception must not propagate to caller."""
+
+        class ExplodingCloseStream:
+            def __aiter__(self):
+                return self._gen().__aiter__()
+
+            async def _gen(self):
+                yield MagicMock(
+                    choices=[MagicMock(delta=MagicMock(content=None, tool_calls=None), finish_reason="stop")]
+                )
+
+            async def close(self):
+                raise ConnectionResetError("peer closed connection")
+
+        service = _make_service()
+        service.client.chat.completions.create = AsyncMock(return_value=ExplodingCloseStream())
+
+        events = []
         async for event in service.stream_chat([{"role": "user", "content": "hi"}]):
             events.append(event)
 
-        # stream_chat should have returned without hanging
         assert any(e["event"] == "done" for e in events)
 
     @pytest.mark.asyncio
