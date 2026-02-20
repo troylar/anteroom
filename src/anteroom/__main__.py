@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import errno
+import socket
 import sys
+import threading
 import webbrowser
 from pathlib import Path
 
@@ -226,9 +229,36 @@ def _run_web(config, config_path: Path) -> None:
     if config.app.host in ("0.0.0.0", "::"):
         print("  WARNING: Binding to all interfaces. The app is accessible from the network.", file=sys.stderr)
 
-    webbrowser.open(url)
+    def _open_browser_when_ready(host: str, port: int, url: str) -> None:
+        """Wait for the server to accept connections, then open the browser."""
+        for _ in range(50):  # 5 seconds max
+            try:
+                with socket.create_connection((host, port), timeout=0.5):
+                    webbrowser.open(url)
+                    return
+            except OSError:
+                import time
 
-    uvicorn.run(app, host=config.app.host, port=config.app.port, log_level="info", **ssl_kwargs)
+                time.sleep(0.1)
+
+    browser_host = "127.0.0.1" if config.app.host in ("0.0.0.0", "::") else config.app.host
+    browser_thread = threading.Thread(
+        target=_open_browser_when_ready,
+        args=(browser_host, config.app.port, url),
+        daemon=True,
+    )
+    browser_thread.start()
+
+    try:
+        uvicorn.run(app, host=config.app.host, port=config.app.port, log_level="info", **ssl_kwargs)
+    except OSError as e:
+        if e.errno in (errno.EADDRINUSE, errno.EADDRNOTAVAIL, 48):
+            port = config.app.port
+            print(f"\nPort {port} is already in use.", file=sys.stderr)
+            print(f"Try a different port with: aroom --port {port + 1}", file=sys.stderr)
+            print(f"  Or set env var: AI_CHAT_PORT={port + 1}", file=sys.stderr)
+            sys.exit(1)
+        raise
 
 
 def _run_chat(
@@ -360,6 +390,13 @@ def main() -> None:
         choices=["auto", "ask_for_dangerous", "ask_for_writes", "ask"],
         help="Override approval mode for this session",
     )
+    parser.add_argument(
+        "--port",
+        dest="port",
+        type=int,
+        default=None,
+        help="Override port for web UI (e.g., --port 9090)",
+    )
 
     args = parser.parse_args()
 
@@ -397,6 +434,10 @@ def main() -> None:
         extra = [t.strip() for t in _allowed_tools.split(",") if t.strip()]
         existing = set(config.safety.allowed_tools)
         config.safety.allowed_tools.extend(t for t in extra if t not in existing)
+
+    _port = getattr(args, "port", None)
+    if _port is not None:
+        config.app.port = _port
 
     if args.test:
         asyncio.run(_test_connection(config))
