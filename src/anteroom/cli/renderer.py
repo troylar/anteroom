@@ -32,8 +32,8 @@ MUTED = "#8b8b8b"  # secondary text (tool results, approval feedback, version in
 CHROME = "#6b7280"  # UI chrome (status messages, hints, MCP info)
 ERROR_RED = "#CD6B6B"  # pale red for inline errors (operational, not alarming)
 
-_ESC_HINT_DELAY = 3.0  # seconds before showing "esc to cancel" hint
-_STALL_THRESHOLD = 15.0  # seconds before showing API stall warning
+_ESC_HINT_DELAY: float = 3.0  # seconds before showing "esc to cancel" hint
+_STALL_THRESHOLD: float = 15.0  # seconds before showing API stall warning
 
 
 def use_stdout_console() -> None:
@@ -54,6 +54,21 @@ def use_stdout_console() -> None:
     _stdout_console = Console(file=_real_stderr, force_terminal=True)
     _stdout = _real_stderr
     _repl_mode = True
+
+
+def configure_thresholds(
+    esc_hint_delay: float | None = None,
+    stall_display: float | None = None,
+    stall_warning: float | None = None,
+) -> None:
+    """Override default visual thresholds from config."""
+    global _ESC_HINT_DELAY, _MID_STREAM_STALL, _STALL_THRESHOLD
+    if esc_hint_delay is not None:
+        _ESC_HINT_DELAY = esc_hint_delay
+    if stall_display is not None:
+        _MID_STREAM_STALL = stall_display
+    if stall_warning is not None:
+        _STALL_THRESHOLD = stall_warning
 
 
 # Response buffer (tokens collected silently, rendered on completion)

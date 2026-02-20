@@ -67,8 +67,8 @@ class AIService:
         timeout = httpx.Timeout(
             connect=float(self.config.connect_timeout),
             read=float(self.config.request_timeout),
-            write=30.0,
-            pool=10.0,
+            write=float(self.config.write_timeout),
+            pool=float(self.config.pool_timeout),
         )
         # SECURITY-REVIEW: verify=False only when user explicitly sets verify_ssl: false in config
         new_http_client = httpx.AsyncClient(
@@ -105,12 +105,14 @@ class AIService:
         stream_iter: Any,
         cancel_event: asyncio.Event | None,
         total_timeout: float,
+        stall_timeout: float | None = None,
     ) -> AsyncGenerator[Any, None]:
         """Iterate an async stream with cancel-awareness and a hard total timeout.
 
         Yields chunks from the stream. Stops if:
         - cancel_event is set (user pressed Escape / disconnected)
         - total_timeout seconds elapse since iteration started
+        - stall_timeout seconds elapse with no chunk (mid-stream silence)
         - the stream is exhausted (StopAsyncIteration)
         """
         deadline = asyncio.get_running_loop().time() + total_timeout
@@ -125,6 +127,8 @@ class AIService:
                     pass
                 raise _StreamTimeoutError()
 
+            wait_limit = min(remaining, stall_timeout) if stall_timeout else remaining
+
             next_chunk = asyncio.ensure_future(stream_iter.__anext__())
             wait_tasks: list[asyncio.Future[Any]] = [next_chunk]
 
@@ -137,7 +141,7 @@ class AIService:
             try:
                 done, _pending = await asyncio.wait(
                     wait_tasks,
-                    timeout=remaining,
+                    timeout=wait_limit,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
             except Exception:
@@ -147,11 +151,15 @@ class AIService:
                 raise
 
             if not done:
-                # Timeout with no completion
+                # Timeout with no completion — stall or total deadline
                 next_chunk.cancel()
                 if cancel_wait:
                     cancel_wait.cancel()
-                logger.warning("Stream wait timed out after %.0fs total", total_timeout)
+                remaining_now = deadline - asyncio.get_running_loop().time()
+                if remaining_now <= 0:
+                    logger.warning("Stream total deadline exceeded after %.0fs", total_timeout)
+                else:
+                    logger.warning("Stream stalled — no chunk for %.0fs (%.0fs remaining)", wait_limit, remaining_now)
                 try:
                     await stream_iter.aclose()
                 except Exception:
@@ -239,7 +247,9 @@ class AIService:
                 async def _prepended_stream() -> AsyncGenerator[Any, None]:
                     """Yield the first chunk, then remaining chunks via _iter_stream."""
                     yield first_chunk
-                    async for c in AIService._iter_stream(stream_iter, cancel_event, total_timeout):
+                    async for c in AIService._iter_stream(
+                        stream_iter, cancel_event, total_timeout, float(self.config.chunk_stall_timeout)
+                    ):
                         yield c
 
                 try:
@@ -341,6 +351,8 @@ class AIService:
                 return
             except RateLimitError as e:
                 logger.warning("Rate limited by AI provider: %s", e)
+                if cancel_event and cancel_event.is_set():
+                    return  # user cancelled — don't emit retryable error
                 yield {
                     "event": "error",
                     "data": {
@@ -353,6 +365,8 @@ class AIService:
             except _StreamTimeoutError:
                 logger.warning("Stream timed out mid-response after first token")
                 self._build_client()
+                if cancel_event and cancel_event.is_set():
+                    return  # user cancelled — don't emit retryable error
                 yield {
                     "event": "error",
                     "data": {

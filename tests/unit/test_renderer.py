@@ -22,6 +22,7 @@ from anteroom.cli.renderer import (
     _short_path,
     _write_thinking_line,
     clear_turn_history,
+    configure_thresholds,
     cycle_verbosity,
     flush_buffered_text,
     get_verbosity,
@@ -2296,3 +2297,38 @@ class TestStopThinkingEdgeCases:
         assert r._thinking_ticker_task is None
         r._repl_mode = False
         r._stdout = None
+
+
+class TestConfigureThresholds:
+    """Verify configure_thresholds() overrides module-level constants (#241)."""
+
+    def test_configure_all_thresholds(self) -> None:
+        """configure_thresholds() must update all three visual threshold constants."""
+        import anteroom.cli.renderer as r
+
+        orig_esc = r._ESC_HINT_DELAY
+        orig_stall = r._MID_STREAM_STALL
+        orig_warn = r._STALL_THRESHOLD
+        try:
+            configure_thresholds(esc_hint_delay=10.0, stall_display=8.0, stall_warning=20.0)
+            assert r._ESC_HINT_DELAY == 10.0
+            assert r._MID_STREAM_STALL == 8.0
+            assert r._STALL_THRESHOLD == 20.0
+        finally:
+            r._ESC_HINT_DELAY = orig_esc
+            r._MID_STREAM_STALL = orig_stall
+            r._STALL_THRESHOLD = orig_warn
+
+    def test_configure_partial_thresholds(self) -> None:
+        """configure_thresholds() with None leaves existing values unchanged."""
+        import anteroom.cli.renderer as r
+
+        orig_esc = r._ESC_HINT_DELAY
+        orig_stall = r._MID_STREAM_STALL
+        try:
+            configure_thresholds(stall_display=12.0)
+            assert r._ESC_HINT_DELAY == orig_esc  # unchanged
+            assert r._MID_STREAM_STALL == 12.0
+        finally:
+            r._ESC_HINT_DELAY = orig_esc
+            r._MID_STREAM_STALL = orig_stall

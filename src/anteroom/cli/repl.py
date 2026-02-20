@@ -34,8 +34,6 @@ from .skills import SkillRegistry
 logger = logging.getLogger(__name__)
 
 _IS_WINDOWS = platform.system() == "Windows"
-_MAX_USER_RETRIES = 3  # max auto-retry attempts for retryable errors
-_RETRY_DELAY = 5.0  # seconds between auto-retry countdown ticks
 
 
 def _add_signal_handler(loop: asyncio.AbstractEventLoop, sig: int, callback: Any) -> bool:
@@ -325,6 +323,7 @@ async def _drain_input_to_msg_queue(
     exit_flag: asyncio.Event,
     warn_callback: Any | None = None,
     identity_kwargs: dict[str, str | None] | None = None,
+    file_max_chars: int = 100_000,
 ) -> None:
     """Drain input_queue into msg_queue, filtering out / commands.
 
@@ -344,14 +343,14 @@ async def _drain_input_to_msg_queue(
                 if warn_callback:
                     warn_callback(cmd)
                 continue
-            q_expanded = _expand_file_references(queued_text, working_dir)
+            q_expanded = _expand_file_references(queued_text, working_dir, file_max_chars=file_max_chars)
             storage.create_message(db, conversation_id, "user", q_expanded, **(identity_kwargs or {}))
             await msg_queue.put({"role": "user", "content": q_expanded})
         except asyncio.QueueEmpty:
             break
 
 
-def _expand_file_references(text: str, working_dir: str) -> str:
+def _expand_file_references(text: str, working_dir: str, file_max_chars: int = 100_000) -> str:
     """Expand @path references in user input.
 
     @file.py      -> includes file contents inline
@@ -370,8 +369,8 @@ def _expand_file_references(text: str, working_dir: str) -> str:
         if resolved.is_file():
             try:
                 content = resolved.read_text(encoding="utf-8", errors="replace")
-                if len(content) > 100_000:
-                    content = content[:100_000] + "\n... (truncated)"
+                if len(content) > file_max_chars:
+                    content = content[:file_max_chars] + "\n... (truncated)"
                 return f'\n<file path="{raw_path}">\n{content}\n</file>\n'
             except OSError:
                 return match.group(0)
@@ -740,7 +739,7 @@ async def _run_one_shot(
 ) -> None:
     """Run a single prompt and exit."""
     id_kw = _identity_kwargs(config)
-    expanded = _expand_file_references(prompt, working_dir)
+    expanded = _expand_file_references(prompt, working_dir, file_max_chars=config.cli.file_reference_max_chars)
 
     if resume_conversation_id:
         conv = storage.get_conversation(db, resume_conversation_id)
@@ -779,6 +778,7 @@ async def _run_one_shot(
                 extra_system_prompt=extra_system_prompt,
                 max_iterations=config.cli.max_tool_iterations,
                 narration_cadence=ai_service.config.narration_cadence,
+                tool_output_max_chars=config.cli.tool_output_max_chars,
             ):
                 if event.kind == "thinking":
                     if not thinking:
@@ -809,9 +809,11 @@ async def _run_one_shot(
                 elif event.kind == "error":
                     error_msg = event.data.get("message", "Unknown error")
                     retryable = event.data.get("retryable", False)
-                    if thinking and retryable and user_attempt < _MAX_USER_RETRIES:
+                    if thinking and retryable and user_attempt < config.cli.max_retries:
                         # Show countdown on thinking line, auto-retry
-                        should_retry = await renderer.thinking_countdown(_RETRY_DELAY, cancel_event, error_msg)
+                        should_retry = await renderer.thinking_countdown(
+                            config.cli.retry_delay, cancel_event, error_msg
+                        )
                         if should_retry and not cancel_event.is_set():
                             # Reset cancel_event for the retry
                             cancel_event.clear()
@@ -820,7 +822,7 @@ async def _run_one_shot(
                         else:
                             await renderer.stop_thinking(cancel_msg="cancelled")
                             thinking = False
-                    elif thinking and retryable and user_attempt >= _MAX_USER_RETRIES:
+                    elif thinking and retryable and user_attempt >= config.cli.max_retries:
                         # Exhausted user retries
                         await renderer.stop_thinking(error_msg=f"{error_msg} · {user_attempt} attempts failed")
                         thinking = False
@@ -1696,7 +1698,9 @@ async def _run_repl(
             # For note/document types, save message without AI response
             current_conv_type = conv.get("type", "chat")
             if current_conv_type in ("note", "document"):
-                expanded = _expand_file_references(user_input, working_dir)
+                expanded = _expand_file_references(
+                    user_input, working_dir, file_max_chars=config.cli.file_reference_max_chars
+                )
                 storage.create_message(db, conv["id"], "user", expanded, **id_kw)
                 renderer.console.print(f"[{CHROME}]Entry added to '{conv.get('title', 'Untitled')}'[/{CHROME}]\n")
                 if is_first_message:
@@ -1707,7 +1711,9 @@ async def _run_repl(
             renderer.render_newline()
 
             # Expand file references
-            expanded = _expand_file_references(user_input, working_dir)
+            expanded = _expand_file_references(
+                user_input, working_dir, file_max_chars=config.cli.file_reference_max_chars
+            )
 
             # Auto-compact if approaching context limit (thresholds from config)
             token_estimate = _estimate_tokens(ai_messages)
@@ -1767,6 +1773,7 @@ async def _run_repl(
                     exit_flag,
                     warn_callback=_warn,
                     identity_kwargs=id_kw,
+                    file_max_chars=config.cli.file_reference_max_chars,
                 )
 
                 while True:
@@ -1783,6 +1790,7 @@ async def _run_repl(
                         max_iterations=config.cli.max_tool_iterations,
                         message_queue=msg_queue,
                         narration_cadence=ai_service.config.narration_cadence,
+                        tool_output_max_chars=config.cli.tool_output_max_chars,
                     ):
                         # Drain input_queue into msg_queue during streaming
                         await _drain_input_to_msg_queue(
@@ -1795,6 +1803,7 @@ async def _run_repl(
                             exit_flag,
                             warn_callback=_warn,
                             identity_kwargs=id_kw,
+                            file_max_chars=config.cli.file_reference_max_chars,
                         )
 
                         if event.kind == "thinking":
@@ -1845,15 +1854,17 @@ async def _run_repl(
                         elif event.kind == "error":
                             error_msg = event.data.get("message", "Unknown error")
                             retryable = event.data.get("retryable", False)
-                            if thinking and retryable and user_attempt < _MAX_USER_RETRIES:
-                                should_retry = await renderer.thinking_countdown(_RETRY_DELAY, cancel_event, error_msg)
+                            if thinking and retryable and user_attempt < config.cli.max_retries:
+                                should_retry = await renderer.thinking_countdown(
+                                    config.cli.retry_delay, cancel_event, error_msg
+                                )
                                 if should_retry and not cancel_event.is_set():
                                     cancel_event.clear()
                                     renderer.start_thinking()
                                 else:
                                     total_elapsed += await renderer.stop_thinking(cancel_msg="cancelled")
                                     thinking = False
-                            elif thinking and retryable and user_attempt >= _MAX_USER_RETRIES:
+                            elif thinking and retryable and user_attempt >= config.cli.max_retries:
                                 total_elapsed += await renderer.stop_thinking(
                                     error_msg=f"{error_msg} · {user_attempt} attempts failed"
                                 )
@@ -1877,6 +1888,7 @@ async def _run_repl(
                                 context_tokens = _estimate_tokens(ai_messages)
                                 renderer.render_context_footer(
                                     current_tokens=context_tokens,
+                                    max_context=config.cli.model_context_window,
                                     auto_compact_threshold=config.cli.context_auto_compact_tokens,
                                     response_tokens=response_token_count,
                                     elapsed=total_elapsed,
@@ -1919,6 +1931,11 @@ async def _run_repl(
     with _patch_stdout():
         renderer.use_stdout_console()
         renderer.set_tool_dedup(config.cli.tool_dedup)
+        renderer.configure_thresholds(
+            esc_hint_delay=config.cli.esc_hint_delay,
+            stall_display=config.cli.stall_display_threshold,
+            stall_warning=config.cli.stall_warning_threshold,
+        )
         input_task = asyncio.create_task(_collect_input())
         runner_task = asyncio.create_task(_agent_runner())
 

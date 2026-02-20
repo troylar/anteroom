@@ -242,7 +242,10 @@ class AIConfig:
     api_key_command: str = ""
     request_timeout: int = 120  # seconds; overall stream timeout
     connect_timeout: int = 5  # seconds; TCP connect timeout
+    write_timeout: int = 30  # seconds; time to send request body
+    pool_timeout: int = 10  # seconds; wait for free connection from pool
     first_token_timeout: int = 30  # seconds; max wait for first token after connect
+    chunk_stall_timeout: int = 30  # seconds; max silence between chunks mid-stream
     retry_max_attempts: int = 3  # retries on transient errors (0 = disabled)
     retry_backoff_base: float = 1.0  # seconds; base for exponential backoff
     narration_cadence: int = 5  # progress updates every N tool calls; 0 = disabled
@@ -281,6 +284,14 @@ class CliConfig:
     context_warn_tokens: int = 80_000
     context_auto_compact_tokens: int = 100_000
     tool_dedup: bool = True  # collapse consecutive similar tool calls; False = show all
+    retry_delay: float = 5.0  # seconds between CLI auto-retry countdown ticks
+    max_retries: int = 3  # max CLI auto-retry attempts for retryable errors
+    esc_hint_delay: float = 3.0  # seconds before showing "esc to cancel" hint
+    stall_display_threshold: float = 5.0  # seconds of chunk silence before showing "stalled"
+    stall_warning_threshold: float = 15.0  # seconds before showing full stall warning
+    tool_output_max_chars: int = 2000  # max chars per tool result before truncation
+    file_reference_max_chars: int = 100_000  # max chars from @file references
+    model_context_window: int = 128_000  # model context window size for usage bar
 
 
 @dataclass
@@ -411,10 +422,28 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         connect_timeout = 5
 
     try:
+        _raw_write = ai_raw.get("write_timeout", os.environ.get("AI_CHAT_WRITE_TIMEOUT", 30))
+        write_timeout = max(5, min(120, int(_raw_write)))
+    except (ValueError, TypeError):
+        write_timeout = 30
+
+    try:
+        _raw_pool = ai_raw.get("pool_timeout", os.environ.get("AI_CHAT_POOL_TIMEOUT", 10))
+        pool_timeout = max(1, min(60, int(_raw_pool)))
+    except (ValueError, TypeError):
+        pool_timeout = 10
+
+    try:
         _raw_first_token = ai_raw.get("first_token_timeout", os.environ.get("AI_CHAT_FIRST_TOKEN_TIMEOUT", 30))
         first_token_timeout = max(5, min(120, int(_raw_first_token)))
     except (ValueError, TypeError):
         first_token_timeout = 30
+
+    try:
+        _raw_chunk_stall = ai_raw.get("chunk_stall_timeout", os.environ.get("AI_CHAT_CHUNK_STALL_TIMEOUT", 30))
+        chunk_stall_timeout = max(10, min(600, int(_raw_chunk_stall)))
+    except (ValueError, TypeError):
+        chunk_stall_timeout = 30
 
     try:
         _raw_retry_attempts = ai_raw.get("retry_max_attempts", os.environ.get("AI_CHAT_RETRY_MAX_ATTEMPTS", 3))
@@ -453,7 +482,10 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         verify_ssl=verify_ssl,
         request_timeout=request_timeout,
         connect_timeout=connect_timeout,
+        write_timeout=write_timeout,
+        pool_timeout=pool_timeout,
         first_token_timeout=first_token_timeout,
+        chunk_stall_timeout=chunk_stall_timeout,
         retry_max_attempts=retry_max_attempts,
         retry_backoff_base=retry_backoff_base,
         narration_cadence=narration_cadence,
@@ -540,12 +572,53 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     tool_dedup_raw = tool_dedup_env if tool_dedup_env is not None else cli_raw.get("tool_dedup", True)
     tool_dedup = str(tool_dedup_raw).lower() not in ("false", "0", "no", "off")
 
+    try:
+        retry_delay = max(1.0, min(60.0, float(cli_raw.get("retry_delay", 5.0))))
+    except (ValueError, TypeError):
+        retry_delay = 5.0
+    try:
+        max_retries = max(0, min(10, int(cli_raw.get("max_retries", 3))))
+    except (ValueError, TypeError):
+        max_retries = 3
+    try:
+        esc_hint_delay = max(0.0, float(cli_raw.get("esc_hint_delay", 3.0)))
+    except (ValueError, TypeError):
+        esc_hint_delay = 3.0
+    try:
+        stall_display_threshold = max(1.0, float(cli_raw.get("stall_display_threshold", 5.0)))
+    except (ValueError, TypeError):
+        stall_display_threshold = 5.0
+    try:
+        stall_warning_threshold = max(1.0, float(cli_raw.get("stall_warning_threshold", 15.0)))
+    except (ValueError, TypeError):
+        stall_warning_threshold = 15.0
+    try:
+        tool_output_max_chars = max(100, int(cli_raw.get("tool_output_max_chars", 2000)))
+    except (ValueError, TypeError):
+        tool_output_max_chars = 2000
+    try:
+        file_reference_max_chars = max(1000, min(10_000_000, int(cli_raw.get("file_reference_max_chars", 100_000))))
+    except (ValueError, TypeError):
+        file_reference_max_chars = 100_000
+    try:
+        model_context_window = max(1000, min(2_000_000, int(cli_raw.get("model_context_window", 128_000))))
+    except (ValueError, TypeError):
+        model_context_window = 128_000
+
     cli_config = CliConfig(
         builtin_tools=cli_raw.get("builtin_tools", True),
         max_tool_iterations=int(cli_raw.get("max_tool_iterations", 50)),
         context_warn_tokens=context_warn_tokens,
         context_auto_compact_tokens=context_auto_compact_tokens,
         tool_dedup=tool_dedup,
+        retry_delay=retry_delay,
+        max_retries=max_retries,
+        esc_hint_delay=esc_hint_delay,
+        stall_display_threshold=stall_display_threshold,
+        stall_warning_threshold=stall_warning_threshold,
+        tool_output_max_chars=tool_output_max_chars,
+        file_reference_max_chars=file_reference_max_chars,
+        model_context_window=model_context_window,
     )
 
     identity_raw = raw.get("identity", {})
