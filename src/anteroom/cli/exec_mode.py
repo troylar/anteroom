@@ -324,103 +324,101 @@ async def run_exec_mode(
     tool_calls_log: list[dict[str, Any]] = []
     assistant_msg_id: str | None = None
 
-    try:
-        async with asyncio.timeout(timeout):
-            async for event in run_agent_loop(
-                ai_service=ai_service,
-                messages=messages,
-                tool_executor=tool_executor,
-                tools_openai=tools_openai_or_none,
-                cancel_event=cancel_event,
-                extra_system_prompt=extra_system_prompt,
-                max_iterations=config.cli.max_tool_iterations,
-                narration_cadence=0,
-                tool_output_max_chars=config.cli.tool_output_max_chars,
-            ):
-                if event.kind == "token":
-                    if output_total_chars < _MAX_OUTPUT_CHARS:
-                        output_chunks.append(event.data["content"])
-                        output_total_chars += len(event.data["content"])
-                    if not output_json and not quiet:
-                        # Stream tokens to stdout in text mode
-                        sys.stdout.write(event.data["content"])
-                        sys.stdout.flush()
+    async def _run_loop() -> None:
+        nonlocal exit_code, output_total_chars, assistant_msg_id
+        async for event in run_agent_loop(
+            ai_service=ai_service,
+            messages=messages,
+            tool_executor=tool_executor,
+            tools_openai=tools_openai_or_none,
+            cancel_event=cancel_event,
+            extra_system_prompt=extra_system_prompt,
+            max_iterations=config.cli.max_tool_iterations,
+            narration_cadence=0,
+            tool_output_max_chars=config.cli.tool_output_max_chars,
+        ):
+            if event.kind == "token":
+                if output_total_chars < _MAX_OUTPUT_CHARS:
+                    output_chunks.append(event.data["content"])
+                    output_total_chars += len(event.data["content"])
+                if not output_json and not quiet:
+                    sys.stdout.write(event.data["content"])
+                    sys.stdout.flush()
 
-                elif event.kind == "tool_call_start":
-                    tc_entry = {
-                        "id": event.data.get("id", ""),
-                        "tool_name": event.data["tool_name"],
-                        "arguments": event.data.get("arguments", {}),
-                        "status": "pending",
-                        "output": None,
-                    }
-                    tool_calls_log.append(tc_entry)
-                    if not quiet:
-                        if verbose:
-                            args_str = json.dumps(event.data.get("arguments", {}), default=str)
-                            print(f"[tool] {event.data['tool_name']} {_truncate(args_str, 500)}", file=sys.stderr)
-                        else:
-                            print(f"[tool] {event.data['tool_name']}", file=sys.stderr)
+            elif event.kind == "tool_call_start":
+                tc_entry = {
+                    "id": event.data.get("id", ""),
+                    "tool_name": event.data["tool_name"],
+                    "arguments": event.data.get("arguments", {}),
+                    "status": "pending",
+                    "output": None,
+                }
+                tool_calls_log.append(tc_entry)
+                if not quiet:
+                    if verbose:
+                        args_str = json.dumps(event.data.get("arguments", {}), default=str)
+                        print(f"[tool] {event.data['tool_name']} {_truncate(args_str, 500)}", file=sys.stderr)
+                    else:
+                        print(f"[tool] {event.data['tool_name']}", file=sys.stderr)
 
-                elif event.kind == "tool_call_end":
-                    # Update the last matching tool call entry
-                    tc_id = event.data.get("id", "")
-                    for tc in reversed(tool_calls_log):
-                        if tc["id"] == tc_id:
-                            tc["status"] = event.data.get("status", "success")
-                            tc["output"] = _truncate(str(event.data.get("output", "")), 500) if verbose else None
-                            break
-                    if not quiet:
-                        status = event.data.get("status", "success")
-                        name = event.data.get("tool_name", "")
-                        print(f"[tool] {name} → {status}", file=sys.stderr)
+            elif event.kind == "tool_call_end":
+                tc_id = event.data.get("id", "")
+                for tc in reversed(tool_calls_log):
+                    if tc["id"] == tc_id:
+                        tc["status"] = event.data.get("status", "success")
+                        tc["output"] = _truncate(str(event.data.get("output", "")), 500) if verbose else None
+                        break
+                if not quiet:
+                    status = event.data.get("status", "success")
+                    name = event.data.get("tool_name", "")
+                    print(f"[tool] {name} → {status}", file=sys.stderr)
 
-                    # Audit: always write tool calls to DB (even with --no-conversation)
-                    if not assistant_msg_id:
-                        # Create stub message for audit if tool calls arrive before assistant_message
+                # Audit: always write tool calls to DB (even with --no-conversation)
+                if not assistant_msg_id:
+                    msg = storage.create_message(db, conv["id"], "assistant", "[exec audit]", **id_kw)
+                    assistant_msg_id = msg["id"]
+                if assistant_msg_id:
+                    try:
+                        tc_record = storage.create_tool_call(
+                            db,
+                            message_id=assistant_msg_id,
+                            tool_name=event.data.get("tool_name", ""),
+                            server_name="builtin",
+                            input_data=event.data.get("arguments", {}),
+                            tool_call_id=tc_id or None,
+                        )
+                        storage.update_tool_call(
+                            db,
+                            tc_record["id"],
+                            output_data=event.data.get("output", ""),
+                            status=event.data.get("status", "success"),
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to persist tool call: %s", e)
+
+            elif event.kind == "assistant_message":
+                content = event.data.get("content", "")
+                if content:
+                    if persist_messages:
+                        msg = storage.create_message(db, conv["id"], "assistant", content, **id_kw)
+                        assistant_msg_id = msg["id"]
+                    elif not assistant_msg_id:
                         msg = storage.create_message(db, conv["id"], "assistant", "[exec audit]", **id_kw)
                         assistant_msg_id = msg["id"]
-                    if assistant_msg_id:
-                        try:
-                            tc_record = storage.create_tool_call(
-                                db,
-                                message_id=assistant_msg_id,
-                                tool_name=event.data.get("tool_name", ""),
-                                server_name="builtin",
-                                input_data=event.data.get("arguments", {}),
-                                tool_call_id=tc_id or None,
-                            )
-                            storage.update_tool_call(
-                                db,
-                                tc_record["id"],
-                                output_data=event.data.get("output", ""),
-                                status=event.data.get("status", "success"),
-                            )
-                        except Exception as e:
-                            logger.warning("Failed to persist tool call: %s", e)
 
-                elif event.kind == "assistant_message":
-                    content = event.data.get("content", "")
-                    if content:
-                        if persist_messages:
-                            msg = storage.create_message(db, conv["id"], "assistant", content, **id_kw)
-                            assistant_msg_id = msg["id"]
-                        elif not assistant_msg_id:
-                            # Audit-only: create a stub message so tool_calls have a parent
-                            msg = storage.create_message(db, conv["id"], "assistant", "[exec audit]", **id_kw)
-                            assistant_msg_id = msg["id"]
+            elif event.kind == "error":
+                error_msg = event.data.get("message", "Unknown error")
+                if not quiet:
+                    print(f"Error: {error_msg}", file=sys.stderr)
+                exit_code = 1
+                break
 
-                elif event.kind == "error":
-                    error_msg = event.data.get("message", "Unknown error")
-                    if not quiet:
-                        print(f"Error: {error_msg}", file=sys.stderr)
-                    exit_code = 1
-                    break
+            elif event.kind == "done":
+                break
 
-                elif event.kind == "done":
-                    break
-
-    except TimeoutError:
+    try:
+        await asyncio.wait_for(_run_loop(), timeout=timeout)
+    except asyncio.TimeoutError:
         if not quiet:
             print(f"Error: execution timed out after {timeout:.0f}s", file=sys.stderr)
         exit_code = _EXIT_CODE_TIMEOUT
