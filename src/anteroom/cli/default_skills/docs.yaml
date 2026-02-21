@@ -55,6 +55,8 @@ prompt: |
   | safety.subagent | max_depth             | int     | 3                          | —                                   |
   | safety.subagent | max_iterations        | int     | 15                         | —                                   |
   | safety.subagent | timeout               | int     | 120s (10–600)              | —                                   |
+  | safety.subagent | max_output_chars      | int     | 4000                       | —                                   |
+  | safety.subagent | max_prompt_chars      | int     | 32000                      | —                                   |
   | embeddings    | enabled                 | bool    | true                       | —                                   |
   | embeddings    | provider                | str     | local                      | —                                   |
   | embeddings    | local_model             | str     | BAAI/bge-small-en-v1.5     | —                                   |
