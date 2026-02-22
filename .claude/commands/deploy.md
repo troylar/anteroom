@@ -300,11 +300,13 @@ After the GitHub Release is created, update `docs/advanced/changelog.md` with a 
    gh release view vX.Y.Z --json body --jq '.body'
    ```
 
-2. Extract user-facing highlights from the release notes body:
-   - Include content from **New Features**, **Bug Fixes**, and **Other Improvements** sections
+2. Extract user-facing highlights from the release notes body, grouped by type:
+   - **New Features** → listed under `**New:**`
+   - **Bug Fixes** → listed under `**Fixed:**`
+   - **Other Improvements** → listed under `**Improved:**`
    - Skip **For Developers** and **Upgrading** sections
-   - Condense to 1-3 concise bullet points (one line each, max ~150 chars)
-   - If the release has no user-facing sections, use: `*Maintenance release — see GitHub Release for details.*`
+   - Condense to 1-3 concise bullet points per section (one line each, max ~150 chars)
+   - Omit empty sections. If no user-facing sections exist, use: `*Maintenance release — see GitHub Release for details.*`
 
 3. Prepend a new entry to `docs/advanced/changelog.md` after the header block (after the intro paragraph, before the first `---`):
    ```markdown
@@ -312,8 +314,14 @@ After the GitHub Release is created, update `docs/advanced/changelog.md` with a 
 
    ## vX.Y.Z — YYYY-MM-DD
 
-   - Highlight one
-   - Highlight two (#issue)
+   **New:**
+   - Feature highlight (#issue)
+
+   **Fixed:**
+   - Bug fix highlight (#issue)
+
+   **Improved:**
+   - Improvement highlight (#issue)
 
    [GitHub Release](https://github.com/troylar/anteroom/releases/tag/vX.Y.Z)
 
