@@ -4,6 +4,17 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## v1.24.6 — 2026-02-22
+
+**Fixed:**
+
+- **Changelog rendering on ReadTheDocs**: Section headers were rendering inline with bullet points — added blank lines for proper MkDocs Material list rendering (#295)
+- Completed ~45 truncated changelog entries from initial backfill (#295)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.24.6)
+
+---
+
 ## v1.24.5 — 2026-02-22
 
 **Improved:**
