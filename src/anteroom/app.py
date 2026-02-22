@@ -134,6 +134,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         logger.info("Embedding service not configured; vector search disabled")
 
+    # Create shared AIService for proxy if enabled
+    app.state.proxy_ai_service = None
+    if config.proxy.enabled:
+        from .services.ai_service import create_ai_service
+
+        app.state.proxy_ai_service = create_ai_service(config.ai)
+        logger.info("Proxy AIService created")
+
     yield
 
     if hasattr(app.state, "embedding_worker") and app.state.embedding_worker:

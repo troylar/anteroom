@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -10,23 +10,27 @@ from fastapi.testclient import TestClient
 from anteroom.routers.proxy import router
 
 
-def _make_app() -> FastAPI:
+def _make_app(*, mock_service: MagicMock | None = None) -> FastAPI:
     """Create a minimal FastAPI app with the proxy router."""
     app = FastAPI()
     app.include_router(router, prefix="/v1")
 
     config = MagicMock()
     config.ai.model = "gpt-4"
-    config.ai.base_url = "https://api.example.com/v1"
-    config.ai.api_key = "test-key"
-    config.ai.api_key_command = ""
-    config.ai.verify_ssl = True
-    config.ai.connect_timeout = 5
-    config.ai.write_timeout = 30
-    config.ai.pool_timeout = 10
     app.state.config = config
+    app.state.proxy_ai_service = mock_service
 
     return app
+
+
+def _make_mock_service(*, response: MagicMock | None = None, error: Exception | None = None) -> MagicMock:
+    """Create a mock AIService with pre-configured completions behavior."""
+    service = MagicMock()
+    if error:
+        service.client.chat.completions.create = AsyncMock(side_effect=error)
+    elif response:
+        service.client.chat.completions.create = AsyncMock(return_value=response)
+    return service
 
 
 class TestListModels:
@@ -78,18 +82,45 @@ class TestChatCompletions:
         )
         assert resp.status_code == 400
 
-    @patch("anteroom.routers.proxy.create_ai_service")
-    def test_non_streaming_success(self, mock_create: MagicMock) -> None:
+    def test_rejects_non_object_body(self) -> None:
         app = _make_app()
-        mock_service = MagicMock()
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/chat/completions",
+            json=["not", "an", "object"],
+        )
+        assert resp.status_code == 400
+        assert "JSON object" in resp.json()["error"]["message"]
+
+    def test_rejects_message_without_role(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/chat/completions",
+            json={"messages": [{"content": "Hi"}]},
+        )
+        assert resp.status_code == 400
+        assert "role" in resp.json()["error"]["message"]
+
+    def test_rejects_non_dict_message_item(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/chat/completions",
+            json={"messages": ["not a dict"]},
+        )
+        assert resp.status_code == 400
+        assert "messages[0]" in resp.json()["error"]["message"]
+
+    def test_non_streaming_success(self) -> None:
         mock_response = MagicMock()
         mock_response.model_dump.return_value = {
             "id": "chatcmpl-123",
             "object": "chat.completion",
             "choices": [{"message": {"role": "assistant", "content": "Hello!"}, "index": 0}],
         }
-        mock_service.client.chat.completions.create = AsyncMock(return_value=mock_response)
-        mock_create.return_value = mock_service
+        service = _make_mock_service(response=mock_response)
+        app = _make_app(mock_service=service)
 
         client = TestClient(app)
         resp = client.post(
@@ -101,14 +132,11 @@ class TestChatCompletions:
         assert data["id"] == "chatcmpl-123"
         assert data["choices"][0]["message"]["content"] == "Hello!"
 
-    @patch("anteroom.routers.proxy.create_ai_service")
-    def test_uses_configured_model_as_default(self, mock_create: MagicMock) -> None:
-        app = _make_app()
-        mock_service = MagicMock()
+    def test_uses_configured_model_as_default(self) -> None:
         mock_response = MagicMock()
         mock_response.model_dump.return_value = {"id": "chatcmpl-123", "choices": []}
-        mock_service.client.chat.completions.create = AsyncMock(return_value=mock_response)
-        mock_create.return_value = mock_service
+        service = _make_mock_service(response=mock_response)
+        app = _make_app(mock_service=service)
 
         client = TestClient(app)
         client.post(
@@ -116,17 +144,14 @@ class TestChatCompletions:
             json={"messages": [{"role": "user", "content": "Hi"}]},
         )
 
-        call_kwargs = mock_service.client.chat.completions.create.call_args[1]
+        call_kwargs = service.client.chat.completions.create.call_args[1]
         assert call_kwargs["model"] == "gpt-4"
 
-    @patch("anteroom.routers.proxy.create_ai_service")
-    def test_allows_model_override(self, mock_create: MagicMock) -> None:
-        app = _make_app()
-        mock_service = MagicMock()
+    def test_allows_model_override(self) -> None:
         mock_response = MagicMock()
         mock_response.model_dump.return_value = {"id": "chatcmpl-123", "choices": []}
-        mock_service.client.chat.completions.create = AsyncMock(return_value=mock_response)
-        mock_create.return_value = mock_service
+        service = _make_mock_service(response=mock_response)
+        app = _make_app(mock_service=service)
 
         client = TestClient(app)
         client.post(
@@ -134,17 +159,14 @@ class TestChatCompletions:
             json={"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "Hi"}]},
         )
 
-        call_kwargs = mock_service.client.chat.completions.create.call_args[1]
+        call_kwargs = service.client.chat.completions.create.call_args[1]
         assert call_kwargs["model"] == "gpt-3.5-turbo"
 
-    @patch("anteroom.routers.proxy.create_ai_service")
-    def test_forwards_optional_parameters(self, mock_create: MagicMock) -> None:
-        app = _make_app()
-        mock_service = MagicMock()
+    def test_forwards_optional_parameters(self) -> None:
         mock_response = MagicMock()
         mock_response.model_dump.return_value = {"id": "chatcmpl-123", "choices": []}
-        mock_service.client.chat.completions.create = AsyncMock(return_value=mock_response)
-        mock_create.return_value = mock_service
+        service = _make_mock_service(response=mock_response)
+        app = _make_app(mock_service=service)
 
         client = TestClient(app)
         client.post(
@@ -157,17 +179,14 @@ class TestChatCompletions:
             },
         )
 
-        call_kwargs = mock_service.client.chat.completions.create.call_args[1]
+        call_kwargs = service.client.chat.completions.create.call_args[1]
         assert call_kwargs["temperature"] == 0.7
         assert call_kwargs["max_tokens"] == 100
         assert call_kwargs["top_p"] == 0.9
 
-    @patch("anteroom.routers.proxy.create_ai_service")
-    def test_upstream_error_returns_502(self, mock_create: MagicMock) -> None:
-        app = _make_app()
-        mock_service = MagicMock()
-        mock_service.client.chat.completions.create = AsyncMock(side_effect=Exception("upstream down"))
-        mock_create.return_value = mock_service
+    def test_upstream_error_returns_502(self) -> None:
+        service = _make_mock_service(error=Exception("upstream down"))
+        app = _make_app(mock_service=service)
 
         client = TestClient(app)
         resp = client.post(
@@ -177,11 +196,7 @@ class TestChatCompletions:
         assert resp.status_code == 502
         assert resp.json()["error"]["message"] == "Upstream API error"
 
-    @patch("anteroom.routers.proxy.create_ai_service")
-    def test_streaming_returns_sse(self, mock_create: MagicMock) -> None:
-        app = _make_app()
-        mock_service = MagicMock()
-
+    def test_streaming_returns_sse(self) -> None:
         chunk1 = MagicMock()
         chunk1.model_dump.return_value = {
             "id": "chatcmpl-123",
@@ -192,8 +207,9 @@ class TestChatCompletions:
         async def mock_stream():
             yield chunk1
 
-        mock_service.client.chat.completions.create = AsyncMock(return_value=mock_stream())
-        mock_create.return_value = mock_service
+        service = MagicMock()
+        service.client.chat.completions.create = AsyncMock(return_value=mock_stream())
+        app = _make_app(mock_service=service)
 
         client = TestClient(app)
         resp = client.post(
@@ -207,15 +223,24 @@ class TestChatCompletions:
         assert "chatcmpl-123" in body
         assert "data: [DONE]" in body
 
-    def test_rejects_non_object_body(self) -> None:
-        app = _make_app()
+    def test_streaming_error_emits_error_chunk(self) -> None:
+        async def failing_stream():
+            raise RuntimeError("connection lost")
+            yield  # noqa: F811 — unreachable but needed to make this an async generator
+
+        service = MagicMock()
+        service.client.chat.completions.create = AsyncMock(return_value=failing_stream())
+        app = _make_app(mock_service=service)
+
         client = TestClient(app)
         resp = client.post(
             "/v1/chat/completions",
-            json=["not", "an", "object"],
+            json={"messages": [{"role": "user", "content": "Hi"}], "stream": True},
         )
-        assert resp.status_code == 400
-        assert "JSON object" in resp.json()["error"]["message"]
+        assert resp.status_code == 200
+        body = resp.text
+        assert "Upstream stream error" in body
+        assert "data: [DONE]" in body
 
 
 class TestProxyConfig:
@@ -282,3 +307,27 @@ ai:
                     os.environ["AI_CHAT_PROXY_ENABLED"] = old
 
         assert config.proxy.enabled is True
+
+    def test_proxy_config_rejects_wildcard_origin(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from anteroom.config import load_config
+
+        yaml_content = """
+ai:
+  base_url: http://localhost:8080/v1
+  api_key: test-key
+proxy:
+  enabled: true
+  allowed_origins:
+    - "*"
+    - http://localhost:3000
+    - not-a-url
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            f.flush()
+            config = load_config(Path(f.name))
+
+        assert config.proxy.allowed_origins == ["http://localhost:3000"]

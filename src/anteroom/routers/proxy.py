@@ -17,11 +17,14 @@ import uuid
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..services.ai_service import create_ai_service
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["proxy"])
+
+
+def _get_ai_service(request: Request):
+    """Get the shared proxy AIService from app state."""
+    return request.app.state.proxy_ai_service
 
 
 @router.get("/models")
@@ -66,8 +69,16 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
             content={"error": {"message": "'messages' is required and must be a non-empty array"}},
         )
 
+    # Validate message items have required structure
+    for i, msg in enumerate(messages):
+        if not isinstance(msg, dict) or "role" not in msg:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"message": f"messages[{i}] must be an object with a 'role' field"}},
+            )
+
     config = request.app.state.config
-    ai_service = create_ai_service(config.ai)
+    ai_service = _get_ai_service(request)
 
     model = body.get("model", config.ai.model)
     stream = body.get("stream", False)
