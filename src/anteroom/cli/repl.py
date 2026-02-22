@@ -1448,6 +1448,7 @@ async def _run_repl(
         from .plan import (
             PLAN_MODE_ALLOWED_TOOLS,
             build_planning_system_prompt,
+            delete_plan,
             get_plan_file_path,
             read_plan,
         )
@@ -1493,14 +1494,12 @@ async def _run_repl(
                 )
 
         def _strip_planning_prompt(prompt: str) -> str:
-            import re as _re
-
-            prompt = _re.sub(r"\n*<planning_mode>.*?</planning_mode>", "", prompt, flags=_re.DOTALL)
+            prompt = re.sub(r"\n*<planning_mode>.*?</planning_mode>", "", prompt, flags=re.DOTALL)
             return prompt
 
         # Apply plan mode at startup if --plan was passed
         if _plan_active[0]:
-            _apply_plan_mode(conv["id"] if conv else "pending")
+            _apply_plan_mode(conv["id"])
 
         while not exit_flag.is_set():
             # If agent_busy was set (by _collect_input) but we're back here waiting
@@ -1843,8 +1842,9 @@ async def _run_repl(
                                 )
                             else:
                                 _exit_plan_mode(plan_content=content)
+                                delete_plan(_plan_file[0])
                                 renderer.console.print(
-                                    f"[green]Plan approved.[/green] Full tools restored.\n"
+                                    "[green]Plan approved.[/green] Full tools restored.\n"
                                     f"  [{MUTED}]Plan injected into context. "
                                     f"Send a message to start.[/{MUTED}]\n"
                                 )
