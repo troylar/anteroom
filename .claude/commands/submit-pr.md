@@ -261,7 +261,14 @@ This is the authoritative doc review — identifies stale/missing docs AND appli
 
 **CLAUDE.md:** New modules not in "Key Modules"? Modified modules with stale descriptions? New config/DB/event fields undocumented? Security model changes not reflected?
 
-**README.md:** New CLI commands/flags missing? Feature descriptions stale? Install instructions accurate?
+**README.md:** The README serves as marketing — it must showcase what Anteroom can do. Check:
+- New user-facing features (`feat:` commits) reflected in the "What makes it different" grid or "The full picture" table?
+- New CLI commands/flags/modes reflected in the CLI REPL example or exec mode section?
+- New tools added to the built-in tools list?
+- New MCP capabilities or integration patterns mentioned?
+- Feature descriptions stale or misleading after this PR's changes?
+- Install instructions still accurate?
+- If the PR adds a significant user-visible feature and the README doesn't mention it, flag as STALE.
 
 **VISION.md:** New capabilities not in "Current Direction"? Scope boundary changes?
 
