@@ -719,3 +719,57 @@ class TestToolDedupConfig:
         )
         config = load_config(cfg_file)
         assert config.cli.tool_dedup is False
+
+
+class TestPlanningConfig:
+    def test_defaults(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(tmp_path, {"ai": {"base_url": "http://test", "api_key": "sk-test"}})
+        config = load_config(cfg_file)
+        assert config.cli.planning.enabled is True
+        assert config.cli.planning.auto_threshold_tools == 5
+
+    def test_custom_values_from_yaml(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://test", "api_key": "sk-test"},
+                "cli": {"planning": {"enabled": False, "auto_threshold_tools": 10}},
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.cli.planning.enabled is False
+        assert config.cli.planning.auto_threshold_tools == 10
+
+    def test_disabled_via_string(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://test", "api_key": "sk-test"},
+                "cli": {"planning": {"enabled": "false"}},
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.cli.planning.enabled is False
+
+    def test_invalid_threshold_falls_back_to_default(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://test", "api_key": "sk-test"},
+                "cli": {"planning": {"auto_threshold_tools": "bad"}},
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.cli.planning.auto_threshold_tools == 5
+
+    def test_empty_planning_section(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://test", "api_key": "sk-test"},
+                "cli": {"planning": {}},
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.cli.planning.enabled is True
+        assert config.cli.planning.auto_threshold_tools == 5

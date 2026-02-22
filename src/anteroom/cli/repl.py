@@ -600,6 +600,7 @@ async def run_cli(
     conversation_id: str | None = None,
     trust_project: bool = False,
     no_project_context: bool = False,
+    plan_mode: bool = False,
 ) -> None:
     """Main entry point for CLI mode."""
     working_dir = os.getcwd()
@@ -838,6 +839,11 @@ async def run_cli(
             )
             if latest_version:
                 renderer.render_update_available(__version__, latest_version)
+            if plan_mode:
+                renderer.console.print(
+                    f"[yellow]Planning mode active.[/yellow] The AI will explore and write a plan.\n"
+                    f"  [{MUTED}]Use /plan approve to execute, /plan off to exit.[/{MUTED}]\n"
+                )
             await _run_repl(
                 config=config,
                 db=db,
@@ -853,6 +859,7 @@ async def run_cli(
                 tool_registry=tool_registry,
                 cancel_event_ref=_active_cancel_event,
                 subagent_limiter=_subagent_limiter,
+                plan_mode=plan_mode,
             )
     finally:
         if mcp_manager:
@@ -1091,6 +1098,7 @@ async def _run_repl(
     tool_registry: Any = None,
     cancel_event_ref: list[asyncio.Event | None] | None = None,
     subagent_limiter: Any = None,
+    plan_mode: bool = False,
 ) -> None:
     """Run the interactive REPL."""
     id_kw = _identity_kwargs(config)
@@ -1168,6 +1176,7 @@ async def _run_repl(
         "skills",
         "mcp",
         "model",
+        "plan",
         "verbose",
         "detail",
         "help",
@@ -1338,6 +1347,8 @@ async def _run_repl(
                 (desc, "              Show MCP server status\n"),
                 (cmd, "  /conventions"),
                 (desc, "      Show loaded ANTEROOM.md conventions\n"),
+                (cmd, "  /plan"),
+                (desc, "             Plan mode: on/approve/status/off\n"),
                 (cmd, "  /verbose"),
                 (desc, "          Cycle: compact > detailed > verbose\n"),
                 (cmd, "  /detail"),
@@ -1431,7 +1442,64 @@ async def _run_repl(
     async def _agent_runner() -> None:
         """Process messages from input_queue, run commands and agent loop."""
         nonlocal conv, ai_messages, is_first_message, tools_openai, all_tool_names
-        nonlocal current_model, ai_service
+        nonlocal current_model, ai_service, extra_system_prompt
+
+        # -- Plan mode state --
+        from .plan import (
+            PLAN_MODE_ALLOWED_TOOLS,
+            build_planning_system_prompt,
+            delete_plan,
+            get_plan_file_path,
+            read_plan,
+        )
+
+        _plan_active: list[bool] = [plan_mode]
+        _plan_file: list[Path | None] = [None]
+        _full_tools_backup: list[list[dict[str, Any]] | None] = [None]
+
+        def _apply_plan_mode(conv_id: str) -> None:
+            nonlocal tools_openai, extra_system_prompt
+            plan_path = get_plan_file_path(config.app.data_dir, conv_id)
+            _plan_file[0] = plan_path
+            _plan_active[0] = True
+            # Back up full tools before filtering
+            _full_tools_backup[0] = tools_openai
+
+            # Filter tools to plan-mode allowlist
+            if tools_openai:
+                tools_openai = [t for t in tools_openai if t.get("function", {}).get("name") in PLAN_MODE_ALLOWED_TOOLS]
+
+            # Inject planning prompt (remove existing if re-entering)
+            extra_system_prompt = _strip_planning_prompt(extra_system_prompt)
+            extra_system_prompt += "\n\n" + build_planning_system_prompt(plan_path)
+
+        def _exit_plan_mode(plan_content: str | None = None) -> None:
+            nonlocal tools_openai, extra_system_prompt
+            _plan_active[0] = False
+
+            # Restore full tools
+            if _full_tools_backup[0] is not None:
+                tools_openai = _full_tools_backup[0]
+                _full_tools_backup[0] = None
+            else:
+                _rebuild_tools()
+
+            # Remove planning prompt, optionally inject approved plan
+            extra_system_prompt = _strip_planning_prompt(extra_system_prompt)
+            if plan_content:
+                extra_system_prompt += (
+                    "\n\n<approved_plan>\n"
+                    "The user has approved the following implementation plan. "
+                    "Execute it step by step.\n\n" + plan_content + "\n</approved_plan>"
+                )
+
+        def _strip_planning_prompt(prompt: str) -> str:
+            prompt = re.sub(r"\n*<planning_mode>.*?</planning_mode>", "", prompt, flags=re.DOTALL)
+            return prompt
+
+        # Apply plan mode at startup if --plan was passed
+        if _plan_active[0]:
+            _apply_plan_mode(conv["id"])
 
         while not exit_flag.is_set():
             # If agent_busy was set (by _collect_input) but we're back here waiting
@@ -1461,6 +1529,8 @@ async def _run_repl(
                     conv = storage.create_conversation(db, title=conv_title, conversation_type=conv_type, **id_kw)
                     ai_messages = []
                     is_first_message = conv_type == "chat"
+                    if _plan_active[0]:
+                        _apply_plan_mode(conv["id"])
                     type_label = f" ({conv_type})" if conv_type != "chat" else ""
                     renderer.console.print(f"[{CHROME}]New conversation started{type_label}[/{CHROME}]\n")
                     continue
@@ -1745,6 +1815,70 @@ async def _run_repl(
                     ai_service = create_ai_service(config.ai)
                     ai_service.config.model = new_model
                     renderer.console.print(f"[{CHROME}]Switched to model: {new_model}[/{CHROME}]\n")
+                    continue
+                elif cmd == "/plan":
+                    parts = user_input.split()
+                    sub = parts[1].lower() if len(parts) >= 2 else "on"
+                    if sub in ("on", "start"):
+                        if _plan_active[0]:
+                            renderer.console.print(f"[{CHROME}]Already in planning mode[/{CHROME}]\n")
+                        else:
+                            _apply_plan_mode(conv["id"])
+                            renderer.console.print(
+                                f"[yellow]Planning mode active.[/yellow] The AI will explore and write a plan.\n"
+                                f"  [{MUTED}]Use /plan approve to execute, /plan off to exit.[/{MUTED}]\n"
+                            )
+                    elif sub == "approve":
+                        if not _plan_active[0]:
+                            renderer.console.print(f"[{CHROME}]Not in planning mode[/{CHROME}]\n")
+                        elif _plan_file[0] is None:
+                            renderer.console.print(f"[{CHROME}]No plan file path set[/{CHROME}]\n")
+                        else:
+                            content = read_plan(_plan_file[0])
+                            if not content:
+                                renderer.console.print(
+                                    f"[{CHROME}]No plan file found at {_plan_file[0]}[/{CHROME}]\n"
+                                    f"  [{MUTED}]The AI needs to write the plan first.[/{MUTED}]\n"
+                                )
+                            else:
+                                _exit_plan_mode(plan_content=content)
+                                delete_plan(_plan_file[0])
+                                renderer.console.print(
+                                    "[green]Plan approved.[/green] Full tools restored.\n"
+                                    f"  [{MUTED}]Plan injected into context. "
+                                    f"Send a message to start.[/{MUTED}]\n"
+                                )
+                    elif sub == "status":
+                        if _plan_active[0]:
+                            renderer.console.print("[yellow]Planning mode: active[/yellow]")
+                            if _plan_file[0]:
+                                content = read_plan(_plan_file[0])
+                                if content:
+                                    renderer.console.print(f"  Plan file: {_plan_file[0]} ({len(content)} chars)")
+                                    lines = content.splitlines()
+                                    preview = lines[:20]
+                                    renderer.console.print()
+                                    for line in preview:
+                                        renderer.console.print(f"  {line}")
+                                    if len(lines) > 20:
+                                        renderer.console.print(
+                                            f"\n  [{MUTED}]... {len(lines) - 20} more lines[/{MUTED}]"
+                                        )
+                                else:
+                                    renderer.console.print(
+                                        f"  [{MUTED}]Plan file: {_plan_file[0]} (not yet written)[/{MUTED}]"
+                                    )
+                        else:
+                            renderer.console.print(f"[{CHROME}]Planning mode: off[/{CHROME}]")
+                        renderer.console.print()
+                    elif sub == "off":
+                        if not _plan_active[0]:
+                            renderer.console.print(f"[{CHROME}]Not in planning mode[/{CHROME}]\n")
+                        else:
+                            _exit_plan_mode()
+                            renderer.console.print(f"[{CHROME}]Planning mode off. Full tools restored.[/{CHROME}]\n")
+                    else:
+                        renderer.console.print(f"[{CHROME}]Usage: /plan [on|approve|status|off][/{CHROME}]\n")
                     continue
                 elif cmd == "/verbose":
                     new_v = renderer.cycle_verbosity()

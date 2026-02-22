@@ -278,6 +278,7 @@ def _run_chat(
     model: str | None = None,
     trust_project: bool = False,
     no_project_context: bool = False,
+    plan_mode: bool = False,
 ) -> None:
     """Launch the CLI chat mode."""
     import os
@@ -306,6 +307,7 @@ def _run_chat(
                 conversation_id=resume_id,
                 trust_project=trust_project,
                 no_project_context=no_project_context,
+                plan_mode=plan_mode,
             )
         )
     except (KeyboardInterrupt, asyncio.CancelledError):
@@ -443,6 +445,11 @@ def main() -> None:
         action="store_true",
         help="Skip loading project-level ANTEROOM.md entirely",
     )
+    chat_parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="Start in planning mode (explore-only, then approve to implement)",
+    )
     # `aroom exec` subcommand
     exec_parser = subparsers.add_parser("exec", help="Non-interactive exec mode for scripting and CI")
     exec_parser.add_argument("prompt", help="Prompt to execute")
@@ -555,6 +562,7 @@ def main() -> None:
             model=args.model,
             trust_project=args.trust_project,
             no_project_context=args.no_project_context,
+            plan_mode=args.plan,
         )
     elif args.command == "exec":
         _run_exec(

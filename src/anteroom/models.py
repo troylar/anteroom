@@ -181,6 +181,7 @@ class CanvasUpdate(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(default="", max_length=100000)
     regenerate: bool = False
+    plan_mode: bool = False
     source_ids: list[str] = Field(default_factory=list, max_length=50)
     source_tag: str | None = Field(default=None, max_length=200)
     source_group_id: str | None = Field(default=None, max_length=200)

@@ -237,6 +237,7 @@ async def chat(conversation_id: str, request: Request):
 
     content_type = request.headers.get("content-type", "")
     regenerate = False
+    plan_mode = False
     source_ids: list[str] = []
     source_tag: str | None = None
     source_group_id: str | None = None
@@ -250,6 +251,7 @@ async def chat(conversation_id: str, request: Request):
         body = ChatRequest(**(await request.json()))
         message_text = body.message
         regenerate = body.regenerate
+        plan_mode = body.plan_mode
         source_ids = body.source_ids
         source_tag = body.source_tag
         source_group_id = body.source_group_id
@@ -472,6 +474,15 @@ async def chat(conversation_id: str, request: Request):
         mcp_tools = mcp_manager.get_openai_tools()
         if mcp_tools:
             tools_openai.extend(mcp_tools)
+
+    # Plan mode: filter tools and inject planning prompt
+    if plan_mode:
+        from ..cli.plan import PLAN_MODE_ALLOWED_TOOLS, build_planning_system_prompt, get_plan_file_path
+
+        plan_path = get_plan_file_path(request.app.state.config.app.data_dir, conversation_id)
+        tools_openai = [t for t in tools_openai if t.get("function", {}).get("name") in PLAN_MODE_ALLOWED_TOOLS]
+        extra_system_prompt += "\n\n" + build_planning_system_prompt(plan_path)
+
     tools = tools_openai if tools_openai else None
 
     is_first_message = not regenerate and len(history) <= 1

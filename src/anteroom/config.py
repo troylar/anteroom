@@ -278,6 +278,12 @@ class AppSettings:
 
 
 @dataclass
+class PlanningConfig:
+    enabled: bool = True
+    auto_threshold_tools: int = 5  # reserved for future auto-trigger
+
+
+@dataclass
 class CliConfig:
     builtin_tools: bool = True
     max_tool_iterations: int = 50
@@ -292,6 +298,7 @@ class CliConfig:
     tool_output_max_chars: int = 2000  # max chars per tool result before truncation
     file_reference_max_chars: int = 100_000  # max chars from @file references
     model_context_window: int = 128_000  # model context window size for usage bar
+    planning: PlanningConfig = field(default_factory=PlanningConfig)
 
 
 @dataclass
@@ -605,6 +612,19 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     except (ValueError, TypeError):
         model_context_window = 128_000
 
+    planning_raw = cli_raw.get("planning", {})
+    if not isinstance(planning_raw, dict):
+        planning_raw = {}
+    planning_enabled = str(planning_raw.get("enabled", "true")).lower() not in ("false", "0", "no")
+    try:
+        planning_auto_threshold = max(1, int(planning_raw.get("auto_threshold_tools", 5)))
+    except (ValueError, TypeError):
+        planning_auto_threshold = 5
+    planning_config = PlanningConfig(
+        enabled=planning_enabled,
+        auto_threshold_tools=planning_auto_threshold,
+    )
+
     cli_config = CliConfig(
         builtin_tools=cli_raw.get("builtin_tools", True),
         max_tool_iterations=int(cli_raw.get("max_tool_iterations", 50)),
@@ -619,6 +639,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         tool_output_max_chars=tool_output_max_chars,
         file_reference_max_chars=file_reference_max_chars,
         model_context_window=model_context_window,
+        planning=planning_config,
     )
 
     identity_raw = raw.get("identity", {})
