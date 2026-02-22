@@ -95,6 +95,91 @@ mypy src/ --ignore-missing-imports 2>&1 | tail -30
 
 These are **blocking** — if any fail, abort. The user must fix issues before submitting.
 
+### Step 3b: Dependency Health (parallel, unless --skip-checks)
+
+Run dependency health checks in parallel. Launch these concurrently with Steps 4 and 5 — do not wait for 3b to complete before starting Step 4.
+
+**E — Vulnerability audit:**
+
+First check if pip-audit is available:
+```bash
+which pip-audit 2>/dev/null
+```
+
+If not installed, skip with ⏭️ and emit: `⚠️ pip-audit not installed — install with: pip install anteroom[dev]`
+
+If installed, run:
+```bash
+pip-audit 2>&1 | tail -40
+```
+
+This is **blocking** — if known vulnerabilities are found, abort. The user must fix or pin safe versions before submitting.
+
+**F — Outdated dependencies:**
+```bash
+pip list --outdated --format=json 2>&1
+```
+
+Parse the JSON output. This is a **warning** (non-blocking). Report a compact summary:
+```
+⚠️ Outdated: N packages have newer versions available
+   package-name  1.2.3 → 1.3.0
+   other-pkg     0.9.1 → 1.0.0
+```
+
+If all packages are up to date, report ✅. Limit display to 10 most outdated packages; if more, show count.
+
+**G — New dependency review (conditional):**
+
+Only run this check if `pyproject.toml` is in the diff:
+```bash
+git diff --name-only $BASE..HEAD -- pyproject.toml
+```
+
+If `pyproject.toml` changed:
+
+1. Extract added/changed dependency lines from the diff. Match any added line that looks like a PEP 508 dependency (not just `>=`):
+   ```bash
+   git diff $BASE..HEAD -- pyproject.toml | grep '^+' | grep -v '^+++' | grep -E '^\+\s*"[a-zA-Z]'
+   ```
+   Extract the package name from each line (the part before any version specifier: `>=`, `==`, `~=`, `!=`, `<`, `>`, `[`, or end of string).
+
+2. For each new or changed package, query the PyPI JSON API with error handling:
+   ```bash
+   curl -s --max-time 5 "https://pypi.org/pypi/<package>/json" | python3 -c "
+   import sys, json
+   try:
+       d = json.load(sys.stdin)
+       info = d['info']
+       version = info.get('version', 'unknown')
+       upload_time = 'unknown'
+       if d.get('urls'):
+           upload_time = d['urls'][0].get('upload_time', 'unknown')[:10]
+       print(f\"License: {info.get('license') or info.get('license_expression') or 'UNKNOWN'}\")
+       print(f\"Latest: {version} ({upload_time})\")
+       print(f\"Summary: {info.get('summary', 'N/A')}\")
+   except Exception:
+       print('ERROR: PyPI unreachable or invalid response')
+   "
+   ```
+   If the query fails (ERROR output or curl timeout), report the package as `⚠️ [SKIP] PyPI unavailable` rather than failing.
+
+3. Flag as warning if:
+   - License is unknown or empty
+   - Last release was more than 2 years ago (possibly abandoned)
+   - Package has no summary (minimal metadata)
+   - PyPI query failed
+
+This is a **warning** (non-blocking). Report format:
+```
+📦 New/Changed Dependencies:
+  aiohttp (>=3.12.14)  — License: Apache-2.0, Latest: 3.12.14 (2026-01-15) ✅
+  obscure-pkg (>=1.0)  — License: UNKNOWN, Latest: 1.0.0 (2022-03-01) ⚠️ stale, no license
+  air-gapped-pkg       — ⚠️ [SKIP] PyPI unavailable
+```
+
+If `pyproject.toml` was not changed, skip with ⏭️.
+
 ### Step 4: Test Coverage for New Code
 
 Check that new or modified Python source files have corresponding unit tests.
@@ -242,6 +327,11 @@ Display the full validation results locally in the chat:
   Tests:          ✅ / ❌ N passed, M failed
   Type Check:     ✅ / ❌ / ⏭️
 
+📦 Dependency Health
+  Vulnerabilities: ✅ / ❌ N vulnerabilities found
+  Outdated:        ✅ / ⚠️ N packages outdated
+  New Deps:        ✅ / ⚠️ N new deps to review / ⏭️ no pyproject.toml changes
+
 🧪 Test Coverage
   Test Files:     ✅ / ❌ N new modules missing tests
   Thoroughness:   GOOD / WEAK / POOR
@@ -275,6 +365,7 @@ Details:
 **Blocking** (Result: NOT READY):
 - Tests, lint, or format fail
 - Security issues found
+- Known vulnerabilities found by pip-audit
 - Missing test files for new modules
 - POOR test thoroughness
 
@@ -282,6 +373,8 @@ Details:
 - Uncommitted changes
 - Missing issue references on some commits
 - WEAK test thoroughness
+- Outdated dependencies
+- New dependencies missing license or stale (>2 years since last release)
 - Documentation needs updates
 - Vision alignment concerns
 
@@ -393,6 +486,7 @@ gh pr view --json number,url,title
   📎 Issues:   Closes #<N>, Addresses #<N>
   📌 Status:   <ready | draft>
   🧪 Checks:   ✅ lint, format, tests, types
+  📦 Deps:     ✅ / ❌ N vulns / ⚠️ N outdated, N new to review
   🔒 Security: ✅ / ⚠️ N issues
   📖 Docs:     ✅ up to date / ✅ N fixes committed / ⚠️ N need manual review
   🎯 Vision:   ✅ supports <principles>
