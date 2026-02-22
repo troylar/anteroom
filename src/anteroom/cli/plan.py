@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 _PLAN_SUBCOMMANDS = frozenset({"on", "start", "approve", "status", "edit", "off"})
@@ -71,6 +72,24 @@ def delete_plan(plan_file_path: Path) -> None:
     """Delete the plan file if it exists."""
     if plan_file_path.exists():
         plan_file_path.unlink()
+
+
+def parse_plan_steps(content: str) -> list[str]:
+    """Extract numbered steps from plan markdown's Implementation Steps section."""
+    in_steps = False
+    steps: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("## implementation steps"):
+            in_steps = True
+            continue
+        if in_steps and stripped.startswith("## "):
+            break
+        if in_steps and re.match(r"\d+\.", stripped):
+            step_text = re.sub(r"^\d+\.\s*", "", stripped)
+            if step_text:
+                steps.append(step_text)
+    return steps
 
 
 def parse_plan_command(user_input: str) -> tuple[str | None, str | None]:
