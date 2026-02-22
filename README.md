@@ -87,7 +87,12 @@ aroom chat                          # Interactive REPL
 aroom chat "explain main.py"        # One-shot mode
 aroom chat -c                       # Continue last conversation
 aroom chat --model gpt-4o "hello"   # Override model
-aroom chat --plan                   # Planning mode: explore, write plan, then approve
+aroom chat --plan                   # Start in planning mode
+aroom chat                          # Then in REPL:
+  > /plan                           # Enter planning mode
+  > /plan approve                   # Exit planning mode and execute plan
+  > /plan build a REST API          # Inline: planning mode + start prompt
+  > /plan status                    # Show planning mode status
 ```
 
 ### CLI Exec
