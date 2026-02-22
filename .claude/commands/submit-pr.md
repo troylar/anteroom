@@ -97,9 +97,18 @@ These are **blocking** — if any fail, abort. The user must fix issues before s
 
 ### Step 3b: Dependency Health (parallel, unless --skip-checks)
 
-Run dependency health checks in parallel. These can run concurrently with Step 4 and Step 5.
+Run dependency health checks in parallel. Launch these concurrently with Steps 4 and 5 — do not wait for 3b to complete before starting Step 4.
 
 **E — Vulnerability audit:**
+
+First check if pip-audit is available:
+```bash
+which pip-audit 2>/dev/null
+```
+
+If not installed, skip with ⏭️ and emit: `⚠️ pip-audit not installed — install with: pip install anteroom[dev]`
+
+If installed, run:
 ```bash
 pip-audit 2>&1 | tail -40
 ```
@@ -129,34 +138,44 @@ git diff --name-only $BASE..HEAD -- pyproject.toml
 
 If `pyproject.toml` changed:
 
-1. Extract added/changed dependency lines from the diff:
+1. Extract added/changed dependency lines from the diff. Match any added line that looks like a PEP 508 dependency (not just `>=`):
    ```bash
-   git diff $BASE..HEAD -- pyproject.toml | grep '^+.*>=' | grep -v '^+++'
+   git diff $BASE..HEAD -- pyproject.toml | grep '^+' | grep -v '^+++' | grep -E '^\+\s*"[a-zA-Z]'
    ```
-2. For each new or changed package, extract the package name and query the PyPI JSON API:
+   Extract the package name from each line (the part before any version specifier: `>=`, `==`, `~=`, `!=`, `<`, `>`, `[`, or end of string).
+
+2. For each new or changed package, query the PyPI JSON API with error handling:
    ```bash
-   curl -s "https://pypi.org/pypi/<package>/json" | python3 -c "
+   curl -s --max-time 5 "https://pypi.org/pypi/<package>/json" | python3 -c "
    import sys, json
-   d = json.load(sys.stdin)
-   info = d['info']
-   releases = sorted(d['releases'].keys(), key=lambda v: d['releases'][v][0]['upload_time'] if d['releases'][v] else '', reverse=True)
-   latest = releases[0] if releases else 'unknown'
-   last_upload = d['releases'][latest][0]['upload_time'][:10] if d['releases'].get(latest) else 'unknown'
-   print(f\"License: {info.get('license', 'UNKNOWN')}\")
-   print(f\"Latest: {latest} ({last_upload})\")
-   print(f\"Summary: {info.get('summary', 'N/A')}\")
+   try:
+       d = json.load(sys.stdin)
+       info = d['info']
+       version = info.get('version', 'unknown')
+       upload_time = 'unknown'
+       if d.get('urls'):
+           upload_time = d['urls'][0].get('upload_time', 'unknown')[:10]
+       print(f\"License: {info.get('license') or info.get('license_expression') or 'UNKNOWN'}\")
+       print(f\"Latest: {version} ({upload_time})\")
+       print(f\"Summary: {info.get('summary', 'N/A')}\")
+   except Exception:
+       print('ERROR: PyPI unreachable or invalid response')
    "
    ```
+   If the query fails (ERROR output or curl timeout), report the package as `⚠️ [SKIP] PyPI unavailable` rather than failing.
+
 3. Flag as warning if:
    - License is unknown or empty
    - Last release was more than 2 years ago (possibly abandoned)
    - Package has no summary (minimal metadata)
+   - PyPI query failed
 
 This is a **warning** (non-blocking). Report format:
 ```
 📦 New/Changed Dependencies:
   aiohttp (>=3.12.14)  — License: Apache-2.0, Latest: 3.12.14 (2026-01-15) ✅
   obscure-pkg (>=1.0)  — License: UNKNOWN, Latest: 1.0.0 (2022-03-01) ⚠️ stale, no license
+  air-gapped-pkg       — ⚠️ [SKIP] PyPI unavailable
 ```
 
 If `pyproject.toml` was not changed, skip with ⏭️.
