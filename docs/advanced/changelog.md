@@ -4,6 +4,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## v1.24.4 — 2026-02-22
+
+- **Changelog with release highlights**: Every release now has a highlights entry in `docs/advanced/changelog.md`, viewable on ReadTheDocs (#290)
+- Backfilled all 80 existing releases; `/deploy` skill auto-appends new entries going forward
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.24.4)
+
+---
+
 ## v1.24.3 — 2026-02-22
 
 - **Replaced Snyk with open-source SAST tools** — CI no longer requires a `SNYK_TOKEN` secret or Node.js setup. Semgrep runs pattern-based security scanning 
