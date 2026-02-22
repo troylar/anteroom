@@ -291,6 +291,41 @@ Note any manual steps needed (usually none — migrations are automatic).
 gh release create vX.Y.Z --title "vX.Y.Z" --notes "<generated notes>"
 ```
 
+### Step 7a: Update Changelog
+
+After the GitHub Release is created, update `docs/advanced/changelog.md` with a highlights entry.
+
+1. Read the just-created release notes:
+   ```bash
+   gh release view vX.Y.Z --json body --jq '.body'
+   ```
+
+2. Extract user-facing highlights from the release notes body:
+   - Include content from **New Features**, **Bug Fixes**, and **Other Improvements** sections
+   - Skip **For Developers** and **Upgrading** sections
+   - Condense to 1-3 concise bullet points (one line each, max ~150 chars)
+   - If the release has no user-facing sections, use: `*Maintenance release — see GitHub Release for details.*`
+
+3. Prepend a new entry to `docs/advanced/changelog.md` after the header block (after the intro paragraph, before the first `---`):
+   ```markdown
+   ---
+
+   ## vX.Y.Z — YYYY-MM-DD
+
+   - Highlight one
+   - Highlight two (#issue)
+
+   [GitHub Release](https://github.com/troylar/anteroom/releases/tag/vX.Y.Z)
+
+   ```
+
+4. Commit and push:
+   ```bash
+   git add docs/advanced/changelog.md
+   git commit -m "docs: add vX.Y.Z changelog highlights (#<primary issue>)"
+   git push origin main --no-verify
+   ```
+
 ### Step 7b: Clean Up Issue Labels
 
 For each issue closed by the merged PR:
@@ -358,6 +393,7 @@ On success:
   🏷️ Tag:      vX.Y.Z
   🏷️ Release:  https://github.com/troylar/anteroom/releases/tag/vX.Y.Z
   📊 Version:  X.Y.Z-1 → X.Y.Z (<type> bump)
+  📝 Changelog: ✅ docs/advanced/changelog.md updated
   📋 Queue:    N open PRs remaining (N mergeable, N conflicting)
 
 ────────────────────────────────────────────
