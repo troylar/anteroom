@@ -358,11 +358,15 @@ class McpManager:
                 f"Connected servers: {', '.join(available) if available else '(none)'}"
             )
 
+        # SECURITY-REVIEW: MCP tool arguments are JSON-serialized over stdio/SSE and never
+        # passed to a shell. Input validation for shell injection belongs in tools/safety.py
+        # (the bash tool boundary), not here. Removed _validate_tool_args per #291.
         session = self._sessions[server_name]
         try:
             result = await session.call_tool(tool_name, arguments)
         except Exception as e:
-            raise ValueError(f"MCP server '{server_name}' returned an error for tool '{tool_name}': {e}") from e
+            logger.error("MCP tool '%s' on server '%s' failed: %s", tool_name, server_name, e, exc_info=True)
+            raise ValueError(f"MCP server '{server_name}' returned an error for tool '{tool_name}'") from e
 
         if hasattr(result, "content"):
             contents = []

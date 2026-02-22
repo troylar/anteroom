@@ -210,7 +210,7 @@ class TestMcpManagerCallTool:
 
         msg = str(exc_info.value)
         assert "broken_tool" in msg
-        assert "connection reset" in msg
+        assert "connection reset" not in msg  # raw exception not exposed to caller
 
     @pytest.mark.asyncio()
     async def test_server_error_chains_original(self) -> None:
