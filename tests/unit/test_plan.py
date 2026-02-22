@@ -177,7 +177,6 @@ class TestParsePlanCommand:
         assert prompt == "Build a REST API"
 
 
-
 class TestPlanModeAllowedTools:
     def test_contains_read_tools(self) -> None:
         assert "read_file" in PLAN_MODE_ALLOWED_TOOLS

@@ -1913,8 +1913,7 @@ async def _run_repl(
                         # Inline prompt mode: /plan <prompt text>
                         if not inline_prompt:
                             renderer.console.print(
-                                f"[{CHROME}]Usage: /plan"
-                                f" [on|approve|status|edit|off] or /plan <prompt>[/{CHROME}]\n"
+                                f"[{CHROME}]Usage: /plan [on|approve|status|edit|off] or /plan <prompt>[/{CHROME}]\n"
                             )
                             continue
                         if not _plan_active[0]:
