@@ -1572,7 +1572,7 @@ async def _run_repl(
                     _sb_new = renderer.get_status_bar()
                     if _sb_new is not None:
                         _sb_new.conv_id = conv["id"]
-                        _sb_new._invalidate()
+                        _sb_new.invalidate()
                     type_label = f" ({conv_type})" if conv_type != "chat" else ""
                     renderer.console.print(f"[{CHROME}]New conversation started{type_label}[/{CHROME}]\n")
                     continue
@@ -1632,7 +1632,7 @@ async def _run_repl(
                         _sb_last = renderer.get_status_bar()
                         if _sb_last is not None:
                             _sb_last.conv_id = conv["id"]
-                            _sb_last._invalidate()
+                            _sb_last.invalidate()
                     else:
                         renderer.console.print(f"[{CHROME}]No previous conversations[/{CHROME}]\n")
                     continue
@@ -1863,7 +1863,7 @@ async def _run_repl(
                     _sb_model = renderer.get_status_bar()
                     if _sb_model is not None:
                         _sb_model.model = new_model
-                        _sb_model._invalidate()
+                        _sb_model.invalidate()
                     renderer.console.print(f"[{CHROME}]Switched to model: {new_model}[/{CHROME}]\n")
                     continue
                 elif cmd == "/plan":
@@ -1899,7 +1899,7 @@ async def _run_repl(
                                     steps = parse_plan_steps(content)
                                     if steps:
                                         _sb_plan.set_plan_progress(0, len(steps), steps[0] if steps else "")
-                                    _sb_plan._invalidate()
+                                    _sb_plan.invalidate()
                                 renderer.console.print(
                                     "[green]Plan approved.[/green] Full tools restored.\n"
                                     f"  [{MUTED}]Plan injected into context. "
@@ -1979,7 +1979,7 @@ async def _run_repl(
                             _sb_off = renderer.get_status_bar()
                             if _sb_off is not None:
                                 _sb_off.clear_plan()
-                                _sb_off._invalidate()
+                                _sb_off.invalidate()
                             renderer.console.print(f"[{CHROME}]Planning mode off. Full tools restored.[/{CHROME}]\n")
                         continue
                     else:
@@ -2030,7 +2030,7 @@ async def _run_repl(
                         _sb_resume = renderer.get_status_bar()
                         if _sb_resume is not None:
                             _sb_resume.conv_id = conv["id"]
-                            _sb_resume._invalidate()
+                            _sb_resume.invalidate()
                     else:
                         renderer.render_error(f"Conversation not found: {resolved_id}")
                     continue
@@ -2265,7 +2265,7 @@ async def _run_repl(
                             if _sb_turn is not None:
                                 _sb_turn.increment_tool_calls()
                                 _sb_turn.clear_thinking()
-                                _sb_turn._invalidate()
+                                _sb_turn.invalidate()
                         elif event.kind == "tool_call_end":
                             renderer.render_tool_call_end(
                                 event.data["tool_name"], event.data["status"], event.data["output"]
@@ -2341,7 +2341,7 @@ async def _run_repl(
                                 thinking = False
                             if _sb_turn is not None:
                                 _sb_turn.clear_thinking()
-                                _sb_turn._invalidate()
+                                _sb_turn.invalidate()
                             if not cancel_event.is_set():
                                 renderer.save_turn_history()
                                 renderer.render_response_end()

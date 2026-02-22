@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
 from enum import Enum
 from typing import Any
 
@@ -347,7 +348,7 @@ async def _thinking_ticker() -> None:
                     _write_thinking_line(elapsed)
                 if _status_bar is not None:
                     _status_bar.thinking_elapsed = elapsed
-                    _status_bar._invalidate()
+                    _status_bar.invalidate()
     except asyncio.CancelledError:
         return
 
@@ -1215,12 +1216,12 @@ class StatusBar:
         self.plan_step: int = 0
         self.plan_total: int = 0
         self.plan_step_desc: str = ""
-        self._invalidate_cb: Any | None = None
+        self._invalidate_cb: Callable[[], None] | None = None
 
-    def set_invalidate_callback(self, cb: Any) -> None:
+    def set_invalidate_callback(self, cb: Callable[[], None]) -> None:
         self._invalidate_cb = cb
 
-    def _invalidate(self) -> None:
+    def invalidate(self) -> None:
         if self._invalidate_cb is not None:
             try:
                 self._invalidate_cb()
@@ -1275,7 +1276,7 @@ class StatusBar:
         parts: list[str] = []
 
         if self.plan_active and self.plan_total > 0:
-            pct = int((self.plan_step / self.plan_total) * 100) if self.plan_total else 0
+            pct = int((self.plan_step / self.plan_total) * 100)
             parts.append(f"Plan: {self.plan_step}/{self.plan_total} ({pct}%)")
             if self.plan_step_desc:
                 parts.append(self.plan_step_desc)

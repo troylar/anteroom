@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from anteroom.cli.renderer import StatusBar
+from anteroom.cli.renderer import StatusBar, get_status_bar, init_status_bar
 
 
 class TestStatusBarInit:
@@ -202,12 +202,12 @@ class TestStatusBarInvalidate:
         called = []
         sb = StatusBar()
         sb.set_invalidate_callback(lambda: called.append(True))
-        sb._invalidate()
+        sb.invalidate()
         assert len(called) == 1
 
     def test_invalidate_no_callback(self) -> None:
         sb = StatusBar()
-        sb._invalidate()  # should not raise
+        sb.invalidate()  # should not raise
 
     def test_invalidate_callback_exception_suppressed(self) -> None:
         def bad_cb() -> None:
@@ -215,7 +215,7 @@ class TestStatusBarInvalidate:
 
         sb = StatusBar()
         sb.set_invalidate_callback(bad_cb)
-        sb._invalidate()  # should not raise
+        sb.invalidate()  # should not raise
 
 
 class TestStatusBarSetIdleInfo:
@@ -231,3 +231,23 @@ class TestStatusBarSetIdleInfo:
         sb.set_idle_info(model="", conv_id="")
         assert sb.model == "original"
         assert sb.conv_id == "orig-id"
+
+
+class TestStatusBarSingleton:
+    def test_init_creates_and_returns(self) -> None:
+        sb = init_status_bar(model="test-model", version="1.0")
+        assert sb is not None
+        assert sb.model == "test-model"
+        assert get_status_bar() is sb
+
+    def test_get_returns_same_instance(self) -> None:
+        sb = init_status_bar(model="m")
+        assert get_status_bar() is sb
+        assert get_status_bar() is sb
+
+    def test_reinit_replaces(self) -> None:
+        sb1 = init_status_bar(model="first")
+        sb2 = init_status_bar(model="second")
+        assert sb2 is not sb1
+        assert get_status_bar() is sb2
+        assert get_status_bar().model == "second"

@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 
 _PLAN_SUBCOMMANDS = frozenset({"on", "start", "approve", "status", "edit", "off"})
+_STEP_NUMBER_RE = re.compile(r"\d+\.")
+_STEP_PREFIX_RE = re.compile(r"^\d+\.\s*")
 
 # Tools allowed during plan mode — read-only exploration plus write_file for the plan itself
 PLAN_MODE_ALLOWED_TOOLS = frozenset(
@@ -85,8 +87,8 @@ def parse_plan_steps(content: str) -> list[str]:
             continue
         if in_steps and stripped.startswith("## "):
             break
-        if in_steps and re.match(r"\d+\.", stripped):
-            step_text = re.sub(r"^\d+\.\s*", "", stripped)
+        if in_steps and _STEP_NUMBER_RE.match(stripped):
+            step_text = _STEP_PREFIX_RE.sub("", stripped)
             if step_text:
                 steps.append(step_text)
     return steps
