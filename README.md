@@ -142,18 +142,13 @@ echo "review this" | aroom exec - --quiet      # pipe stdin
 
 ## What makes it different
 
-<table>
-<tr>
-<td width="50%" valign="top">
-
 ### Agentic, not just chat
 
 The AI reads files, edits code, runs commands, searches your codebase, and spawns parallel sub-agents &mdash; with safety gates at every step. Not a chatbot. A collaborator.
 
 **Built-in tools:** `read_file` `write_file` `edit_file` `bash` `glob_files` `grep` `create_canvas` `update_canvas` `patch_canvas` `run_agent`
 
-</td>
-<td width="50%" valign="top">
+---
 
 ### Extensible via MCP
 
@@ -166,10 +161,7 @@ mcp_servers:
     command: npx @anthropic/mcp-filesystem
 ```
 
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
+---
 
 ### Planning mode
 
@@ -183,8 +175,7 @@ For complex tasks, the AI explores first, writes a plan, then executes only afte
   Executing plan: 8 steps across 5 files...
 ```
 
-</td>
-<td width="50%" valign="top">
+---
 
 ### Security-first
 
@@ -196,10 +187,7 @@ Built to [OWASP ASVS Level 1](SECURITY.md) standards. Not bolted on &mdash; bake
 - **Destructive command detection** before execution
 - **MCP SSRF protection** built in
 
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
+---
 
 ### Knowledge sources
 
@@ -209,8 +197,7 @@ Upload files, save notes, bookmark URLs. Sources persist across conversations an
 pip install anteroom[embeddings]  # adds local vectors
 ```
 
-</td>
-<td width="50%" valign="top">
+---
 
 ### Works with everything
 
@@ -221,10 +208,6 @@ Any endpoint that speaks the OpenAI protocol:
 - **Ollama / LM Studio** &mdash; fully offline
 - **vLLM / TGI** &mdash; self-hosted open models
 - **Any OpenAI-compatible API**
-
-</td>
-</tr>
-</table>
 
 <br>
 
