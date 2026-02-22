@@ -84,7 +84,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install Semgrep
-        run: pip install semgrep
+        run: pip install 'semgrep>=1.68.0'
 
       - name: Run Semgrep scan
         id: semgrep
@@ -95,6 +95,7 @@ jobs:
             --sarif \
             --output semgrep-results.sarif \
             src/
+          echo "✅ Semgrep scan completed with no blocking findings"
 
       - name: Upload SARIF to GitHub
         if: always()
