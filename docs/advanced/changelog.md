@@ -4,6 +4,17 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## v1.24.5 — 2026-02-22
+
+**Improved:**
+- **Changelog readability**: Release entries now grouped by type — New, Fixed, Improved — for easier scanning (#295)
+- **Changelog navigation**: Moved to top-level nav in docs instead of hidden under Advanced (#295)
+- Deploy skill auto-generates future entries in the new type-segregated format (#295)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.24.5)
+
+---
+
 ## v1.24.4 — 2026-02-22
 
 **New:**
