@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import stat
@@ -10,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "read_file": "Read file contents with line numbers. Use this instead of bash cat/head/tail.",
@@ -354,6 +357,12 @@ class SafetyConfig:
 
 
 @dataclass
+class ProxyConfig:
+    enabled: bool = False  # opt-in; must be explicitly enabled
+    allowed_origins: list[str] = field(default_factory=list)
+
+
+@dataclass
 class AppConfig:
     ai: AIConfig
     app: AppSettings = field(default_factory=AppSettings)
@@ -363,6 +372,7 @@ class AppConfig:
     identity: UserIdentity | None = None
     embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    proxy: ProxyConfig = field(default_factory=ProxyConfig)
 
 
 def _resolve_data_dir() -> Path:
@@ -761,6 +771,30 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         subagent=subagent_config,
     )
 
+    # Proxy config
+    proxy_raw = raw.get("proxy", {})
+    if not isinstance(proxy_raw, dict):
+        proxy_raw = {}
+    proxy_enabled = str(proxy_raw.get("enabled", os.environ.get("AI_CHAT_PROXY_ENABLED", "false"))).lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    proxy_origins_raw = proxy_raw.get("allowed_origins", [])
+    if not isinstance(proxy_origins_raw, list):
+        proxy_origins_raw = []
+    proxy_origins: list[str] = []
+    for o in proxy_origins_raw:
+        origin = str(o).rstrip("/")
+        if origin == "*" or not origin.startswith(("http://", "https://")):
+            logger.warning("Ignoring invalid proxy allowed_origin: %s", origin)
+            continue
+        proxy_origins.append(origin)
+    proxy_config = ProxyConfig(
+        enabled=proxy_enabled,
+        allowed_origins=proxy_origins,
+    )
+
     return AppConfig(
         ai=ai,
         app=app_settings,
@@ -770,6 +804,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         identity=identity,
         embeddings=embeddings_config,
         safety=safety_config,
+        proxy=proxy_config,
     )
 
 
