@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 23, 2026
 
+### v1.30.0
+
+**New:**
+
+- **Token usage tracking & cost estimation**: Track token consumption per model with `/usage` command in CLI, `aroom usage` subcommand, and `GET /api/usage` web endpoint (#226)
+- **Configurable cost rates**: Set per-model input/output token rates for cost estimation via `cli.usage.model_costs` config (#226)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.30.0)
+
 ### v1.29.0
 
 **New:**
