@@ -30,6 +30,7 @@ def _mock_ai() -> MagicMock:
     mock = MagicMock()
     mock.config = MagicMock()
     mock.config.model = "gpt-4"
+    mock.config.max_tools = 128
     mock._token_provider = None
     return mock
 

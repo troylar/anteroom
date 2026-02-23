@@ -462,6 +462,18 @@ class AIService:
                             "retryable": False,
                         },
                     }
+                elif "too many" in str(e).lower() and "tool" in str(e).lower():
+                    logger.warning("Too many tools in request: %s", e)
+                    yield {
+                        "event": "error",
+                        "data": {
+                            "message": (
+                                "Too many tools for this API provider. Reduce MCP tools or set ai.max_tools in config."
+                            ),
+                            "code": "too_many_tools",
+                            "retryable": False,
+                        },
+                    }
                 else:
                     logger.exception("AI bad request error")
                     yield {

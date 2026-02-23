@@ -222,6 +222,47 @@ class ToolRegistry:
         return list(self._handlers.keys())
 
 
+def cap_tools(
+    tools: list[dict[str, Any]],
+    builtin_names: set[str],
+    limit: int = 128,
+) -> list[dict[str, Any]]:
+    """Cap the tools list to *limit*, prioritising built-in tools over MCP.
+
+    Returns the (possibly truncated) list.  Logs a warning when tools are dropped.
+    A *limit* of 0 means unlimited (no cap applied).
+    """
+    if limit <= 0 or len(tools) <= limit:
+        return tools
+
+    builtin: list[dict[str, Any]] = []
+    mcp: list[dict[str, Any]] = []
+    for t in tools:
+        name = t.get("function", {}).get("name", "")
+        if name in builtin_names:
+            builtin.append(t)
+        else:
+            mcp.append(t)
+
+    mcp.sort(key=lambda t: t.get("function", {}).get("name", ""))
+    remaining = limit - len(builtin)
+    if remaining < 0:
+        remaining = 0
+    kept_mcp = mcp[:remaining]
+    dropped = mcp[remaining:]
+
+    if dropped:
+        names = [t.get("function", {}).get("name", "?") for t in dropped]
+        logger.warning(
+            "Tool limit (%d) exceeded — dropped %d MCP tool(s): %s",
+            limit,
+            len(dropped),
+            ", ".join(names),
+        )
+
+    return builtin + kept_mcp
+
+
 def register_default_tools(registry: ToolRegistry, working_dir: str | None = None) -> None:
     """Register all built-in tools."""
     from . import ask_user, bash, edit, glob_tool, grep, read, subagent, write

@@ -217,6 +217,10 @@ async def _run_subagent(
             child_tools.extend(mcp_tools)
     if child_depth >= max_depth:
         child_tools = [t for t in child_tools if t["function"]["name"] != "run_agent"]
+    # Cap tools to provider limit, prioritising built-in tools
+    from . import cap_tools
+
+    child_tools = cap_tools(child_tools, set(_tool_registry.list_tools()), limit=child_config.max_tools)
 
     # Child tool executor wraps the registry, injecting depth and limiter for nested sub-agents
     _child_counter = 0

@@ -289,6 +289,10 @@ async def run_exec_mode(
             mcp_tools = mcp_manager.get_openai_tools()
             if mcp_tools:
                 tools_openai.extend(mcp_tools)
+    # Cap tools to provider limit, prioritising built-in tools
+    from ..tools import cap_tools
+
+    tools_openai = cap_tools(tools_openai, set(tool_registry.list_tools()), limit=config.ai.max_tools)
     tools_openai_or_none = tools_openai if tools_openai else None
 
     # Load instructions (require --trust-project for project ANTEROOM.md)

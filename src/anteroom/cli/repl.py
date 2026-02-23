@@ -848,6 +848,10 @@ async def run_cli(
         if mcp_tools:
             tools_openai.extend(mcp_tools)
 
+    # Cap tools to provider limit, prioritising built-in tools
+    from ..tools import cap_tools
+
+    tools_openai = cap_tools(tools_openai, set(tool_registry.list_tools()), limit=config.ai.max_tools)
     tools_openai_or_none = tools_openai if tools_openai else None
 
     # Load ANTEROOM.md instructions (with trust gating for project-level files)
@@ -1287,6 +1291,10 @@ async def _run_repl(
             mcp_tools = mcp_manager.get_openai_tools()
             if mcp_tools:
                 new_tools.extend(mcp_tools)
+        from ..tools import cap_tools as _cap_tools
+
+        builtin = set(tool_registry.list_tools()) if tool_registry else set()
+        new_tools = _cap_tools(new_tools, builtin, limit=config.ai.max_tools)
         tools_openai = new_tools if new_tools else None
         new_names: list[str] = list(tool_registry.list_tools()) if tool_registry else []
         if mcp_manager:
