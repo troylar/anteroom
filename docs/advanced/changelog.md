@@ -7,6 +7,20 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 23, 2026
 
+### v1.29.0
+
+**New:**
+
+- **Document upload with text extraction**: Upload PDFs and DOCX files to the knowledge base with automatic text extraction, chunking, and semantic search indexing (#179)
+- **CLI `/upload` command**: Upload files directly from the CLI REPL with MIME detection and size validation (#179)
+- **Project-scoped source search**: Filter semantic search results to sources linked to a specific project (#179)
+
+**Fixed:**
+
+- Bumped `pypdf` minimum to >=6.7.1 to address 6 known vulnerabilities (#179)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.29.0)
+
 ### v1.28.0
 
 **New:**
