@@ -100,6 +100,23 @@ embeddings:
   base_url: ""
   api_key: ""
   api_key_command: ""
+
+# Project/team config only — shared references
+references:
+  instructions:
+    - "team/instructions.md"
+    - "team/coding-standards.md"
+  rules:
+    - "team/rules/no-eval.md"
+  skills:
+    - "team/skills/deploy.md"
+
+# Project/team config only — required keys
+required:
+  - path: "ai.api_key"
+    description: "Your API key"
+  - path: "custom.db_password"
+    description: "Database password"
 ```
 
 ## Sections
@@ -267,6 +284,33 @@ cli:
 ```
 
 The `/usage` command displays token counts and estimated costs across multiple time periods. Without `model_costs` configured, only token counts are shown.
+
+### references
+
+Paths to shared instruction, rule, and skill files. Typically used in team or project configs to share development standards. See [Project Configuration](project-config.md).
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `instructions` | list | `[]` | Paths to instruction files (markdown) loaded as context |
+| `rules` | list | `[]` | Paths to rule files (markdown) loaded as behavioral constraints |
+| `skills` | list | `[]` | Paths to skill files (markdown) loaded as reusable prompts |
+
+Paths are resolved relative to the config file that declares them. Non-string entries are silently filtered out.
+
+### required
+
+A list of config keys that must be present in the user's personal config. Typically used in team or project configs. See [Project Configuration](project-config.md#required-keys).
+
+Each entry is a dict with:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `path` | string | yes | Dot-separated config path (e.g., `ai.api_key`) |
+| `description` | string | no | Human-readable description shown during prompting |
+
+In interactive mode, missing required keys trigger a prompt. Sensitive fields (containing `key`, `secret`, `password`, `token`, `passphrase`) use masked input. Values are saved to the personal config with 0600 permissions.
+
+In non-interactive mode, missing keys produce an error message listing each missing path and its equivalent `AI_CHAT_*` environment variable.
 
 ## API Key Command
 
