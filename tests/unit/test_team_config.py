@@ -584,3 +584,87 @@ class TestWalkUpDepthCap:
             child.mkdir()
             result = _walk_up_for_team_config(child)
             assert result == team_file
+
+
+# ---------------------------------------------------------------------------
+# Web UI: config API enforcement
+# ---------------------------------------------------------------------------
+
+
+class TestConfigApiEnforcement:
+    def test_get_config_includes_enforced_fields(self) -> None:
+        from unittest.mock import MagicMock
+
+        from anteroom.routers.config_api import get_config
+
+        request = MagicMock()
+        request.app.state.config.ai.base_url = "https://example.com"
+        request.app.state.config.ai.api_key = "sk-test"
+        request.app.state.config.ai.model = "gpt-4"
+        request.app.state.config.ai.user_system_prompt = ""
+        request.app.state.config.identity = None
+        request.app.state.mcp_manager = None
+        request.app.state.enforced_fields = ["ai.model", "ai.base_url"]
+
+        import asyncio
+
+        response = asyncio.run(get_config(request))
+        assert response.enforced_fields == ["ai.model", "ai.base_url"]
+
+    def test_patch_config_rejects_enforced_model(self) -> None:
+        from unittest.mock import MagicMock
+
+        from anteroom.routers.config_api import ConfigUpdate, update_config
+
+        request = MagicMock()
+        request.app.state.config.ai.model = "gpt-4"
+        request.app.state.config.ai.user_system_prompt = ""
+        request.app.state.enforced_fields = ["ai.model"]
+
+        body = ConfigUpdate(model="gpt-4o")
+
+        import asyncio
+
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(update_config(body, request))
+        assert exc_info.value.status_code == 403
+        assert "enforced by team config" in exc_info.value.detail
+
+    def test_patch_config_allows_non_enforced_model(self) -> None:
+        from unittest.mock import MagicMock
+
+        from anteroom.routers.config_api import ConfigUpdate, update_config
+
+        request = MagicMock()
+        request.app.state.config.ai.model = "gpt-4"
+        request.app.state.config.ai.user_system_prompt = ""
+        request.app.state.enforced_fields = []
+
+        body = ConfigUpdate(model="gpt-4o")
+
+        import asyncio
+
+        with patch("anteroom.routers.config_api._persist_config"):
+            result = asyncio.run(update_config(body, request))
+        assert result["model"] == "gpt-4o"
+
+    def test_create_app_stores_enforced_fields(self) -> None:
+        from unittest.mock import MagicMock
+
+        from anteroom.app import create_app
+
+        config = MagicMock()
+        config.identity = MagicMock()
+        config.identity.private_key = "fake-key"
+        config.ai.verify_ssl = True
+        config.app.host = "127.0.0.1"
+        config.app.port = 8080
+        config.app.tls = False
+        config.proxy.enabled = False
+        config.proxy.allowed_origins = []
+        config.mcp_servers = []
+
+        app = create_app(config, enforced_fields=["ai.model"])
+        assert app.state.enforced_fields == ["ai.model"]

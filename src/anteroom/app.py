@@ -351,9 +351,11 @@ def _derive_auth_token(config: AppConfig) -> str:
     return secrets.token_urlsafe(32)
 
 
-def create_app(config: AppConfig | None = None) -> FastAPI:
+def create_app(config: AppConfig | None = None, enforced_fields: list[str] | None = None) -> FastAPI:
     if config is None:
-        config, _ = load_config()
+        config, enforced_fields = load_config()
+    if enforced_fields is None:
+        enforced_fields = []
 
     # Ensure user identity exists with a private key before token derivation
     # so first-run also gets a stable token (identity is auto-generated if missing).
@@ -389,6 +391,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         openapi_url=None,
     )
     app.state.config = config
+    app.state.enforced_fields = enforced_fields
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):

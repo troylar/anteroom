@@ -285,7 +285,7 @@ def _run_usage(
     print()
 
 
-def _run_web(config, config_path: Path, *, debug: bool = False) -> None:
+def _run_web(config, config_path: Path, *, debug: bool = False, enforced_fields: list[str] | None = None) -> None:
     """Launch the web UI server."""
     print(f"Config loaded from {config_path}")
     print(f"  AI endpoint: {config.ai.base_url}")
@@ -310,7 +310,7 @@ def _run_web(config, config_path: Path, *, debug: bool = False) -> None:
 
     from .app import create_app
 
-    app = create_app(config)
+    app = create_app(config, enforced_fields=enforced_fields)
 
     ssl_kwargs: dict[str, str] = {}
     scheme = "http"
@@ -757,7 +757,7 @@ def main() -> None:
             trust_project=args.trust_project,
         )
     else:
-        _run_web(config, config_path, debug=args.debug)
+        _run_web(config, config_path, debug=args.debug, enforced_fields=enforced_fields)
 
 
 if __name__ == "__main__":
