@@ -1829,6 +1829,7 @@ const Chat = (() => {
             input.type = 'text';
             input.className = 'ask-user-input';
             input.placeholder = 'Type your answer...';
+            input.maxLength = 4096;
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && input.value.trim()) {
                     _respondAskUser(data.ask_id, input.value.trim(), el);
