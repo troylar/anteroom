@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 23, 2026
 
+### v1.33.0
+
+**New:**
+
+- **Team config with enforcement**: Shared YAML config with `enforce` list to lock settings (API endpoint, model, safety mode) across all team members (#316)
+- **.claude directory support**: `.anteroom` and `.claude` directories are now interchangeable for instructions, skills, team config, and rules (#316)
+- **Web UI enforcement**: Config API rejects changes to enforced fields (HTTP 403) and exposes locked fields to the UI (#316)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.33.0)
+
 ### v1.32.0
 
 **New:**
