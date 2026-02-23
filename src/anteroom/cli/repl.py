@@ -857,17 +857,30 @@ async def run_cli(
     async def tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         nonlocal _subagent_counter
         if tool_name == "invoke_skill":
+            # Apply safety tier check (invoke_skill is READ tier but respects denied_tools)
+            verdict = tool_registry.check_safety(tool_name, arguments)
+            if verdict and verdict.needs_approval:
+                if verdict.hard_denied:
+                    return {"error": f"Tool '{tool_name}' is blocked by configuration", "safety_blocked": True}
+                confirmed = await _confirm_destructive(verdict)
+                if not confirmed:
+                    return {"error": "Operation denied by user", "exit_code": -1}
             skill_name = arguments.get("skill_name", "")
             skill = skill_registry.get(skill_name) if skill_registry else None
             if not skill:
                 return {"error": f"Unknown skill: {skill_name}"}
+            queue = _active_msg_queue[0]
+            if queue is None:
+                return {"error": "Skill invocation unavailable in this context"}
             args = arguments.get("args", "")
             prompt = skill.prompt
             if args:
-                prompt = f"{prompt}\n\nAdditional context: {args}"
-            queue = _active_msg_queue[0]
-            if queue is not None:
-                await queue.put({"role": "user", "content": prompt})
+                # Trust boundary: args originate from the LLM, not the user.
+                # Truncate to limit injection surface; the skill prompt itself
+                # is from trusted local YAML files.
+                args = args[:2000]
+                prompt = f"{prompt}\n\nARGUMENTS: {args}"
+            await queue.put({"role": "user", "content": prompt})
             return {"status": "skill_invoked", "skill": skill_name}
         if tool_name == "run_agent":
             _subagent_counter += 1
@@ -953,20 +966,19 @@ async def run_cli(
         mcp_servers=mcp_statuses,
     )
 
-    # Inject skill catalog into system prompt so the AI knows about available skills
-    skill_descs = skill_registry.get_skill_descriptions()
-    if skill_descs:
-        skill_lines = [
-            "\n<available_skills>",
-            "The following skills are available. When the user's request clearly matches a skill, "
-            "use the invoke_skill tool to run it.",
-        ]
-        for name, desc in skill_descs:
-            skill_lines.append(f"- {name}: {desc}")
-        skill_lines.append("</available_skills>")
-        extra_system_prompt += "\n".join(skill_lines)
-
-    # Add invoke_skill tool definition if auto-invoke is enabled
+    # Inject skill catalog and invoke_skill tool only when auto-invoke is enabled
+    if config.cli.skills.auto_invoke:
+        skill_descs = skill_registry.get_skill_descriptions()
+        if skill_descs:
+            skill_lines = [
+                "\n<available_skills>",
+                "The following skills are available. When the user's request clearly matches a skill, "
+                "use the invoke_skill tool to run it.",
+            ]
+            for name, desc in skill_descs:
+                skill_lines.append(f"- {name}: {desc}")
+            skill_lines.append("</available_skills>")
+            extra_system_prompt += "\n".join(skill_lines)
     if config.cli.skills.auto_invoke:
         invoke_def = skill_registry.get_invoke_skill_definition()
         if invoke_def:
