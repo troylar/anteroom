@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 22, 2026
 
+### v1.27.0
+
+**New:**
+
+- **Ask User tool**: AI now pauses mid-turn to ask clarifying questions instead of guessing and continuing, saving tokens and producing better results (#299)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.27.0)
+
 ### v1.26.1
 
 **Fixed:**
