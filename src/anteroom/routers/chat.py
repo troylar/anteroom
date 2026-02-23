@@ -483,6 +483,12 @@ async def chat(conversation_id: str, request: Request):
         tools_openai = [t for t in tools_openai if t.get("function", {}).get("name") in PLAN_MODE_ALLOWED_TOOLS]
         extra_system_prompt += "\n\n" + build_planning_system_prompt(plan_path)
 
+    # Cap tools to provider limit (default 128), prioritising built-in tools
+    from ..tools import cap_tools
+
+    _max_tools = request.app.state.config.ai.max_tools
+    tools_openai = cap_tools(tools_openai, set(tool_registry.list_tools()), limit=_max_tools)
+
     tools = tools_openai if tools_openai else None
 
     is_first_message = not regenerate and len(history) <= 1

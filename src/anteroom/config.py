@@ -256,6 +256,7 @@ class AIConfig:
     retry_max_attempts: int = 3  # retries on transient errors (0 = disabled)
     retry_backoff_base: float = 1.0  # seconds; base for exponential backoff
     narration_cadence: int = 5  # progress updates every N tool calls; 0 = disabled
+    max_tools: int = 128  # hard cap on tools per request; 0 = unlimited
 
 
 @dataclass
@@ -542,6 +543,12 @@ def load_config(
     except (ValueError, TypeError):
         narration_cadence = 5
 
+    try:
+        max_tools = int(ai_raw.get("max_tools", os.environ.get("AI_CHAT_MAX_TOOLS", 128)))
+        max_tools = max(0, max_tools)
+    except (ValueError, TypeError):
+        max_tools = 128
+
     if narration_cadence > 0:
         system_prompt += (
             "\n\n<narration>\n"
@@ -568,6 +575,7 @@ def load_config(
         retry_max_attempts=retry_max_attempts,
         retry_backoff_base=retry_backoff_base,
         narration_cadence=narration_cadence,
+        max_tools=max_tools,
     )
 
     app_raw = raw.get("app", {})

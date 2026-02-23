@@ -38,6 +38,7 @@ def _make_config(tmp_path: Path) -> MagicMock:
     config = MagicMock()
     config.ai.model = "test-model"
     config.ai.base_url = "http://localhost:1234/v1"
+    config.ai.max_tools = 128
     config.app.data_dir = tmp_path / "data"
     config.identity = None
     config.safety.approval_mode = "ask_for_writes"
