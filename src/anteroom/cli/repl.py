@@ -1612,6 +1612,15 @@ async def _run_repl(
 
                         import filetype as _ft
 
+                        max_size_mb = 10
+                        max_size = max_size_mb * 1024 * 1024
+                        file_size = upload_path.stat().st_size
+                        if file_size > max_size:
+                            size_mb = file_size // (1024 * 1024)
+                            renderer.console.print(
+                                f"[{CHROME}]File too large ({size_mb} MB). Maximum is {max_size_mb} MB.[/{CHROME}]\n"
+                            )
+                            continue
                         file_data = upload_path.read_bytes()
                         guess = _ft.guess(file_data)
                         mime = guess.mime if guess else (mimetypes.guess_type(str(upload_path))[0] or "text/plain")
@@ -1637,8 +1646,9 @@ async def _run_repl(
                         else:
                             renderer.console.print(f"  [{MUTED}]{mime}, stored (no text extracted)[/{MUTED}]")
                         renderer.console.print()
-                    except Exception as exc:
-                        renderer.console.print(f"[{CHROME}]Upload failed: {exc}[/{CHROME}]\n")
+                    except Exception:
+                        logger.error("CLI upload failed", exc_info=True)
+                        renderer.console.print(f"[{CHROME}]Upload failed[/{CHROME}]\n")
                     continue
                 elif cmd == "/help":
                     await _show_help_dialog()
