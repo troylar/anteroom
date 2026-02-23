@@ -16,9 +16,7 @@ router = APIRouter(tags=["usage"])
 async def get_usage(
     request: Request,
     period: str | None = Query(None, pattern="^(day|week|month|all)$"),
-    conversation_id: str | None = Query(
-        None, pattern="^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-    ),
+    conversation_id: str | None = Query(None, pattern="^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
 ) -> dict[str, Any]:
     """Get token usage statistics, optionally filtered by period and conversation."""
     config = request.app.state.config
