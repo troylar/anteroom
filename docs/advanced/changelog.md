@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 23, 2026
 
+### v1.32.0
+
+**New:**
+
+- **Structured options for ask_user**: AI can present multiple-choice options as numbered list (CLI) or buttons (web UI), with freeform fallback (#312)
+- **Cancel support**: Esc in CLI or Cancel button in web UI sends unambiguous cancelled signal to the AI (#312)
+- **Web UI ask_user rendering**: Fully functional styled prompt cards replace previously silent/broken SSE events (#312)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.32.0)
+
 ### v1.31.0
 
 **New:**
