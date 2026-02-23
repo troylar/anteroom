@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 23, 2026
 
+### v1.31.0
+
+**New:**
+
+- **Debug logging for MCP troubleshooting**: `aroom --debug chat` or `AI_CHAT_LOG_LEVEL=DEBUG` enables debug logging to stderr for diagnosing MCP server connections and tool routing (#313)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.31.0)
+
 ### v1.30.0
 
 **New:**
