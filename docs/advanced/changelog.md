@@ -7,6 +7,18 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 23, 2026
 
+### v1.35.0
+
+**New:**
+
+- **Project-scoped configuration**: Per-project `config.yaml` files auto-discovered via walk-up search from cwd, with deep merge, trust verification, and team enforcement (#325)
+- **Required keys**: Project/team configs can declare required values with interactive prompting and masked input for secrets (#325)
+- **Shared references**: Declare instructions, rules, and skills that load automatically per project (#325)
+- **Live config reload**: Config files monitored via mtime polling — changes apply without restarting (#325)
+- **Team config bootstrap**: `aroom init --team-config` trusts and configures team config in one step (#325)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.35.0)
+
 ### v1.34.1
 
 **New:**
