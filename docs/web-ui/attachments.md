@@ -1,6 +1,6 @@
 # File Attachments
 
-Drag-and-drop or click to attach files to your messages. **35+ file types** supported with up to **10 files per message** and **10 MB each**.
+Drag-and-drop or click to attach files to your messages. **35+ file types** supported with up to **10 files per message** and **10 MB each**. PDFs and DOCX files have text automatically extracted and can be saved to the knowledge base for semantic search.
 
 ## Supported File Types
 
