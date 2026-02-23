@@ -417,20 +417,17 @@ class TestDebugFlag:
         mock_basic.assert_called_once()
         assert mock_basic.call_args.kwargs["level"] == logging.DEBUG
 
-    def test_no_debug_flag_defaults_to_warning(self) -> None:
+    def test_no_debug_flag_defaults_to_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Without --debug or env var, root logger defaults to WARNING."""
         from anteroom.__main__ import main
+
+        monkeypatch.delenv("AI_CHAT_LOG_LEVEL", raising=False)
 
         with (
             patch("anteroom.__main__._load_config_or_exit") as mock_load,
             patch("anteroom.__main__._run_web"),
             patch("anteroom.__main__.logging.basicConfig") as mock_basic,
-            patch.dict("os.environ", {}, clear=False),
         ):
-            # Ensure AI_CHAT_LOG_LEVEL is not set
-            import os
-
-            os.environ.pop("AI_CHAT_LOG_LEVEL", None)
             config = _make_config()
             mock_load.return_value = (Path("/tmp/config.yaml"), config)
             with patch("sys.argv", ["aroom"]):
@@ -476,6 +473,25 @@ class TestDebugFlag:
 
         mock_basic.assert_called_once()
         assert mock_basic.call_args.kwargs["level"] == logging.DEBUG
+
+    def test_invalid_env_var_falls_back_to_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Invalid AI_CHAT_LOG_LEVEL value must fall back to WARNING."""
+        from anteroom.__main__ import main
+
+        monkeypatch.setenv("AI_CHAT_LOG_LEVEL", "GARBAGE")
+
+        with (
+            patch("anteroom.__main__._load_config_or_exit") as mock_load,
+            patch("anteroom.__main__._run_web"),
+            patch("anteroom.__main__.logging.basicConfig") as mock_basic,
+        ):
+            config = _make_config()
+            mock_load.return_value = (Path("/tmp/config.yaml"), config)
+            with patch("sys.argv", ["aroom"]):
+                main()
+
+        mock_basic.assert_called_once()
+        assert mock_basic.call_args.kwargs["level"] == logging.WARNING
 
     def test_debug_flag_passes_to_run_web(self) -> None:
         """--debug must be forwarded to _run_web for uvicorn log_level."""
