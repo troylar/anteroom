@@ -1,6 +1,6 @@
 # Configuration
 
-Anteroom is configured through layered sources: YAML config files, environment variables, CLI flags, and optional team config with enforcement.
+Anteroom is configured through layered sources: YAML config files, environment variables, CLI flags, optional team config with enforcement, and per-project config with auto-discovery.
 
 ## How Configuration Works
 
@@ -13,6 +13,8 @@ When Anteroom starts, it builds its configuration by merging multiple sources. E
 │  CLI flags (--port, --approval-mode, etc.)          │
 ├─────────────────────────────────────────────────────┤
 │  Environment variables (AI_CHAT_*)                  │
+├─────────────────────────────────────────────────────┤
+│  Project config (.anteroom/config.yaml in project)  │
 ├─────────────────────────────────────────────────────┤
 │  Personal config file (~/.anteroom/config.yaml)     │
 ├─────────────────────────────────────────────────────┤
@@ -28,25 +30,31 @@ Here is exactly what happens when you run `aroom` or `aroom chat`:
 
 1. **Load personal config** --- Read `~/.anteroom/config.yaml` (or `~/.parlor/config.yaml` for backward compatibility) into a raw YAML dict.
 
-2. **Discover team config** --- Search for a team config file using this priority:
+2. **Validate config** --- Run the config validator to check for unknown keys, type mismatches, range violations, and structural problems. Warnings are logged but non-blocking. Errors prevent loading.
+
+3. **Discover team config** --- Search for a team config file using this priority:
     1. `--team-config /path` CLI flag
     2. `AI_CHAT_TEAM_CONFIG` environment variable
     3. `team_config_path` field in personal config
     4. Walk up from cwd looking for `.anteroom/team.yaml`, `.claude/team.yaml`, or `anteroom.team.yaml`
 
-3. **Trust-verify team config** --- If a team config is found, verify its SHA-256 hash against the trust store (`~/.anteroom/trusted_folders.json`). In interactive mode (CLI), prompt the user to trust new or changed files. In non-interactive mode (web UI), silently skip untrusted files.
+4. **Trust-verify team config** --- If a team config is found, verify its SHA-256 hash against the trust store (`~/.anteroom/trusted_folders.json`). In interactive mode (CLI), prompt the user to trust new or changed files. In non-interactive mode (web UI), silently skip untrusted files.
 
-4. **Merge configs** --- Deep-merge the team config (base) with personal config (overlay). Nested dicts merge recursively; lists and scalars in personal config replace team config values.
+5. **Merge team + personal** --- Deep-merge the team config (base) with personal config (overlay). Nested dicts merge recursively; lists and scalars in personal config replace team config values.
 
-5. **Apply enforcement** --- For each dot-path in the team config's `enforce` list, re-apply the team value, overriding whatever the personal config set.
+6. **Apply team enforcement** --- For each dot-path in the team config's `enforce` list, re-apply the team value, overriding whatever the personal config set.
 
-6. **Apply environment variables** --- `AI_CHAT_*` environment variables override the merged result. For example, `AI_CHAT_MODEL=gpt-4o` overrides the `ai.model` field.
+7. **Discover project config** --- Walk up from the current working directory looking for `.anteroom/config.yaml`, `.claude/config.yaml`, or `.parlor/config.yaml`. Trust-verify the file via SHA-256 hash.
 
-7. **Build config object** --- Convert the raw dict into typed dataclass objects (`AIConfig`, `AppSettings`, `SafetyConfig`, etc.) with validation and clamping.
+8. **Merge project config** --- Overlay the project config on top of the merged team+personal result. Re-apply team enforcement so project config cannot override locked fields.
 
-8. **Apply CLI flag overrides** --- Flags like `--port`, `--approval-mode`, `--allowed-tools` are applied last. If a flag targets an enforced field, the override is rejected with a warning.
+9. **Apply environment variables** --- `AI_CHAT_*` environment variables override the merged result. For example, `AI_CHAT_MODEL=gpt-4o` overrides the `ai.model` field.
 
-9. **Return** --- The final `AppConfig` object and the list of `enforced_fields` are returned. Both the web UI and CLI use this same config object.
+10. **Build config object** --- Convert the raw dict into typed dataclass objects (`AIConfig`, `AppSettings`, `SafetyConfig`, `ReferencesConfig`, etc.) with validation and clamping.
+
+11. **Apply CLI flag overrides** --- Flags like `--port`, `--approval-mode`, `--allowed-tools` are applied last. If a flag targets an enforced field, the override is rejected with a warning.
+
+12. **Return** --- The final `AppConfig` object and the list of `enforced_fields` are returned. Both the web UI and CLI use this same config object.
 
 ## Quick Reference
 
@@ -75,6 +83,7 @@ Here is exactly what happens when you run `aroom` or `aroom chat`:
 - [Config File](config-file.md) --- full `config.yaml` YAML schema reference
 - [Environment Variables](environment-variables.md) --- all `AI_CHAT_*` env vars and precedence rules
 - [Team Configuration](team-config.md) --- shared team config with enforced settings
+- [Project Configuration](project-config.md) --- per-project config with auto-discovery, required keys, and shared references
 - [MCP Servers](mcp-servers.md) --- MCP server setup (stdio + SSE)
 - [TLS](tls.md) --- HTTPS with self-signed certificates
 
