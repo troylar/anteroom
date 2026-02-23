@@ -191,10 +191,11 @@ Built to [OWASP ASVS Level 1](SECURITY.md) standards. Not bolted on &mdash; bake
 
 ### Knowledge sources
 
-Upload files, save notes, bookmark URLs. Sources persist across conversations and are searchable with local vector embeddings &mdash; no API key needed.
+Upload documents (PDFs, DOCX, code, etc.) via CLI (`/upload <path>`) or web UI drag-and-drop. Text is automatically extracted from binary formats and indexed for semantic search. Sources persist across conversations and are searchable with local vector embeddings &mdash; no API key needed.
 
 ```bash
-pip install anteroom[embeddings]  # adds local vectors
+pip install anteroom[docs]        # adds PDF/DOCX text extraction
+pip install anteroom[embeddings]  # adds local vector search
 ```
 
 ---

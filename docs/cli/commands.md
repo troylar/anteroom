@@ -15,6 +15,7 @@ All slash commands available in the CLI REPL.
 | `/rewind` | Rewind to a previous message, optionally undoing file changes via git |
 | `/compact` | Summarize and compact message history to free context |
 | `/model NAME` | Switch to a different model mid-session (omit NAME to see current) |
+| `/upload <path>` | Upload a file to the knowledge base, auto-extracts text from PDFs/DOCX |
 | `/tools` | List all available tools (built-in + MCP), sorted alphabetically |
 | `/skills` | List available skills with descriptions and source |
 | `/mcp` | Show MCP server status |
@@ -85,6 +86,24 @@ If you delete the current conversation, a new one is started automatically.
 ### /rewind
 
 Rewind to a previous message. Optionally revert file changes made by AI tools via `git checkout`.
+
+### /upload
+
+Upload a file to the knowledge base. Text is automatically extracted from PDFs and DOCX files, chunked, and indexed for semantic search. Supports 35+ file types including code, documents, images, and data files.
+
+```
+you> /upload ~/myfile.pdf
+Uploaded myfile.pdf → source a1b2c3d4…
+  application/pdf, 12,340 chars extracted
+```
+
+Files are searchable via semantic search (web UI) and can be injected into chat context using source_ids. Text extraction requires optional dependencies:
+
+```bash
+pip install anteroom[docs]  # adds PDF and DOCX support
+```
+
+Without these optional dependencies, PDFs and DOCX files upload as binary documents (web UI can still display them as attachments, but text extraction is skipped).
 
 ## Model Switching
 
