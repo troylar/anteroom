@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 22, 2026
 
+### v1.26.0
+
+**New:**
+
+- **Live plan checklist**: `/plan approve` now renders a real-time checklist above the thinking spinner, tracking each implementation step through pending, in-progress, and complete states (#166)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.26.0)
+
 ### v1.25.0
 
 **New:**
