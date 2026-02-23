@@ -1,6 +1,6 @@
 # Built-in Tools
 
-Ten tools ship out of the box with no MCP server required.
+Eleven tools ship out of the box with no MCP server required.
 
 ## Tool Reference
 
@@ -126,6 +126,16 @@ Launch an autonomous sub-agent to handle a complex or independent task in parall
 | `model` | string | Optional model override (e.g. `gpt-4o-mini` for fast tasks) |
 
 Sub-agents run in isolated conversation contexts — they cannot see the parent's history. Multiple `run_agent` calls execute concurrently. Guarded by concurrency limits (max 5 concurrent, 10 total per request), depth limits (max 3 levels of nesting), iteration limits (15 per sub-agent vs 50 for the parent), and a wall-clock timeout (120s per sub-agent). All limits are configurable via `safety.subagent` in `config.yaml`.
+
+### ask_user
+
+Ask the user a question and pause execution to wait for their response. Use this when you need information to proceed, rather than asking in text output.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `question` | string | The question to ask the user |
+
+The user's response is returned in the tool result and execution resumes. In the CLI REPL, users can type their answer at the prompt. In the web UI, an inline input field appears in the chat. Use this tool instead of asking questions in text output — the user cannot respond to text mid-turn.
 
 ## How Tools Work
 
