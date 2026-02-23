@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 23, 2026
 
+### v1.34.1
+
+**New:**
+
+- **Renamed `/docs` to `/a-help`**: Built-in help skill renamed to avoid conflicts with project skills (#326)
+- **Expanded `/a-help` config docs**: Inline reference now covers config layers, team config, enforce/required keys, onboarding, and directory equivalence (#326)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.34.1)
+
 ### v1.34.0
 
 **New:**
