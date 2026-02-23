@@ -52,6 +52,8 @@ async def get_config(request: Request) -> AppConfigResponse:
             "display_name": config.identity.display_name,
         }
 
+    enforced_fields: list[str] = getattr(request.app.state, "enforced_fields", [])
+
     return AppConfigResponse(
         ai={
             "base_url": config.ai.base_url,
@@ -61,6 +63,7 @@ async def get_config(request: Request) -> AppConfigResponse:
         },
         mcp_servers=mcp_statuses,
         identity=identity_data,
+        enforced_fields=enforced_fields,
     )
 
 
@@ -81,12 +84,19 @@ async def update_config(body: ConfigUpdate, request: Request):
     from ..config import _DEFAULT_SYSTEM_PROMPT
 
     config = request.app.state.config
+    enforced_fields: list[str] = getattr(request.app.state, "enforced_fields", [])
     changed = False
 
     if body.model is not None and body.model != config.ai.model:
+        if "ai.model" in enforced_fields:
+            raise HTTPException(status_code=403, detail="'ai.model' is enforced by team config and cannot be changed")
         config.ai.model = body.model
         changed = True
     if body.system_prompt is not None and body.system_prompt != config.ai.user_system_prompt:
+        if "ai.system_prompt" in enforced_fields:
+            raise HTTPException(
+                status_code=403, detail="'ai.system_prompt' is enforced by team config and cannot be changed"
+            )
         config.ai.user_system_prompt = body.system_prompt
         if body.system_prompt:
             config.ai.system_prompt = (

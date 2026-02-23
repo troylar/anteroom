@@ -61,10 +61,82 @@ Everything is stored in SQLite with WAL journaling and FTS5 full-text search. Th
 
 ## Configuration Hierarchy
 
-Configuration follows a layered approach:
+Configuration follows a layered approach where each layer can override the previous one:
 
-1. **Defaults** --- sensible defaults for all settings
-2. **Config file** --- `~/.anteroom/config.yaml` overrides defaults
-3. **Environment variables** --- `AI_CHAT_*` prefix overrides config file values
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Enforced team config fields (cannot be overridden)         │  ← Highest
+├─────────────────────────────────────────────────────────────┤
+│  CLI flags (--port, --approval-mode, etc.)                  │
+├─────────────────────────────────────────────────────────────┤
+│  Environment variables (AI_CHAT_*)                          │
+├─────────────────────────────────────────────────────────────┤
+│  Personal config file (~/.anteroom/config.yaml)             │
+├─────────────────────────────────────────────────────────────┤
+│  Team config file (.anteroom/team.yaml)                     │
+├─────────────────────────────────────────────────────────────┤
+│  Built-in defaults                                          │  ← Lowest
+└─────────────────────────────────────────────────────────────┘
+```
 
-See [Configuration](../configuration/index.md) for the full reference.
+### Processing Order
+
+When Anteroom starts, it builds its configuration by:
+
+1. **Loading personal config** from `~/.anteroom/config.yaml`
+2. **Discovering team config** (CLI flag → env var → personal config field → walk-up from cwd)
+3. **Trust-verifying team config** (SHA-256 hash check, prompt on first encounter)
+4. **Deep-merging** team config (base) with personal config (overlay)
+5. **Applying enforcement** — re-applying team values for enforced fields
+6. **Applying environment variables** — `AI_CHAT_*` vars override the merged result
+7. **Building typed config objects** — validation, defaults, clamping
+8. **Applying CLI flag overrides** — flags like `--port`, `--approval-mode`
+
+The exception to the normal override chain is **team config enforcement**: any field listed in the team config's `enforce` list is locked to the team value, regardless of what personal config, env vars, or CLI flags say.
+
+See [Configuration](../configuration/index.md) for the full reference and [Team Configuration](../configuration/team-config.md) for enforcement details.
+
+## Project Context
+
+Anteroom loads project-specific context from multiple sources:
+
+### Instructions (ANTEROOM.md / CLAUDE.md)
+
+An instruction file in your project root injects context into every conversation. Anteroom walks up from the working directory to find the nearest match, checking for `.anteroom.md`, `ANTEROOM.md`, `.claude.md`, and `CLAUDE.md` (in that order). A global `~/.anteroom/ANTEROOM.md` applies to all projects.
+
+Instruction files go through **trust verification** before loading — see [Project Instructions](../cli/project-instructions.md).
+
+### Skills
+
+Skills are reusable prompt templates invoked with `/name` in the REPL. They load from three layers:
+
+1. **Built-in** — bundled with Anteroom (`/commit`, `/review`, `/explain`, `/docs`)
+2. **Global** — `~/.anteroom/skills/*.yaml` (available everywhere)
+3. **Project** — `.anteroom/skills/*.yaml` or `.claude/skills/*.yaml` (project-specific, walk-up discovery)
+
+Higher layers override lower layers when skill names collide. See [Skills](../cli/skills.md).
+
+### Rules
+
+Rules are auto-loaded instruction files that apply every session without explicit invocation. They live in `.anteroom/rules/` or `.claude/rules/` at the project level. Unlike skills (which you invoke with `/name`), rules are injected into the system context automatically.
+
+Rules are useful for enforcing conventions that should always be active:
+- Commit message formats
+- Code style requirements
+- Security patterns
+- Test requirements
+
+### Directory Equivalence
+
+Anteroom treats `.anteroom` and `.claude` directories as interchangeable throughout the system:
+
+| Feature | `.anteroom` | `.claude` |
+|---|---|---|
+| Instructions | `.anteroom.md`, `ANTEROOM.md` | `.claude.md`, `CLAUDE.md` |
+| Skills | `.anteroom/skills/` | `.claude/skills/` |
+| Rules | `.anteroom/rules/` | `.claude/rules/` |
+| Team config | `.anteroom/team.yaml` | `.claude/team.yaml` |
+
+If both directories exist, `.anteroom` takes precedence. The legacy `.parlor` directory is also supported for backward compatibility.
+
+This means if you have an existing Claude Code project structure (`.claude/` directory with skills, rules, and a `CLAUDE.md`), Anteroom picks it up automatically with no configuration changes.
