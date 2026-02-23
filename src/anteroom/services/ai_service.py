@@ -206,6 +206,7 @@ class AIService:
             "model": self.config.model,
             "messages": full_messages,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             kwargs["tools"] = tools
@@ -353,8 +354,19 @@ class AIService:
                     ):
                         yield c
 
+                usage_data: dict[str, Any] | None = None
                 try:
                     async for chunk in _prepended_stream():
+                        # Capture usage from any chunk (sent on final chunk with include_usage)
+                        if hasattr(chunk, "usage") and chunk.usage is not None:
+                            usage_data = {
+                                "prompt_tokens": chunk.usage.prompt_tokens,
+                                "completion_tokens": chunk.usage.completion_tokens,
+                                "total_tokens": getattr(chunk.usage, "total_tokens", None)
+                                or (chunk.usage.prompt_tokens + chunk.usage.completion_tokens),
+                                "model": self.config.model,
+                            }
+
                         choice = chunk.choices[0] if chunk.choices else None
                         if not choice:
                             continue
@@ -402,9 +414,13 @@ class AIService:
                                         "arguments": args,
                                     },
                                 }
+                            if usage_data:
+                                yield {"event": "usage", "data": usage_data}
                             return
 
                         if choice.finish_reason == "stop":
+                            if usage_data:
+                                yield {"event": "usage", "data": usage_data}
                             yield {"event": "done", "data": {}}
                             return
                 finally:

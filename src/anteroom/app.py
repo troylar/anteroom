@@ -432,7 +432,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.state.csrf_token = csrf_token
     cache_bust = str(int(time.time()))
 
-    from .routers import approvals, chat, config_api, conversations, databases, events, projects, search, sources
+    from .routers import approvals, chat, config_api, conversations, databases, events, projects, search, sources, usage
 
     app.include_router(conversations.router, prefix="/api")
     app.include_router(chat.router, prefix="/api")
@@ -443,6 +443,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(search.router, prefix="/api")
     app.include_router(approvals.router, prefix="/api")
     app.include_router(sources.router, prefix="/api")
+    app.include_router(usage.router, prefix="/api")
 
     if config.proxy.enabled:
         from .routers import proxy

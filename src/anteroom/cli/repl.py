@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -314,6 +315,59 @@ def _show_resume_info(db: Any, conv: dict[str, Any], ai_messages: list[dict[str,
     title = conv.get("title", "Untitled")
     renderer.console.print(f"[{CHROME}]Resumed: {title} ({len(ai_messages)} messages)[/{CHROME}]")
     renderer.render_conversation_recap(stored)
+
+
+def _show_usage_stats(db: Any, config: Any) -> None:
+    """Display token usage statistics for today, this week, and this month."""
+    usage_cfg = config.cli.usage
+    now = datetime.now(timezone.utc)
+    periods = [
+        ("Today", (now - timedelta(days=1)).isoformat()),
+        ("This week", (now - timedelta(days=usage_cfg.week_days)).isoformat()),
+        ("This month", (now - timedelta(days=usage_cfg.month_days)).isoformat()),
+        ("All time", None),
+    ]
+
+    renderer.console.print("\n[bold]Token Usage[/bold]")
+
+    for label, since in periods:
+        stats = storage.get_usage_stats(db, since=since)
+        if not stats:
+            renderer.console.print(f"\n  [{MUTED}]{label}: no usage data[/{MUTED}]")
+            continue
+
+        total_prompt = sum(s.get("prompt_tokens", 0) or 0 for s in stats)
+        total_completion = sum(s.get("completion_tokens", 0) or 0 for s in stats)
+        total_tokens = sum(s.get("total_tokens", 0) or 0 for s in stats)
+        total_messages = sum(s.get("message_count", 0) or 0 for s in stats)
+
+        # Calculate cost
+        total_cost = 0.0
+        for s in stats:
+            model = s.get("model", "") or ""
+            prompt_t = s.get("prompt_tokens", 0) or 0
+            completion_t = s.get("completion_tokens", 0) or 0
+            costs = usage_cfg.model_costs.get(model, {})
+            input_rate = costs.get("input", 0.0)
+            output_rate = costs.get("output", 0.0)
+            total_cost += (prompt_t / 1_000_000) * input_rate + (completion_t / 1_000_000) * output_rate
+
+        renderer.console.print(f"\n  [bold]{label}[/bold] ({total_messages} messages)")
+        renderer.console.print(f"    Prompt:     {total_prompt:>12,} tokens")
+        renderer.console.print(f"    Completion: {total_completion:>12,} tokens")
+        renderer.console.print(f"    Total:      {total_tokens:>12,} tokens")
+        if total_cost > 0:
+            renderer.console.print(f"    Est. cost:  ${total_cost:>11,.4f}")
+
+        # Per-model breakdown if multiple models
+        if len(stats) > 1:
+            renderer.console.print(f"    [{MUTED}]By model:[/{MUTED}]")
+            for s in stats:
+                model = s.get("model", "unknown") or "unknown"
+                t = s.get("total_tokens", 0) or 0
+                renderer.console.print(f"      {model}: {t:,} tokens")
+
+    renderer.console.print()
 
 
 _EXIT_COMMANDS = frozenset({"/quit", "/exit"})
@@ -1650,6 +1704,9 @@ async def _run_repl(
                         logger.error("CLI upload failed", exc_info=True)
                         renderer.console.print(f"[{CHROME}]Upload failed[/{CHROME}]\n")
                     continue
+                elif cmd == "/usage":
+                    _show_usage_stats(db, config)
+                    continue
                 elif cmd == "/help":
                     await _show_help_dialog()
                     continue
@@ -2194,6 +2251,7 @@ async def _run_repl(
             try:
                 response_token_count = 0
                 total_elapsed = 0.0
+                _pending_usage: dict | None = None
 
                 # Drain any messages that arrived while we were setting up
                 def _warn(cmd: str) -> None:
@@ -2316,9 +2374,23 @@ async def _run_repl(
                                 )
                                 renderer.start_thinking(newline=True)
                                 thinking = True
+                        elif event.kind == "usage":
+                            _pending_usage = event.data
                         elif event.kind == "assistant_message":
                             if event.data["content"]:
-                                storage.create_message(db, conv["id"], "assistant", event.data["content"], **id_kw)
+                                msg = storage.create_message(
+                                    db, conv["id"], "assistant", event.data["content"], **id_kw
+                                )
+                                if _pending_usage:
+                                    storage.update_message_usage(
+                                        db,
+                                        msg["id"],
+                                        _pending_usage.get("prompt_tokens", 0),
+                                        _pending_usage.get("completion_tokens", 0),
+                                        _pending_usage.get("total_tokens", 0),
+                                        _pending_usage.get("model", ""),
+                                    )
+                                    _pending_usage = None
                         elif event.kind == "queued_message":
                             if thinking:
                                 total_elapsed += await renderer.stop_thinking()

@@ -109,6 +109,10 @@ class TestInitDb:
             "user_display_name",
             "created_at",
             "position",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "model",
         }
 
     def test_creates_users_table(self) -> None:
