@@ -860,6 +860,74 @@ class TestMcpToolFiltering:
         mgr._rebuild_tool_map()
         assert len(mgr.get_all_tools()) == 2
 
+    @pytest.mark.asyncio()
+    async def test_tool_warning_threshold_fires(self, caplog: pytest.LogCaptureFixture) -> None:
+        import logging
+
+        cfg = McpServerConfig(name="jira", transport="stdio", command="echo")
+        mgr = McpManager([cfg], tool_warning_threshold=3)
+        mgr._server_tools = {"jira": [_make_tool(f"tool{i}", "jira") for i in range(5)]}
+        mgr._rebuild_tool_map()
+        mgr._server_status = {"jira": {"status": "connected", "tool_count": 5}}
+
+        async def noop(_config: McpServerConfig) -> None:
+            pass
+
+        with (
+            caplog.at_level(logging.WARNING, logger="anteroom.services.mcp_manager"),
+            patch.object(mgr, "_connect_one", side_effect=noop),
+        ):
+            await mgr.startup()
+
+        warning_records = [r for r in caplog.records if "exceeds threshold" in r.message]
+        assert warning_records, "Expected tool threshold warning"
+        assert "5" in warning_records[0].message
+        assert "3" in warning_records[0].message
+
+    @pytest.mark.asyncio()
+    async def test_tool_warning_threshold_disabled(self, caplog: pytest.LogCaptureFixture) -> None:
+        import logging
+
+        cfg = McpServerConfig(name="jira", transport="stdio", command="echo")
+        mgr = McpManager([cfg], tool_warning_threshold=0)
+        mgr._server_tools = {"jira": [_make_tool(f"tool{i}", "jira") for i in range(50)]}
+        mgr._rebuild_tool_map()
+        mgr._server_status = {"jira": {"status": "connected", "tool_count": 50}}
+
+        async def noop(_config: McpServerConfig) -> None:
+            pass
+
+        with (
+            caplog.at_level(logging.WARNING, logger="anteroom.services.mcp_manager"),
+            patch.object(mgr, "_connect_one", side_effect=noop),
+        ):
+            await mgr.startup()
+
+        warning_records = [r for r in caplog.records if "exceeds threshold" in r.message]
+        assert not warning_records, "Should not warn when threshold is 0 (disabled)"
+
+    @pytest.mark.asyncio()
+    async def test_tool_warning_threshold_not_exceeded(self, caplog: pytest.LogCaptureFixture) -> None:
+        import logging
+
+        cfg = McpServerConfig(name="jira", transport="stdio", command="echo")
+        mgr = McpManager([cfg], tool_warning_threshold=10)
+        mgr._server_tools = {"jira": [_make_tool(f"tool{i}", "jira") for i in range(5)]}
+        mgr._rebuild_tool_map()
+        mgr._server_status = {"jira": {"status": "connected", "tool_count": 5}}
+
+        async def noop(_config: McpServerConfig) -> None:
+            pass
+
+        with (
+            caplog.at_level(logging.WARNING, logger="anteroom.services.mcp_manager"),
+            patch.object(mgr, "_connect_one", side_effect=noop),
+        ):
+            await mgr.startup()
+
+        warning_records = [r for r in caplog.records if "exceeds threshold" in r.message]
+        assert not warning_records, "Should not warn when under threshold"
+
     def test_include_no_matches_returns_empty(self) -> None:
         cfg = McpServerConfig(name="jira", transport="stdio", command="echo", tools_include=["nonexistent_*"])
         mgr = self._make_manager(cfg)

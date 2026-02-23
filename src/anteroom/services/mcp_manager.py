@@ -64,7 +64,7 @@ def _validate_command(command: str) -> None:
 
 
 class McpManager:
-    def __init__(self, server_configs: list[McpServerConfig]) -> None:
+    def __init__(self, server_configs: list[McpServerConfig], tool_warning_threshold: int = 40) -> None:
         self._configs: dict[str, McpServerConfig] = {cfg.name: cfg for cfg in server_configs}
         self._exit_stacks: dict[str, AsyncExitStack] = {}
         self._sessions: dict[str, Any] = {}
@@ -72,6 +72,7 @@ class McpManager:
         self._tool_to_server: dict[str, str] = {}
         self._server_status: dict[str, dict[str, Any]] = {}
         self._disabled: set[str] = set()
+        self._tool_warning_threshold = tool_warning_threshold
 
     async def startup(self) -> None:
         if not self._configs:
@@ -100,6 +101,22 @@ class McpManager:
             )
         else:
             logger.info("MCP startup complete: %d/%d connected", len(connected), len(self._configs))
+
+        # Warn if total tool count exceeds threshold
+        total_tools = len(self._tool_to_server)
+        if self._tool_warning_threshold > 0 and total_tools > self._tool_warning_threshold:
+            per_server = []
+            for sname in connected:
+                count = sum(1 for t in self._server_tools.get(sname, []) if self._is_tool_allowed(t["name"], sname))
+                per_server.append(f"{sname}: {count}")
+            logger.warning(
+                "MCP tool count (%d) exceeds threshold (%d). "
+                "Consider adding tools.include/tools.exclude filters to your MCP server config. "
+                "Per-server: %s",
+                total_tools,
+                self._tool_warning_threshold,
+                ", ".join(per_server),
+            )
 
     def _describe_config(self, config: McpServerConfig) -> str:
         """Build a human-readable description of a server config for diagnostics."""

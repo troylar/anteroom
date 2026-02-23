@@ -228,6 +228,36 @@ class TestLoadConfig:
         assert config.mcp_servers[0].tools_include == []
         assert config.mcp_servers[0].tools_exclude == []
 
+    def test_mcp_tool_warning_threshold_default(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {"ai": {"base_url": "https://api.example.com", "api_key": "sk-test"}},
+        )
+        config = load_config(cfg_file)
+        assert config.mcp_tool_warning_threshold == 40
+
+    def test_mcp_tool_warning_threshold_custom(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "https://api.example.com", "api_key": "sk-test"},
+                "mcp_tool_warning_threshold": 20,
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.mcp_tool_warning_threshold == 20
+
+    def test_mcp_tool_warning_threshold_zero_disables(self, tmp_path: Path) -> None:
+        cfg_file = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "https://api.example.com", "api_key": "sk-test"},
+                "mcp_tool_warning_threshold": 0,
+            },
+        )
+        config = load_config(cfg_file)
+        assert config.mcp_tool_warning_threshold == 0
+
     def test_mcp_server_both_include_and_exclude_prefers_include(self, tmp_path: Path) -> None:
         cfg_file = _write_config(
             tmp_path,
