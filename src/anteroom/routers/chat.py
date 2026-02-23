@@ -849,10 +849,15 @@ async def chat(conversation_id: str, request: Request):
                     _planning_cfg.auto_threshold_tools if not plan_mode and _planning_cfg.auto_mode != "off" else 0
                 ),
             ):
+                _pending_usage: dict[str, Any] | None = None
                 kind = agent_event.kind
                 data = agent_event.data
 
-                if kind == "thinking":
+                if kind == "usage":
+                    _pending_usage = data
+                    continue
+
+                elif kind == "thinking":
                     yield {"event": "thinking", "data": json.dumps({})}
 
                 elif kind == "phase":
@@ -936,6 +941,18 @@ async def chat(conversation_id: str, request: Request):
                         user_id=uid,
                         user_display_name=uname,
                     )
+
+                    # Store token usage if available
+                    if _pending_usage and current_assistant_msg:
+                        storage.update_message_usage(
+                            db,
+                            current_assistant_msg["id"],
+                            _pending_usage.get("prompt_tokens", 0),
+                            _pending_usage.get("completion_tokens", 0),
+                            _pending_usage.get("total_tokens", 0),
+                            _pending_usage.get("model", ""),
+                        )
+                        _pending_usage = None
 
                     # Trigger async embedding for assistant message
                     _emb_worker = getattr(request.app.state, "embedding_worker", None)

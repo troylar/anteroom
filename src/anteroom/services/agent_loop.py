@@ -254,6 +254,8 @@ async def run_agent_loop(
                 yield AgentEvent(kind="phase", data=event["data"])
             elif etype == "retrying":
                 yield AgentEvent(kind="retrying", data=event["data"])
+            elif etype == "usage":
+                yield AgentEvent(kind="usage", data=event["data"])
             elif etype == "error":
                 if (
                     event["data"].get("code") == "context_length_exceeded"

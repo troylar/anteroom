@@ -694,6 +694,10 @@ def create_message(
     content: str,
     user_id: str | None = None,
     user_display_name: str | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    total_tokens: int | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     mid = _uuid()
     now = _now()
@@ -705,8 +709,22 @@ def create_message(
         position = pos_row[0]
         conn.execute(
             "INSERT INTO messages (id, conversation_id, role, content, user_id, user_display_name,"
-            " created_at, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (mid, conversation_id, role, content, user_id, user_display_name, now, position),
+            " created_at, position, prompt_tokens, completion_tokens, total_tokens, model)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                mid,
+                conversation_id,
+                role,
+                content,
+                user_id,
+                user_display_name,
+                now,
+                position,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+                model,
+            ),
         )
         conn.execute(
             "UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -721,7 +739,60 @@ def create_message(
         "user_display_name": user_display_name,
         "created_at": now,
         "position": position,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "model": model,
     }
+
+
+def update_message_usage(
+    db: sqlite3.Connection,
+    message_id: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+    model: str,
+) -> None:
+    """Update token usage on an existing message (called after streaming completes)."""
+    db.execute(
+        "UPDATE messages SET prompt_tokens = ?, completion_tokens = ?, total_tokens = ?, model = ? WHERE id = ?",
+        (prompt_tokens, completion_tokens, total_tokens, model, message_id),
+    )
+
+
+def get_usage_stats(
+    db: sqlite3.Connection,
+    since: str | None = None,
+    conversation_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Get token usage aggregated by model.
+
+    Args:
+        since: ISO date string to filter messages from (inclusive). None = all time.
+        conversation_id: Filter to a specific conversation. None = all conversations.
+
+    Returns:
+        List of dicts with model, prompt_tokens, completion_tokens, total_tokens, message_count.
+    """
+    query = (
+        "SELECT model, "
+        "SUM(prompt_tokens) as prompt_tokens, "
+        "SUM(completion_tokens) as completion_tokens, "
+        "SUM(total_tokens) as total_tokens, "
+        "COUNT(*) as message_count "
+        "FROM messages WHERE prompt_tokens IS NOT NULL"
+    )
+    params: list[Any] = []
+    if since:
+        query += " AND created_at >= ?"
+        params.append(since)
+    if conversation_id:
+        query += " AND conversation_id = ?"
+        params.append(conversation_id)
+    query += " GROUP BY model ORDER BY total_tokens DESC"
+    rows = db.execute_fetchall(query, tuple(params))
+    return [dict(row) for row in rows]
 
 
 def list_messages(db: sqlite3.Connection, conversation_id: str) -> list[dict[str, Any]]:

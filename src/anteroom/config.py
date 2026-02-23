@@ -294,6 +294,29 @@ class PlanningConfig:
 
 
 @dataclass
+class UsageConfig:
+    """Token usage tracking and cost estimation settings."""
+
+    week_days: int = 7  # number of days in a "week" period
+    month_days: int = 30  # number of days in a "month" period
+    model_costs: dict[str, dict[str, float]] = field(
+        default_factory=lambda: {
+            "gpt-4o": {"input": 2.50, "output": 10.00},
+            "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+            "gpt-4.1": {"input": 2.00, "output": 8.00},
+            "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
+            "gpt-4.1-nano": {"input": 0.10, "output": 0.40},
+            "o3": {"input": 2.00, "output": 8.00},
+            "o3-mini": {"input": 1.10, "output": 4.40},
+            "o4-mini": {"input": 1.10, "output": 4.40},
+            "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
+            "claude-opus-4-20250514": {"input": 15.00, "output": 75.00},
+            "claude-haiku-4-20250514": {"input": 0.80, "output": 4.00},
+        }
+    )  # per 1M tokens
+
+
+@dataclass
 class CliConfig:
     builtin_tools: bool = True
     max_tool_iterations: int = 50
@@ -309,6 +332,7 @@ class CliConfig:
     file_reference_max_chars: int = 100_000  # max chars from @file references
     model_context_window: int = 128_000  # model context window size for usage bar
     planning: PlanningConfig = field(default_factory=PlanningConfig)
+    usage: UsageConfig = field(default_factory=UsageConfig)
 
 
 @dataclass
@@ -664,6 +688,36 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         auto_mode=planning_auto_mode,
     )
 
+    # Parse usage config
+    usage_raw = cli_raw.get("usage", {})
+    if not isinstance(usage_raw, dict):
+        usage_raw = {}
+    try:
+        usage_week_days = max(1, int(usage_raw.get("week_days", 7)))
+    except (ValueError, TypeError):
+        usage_week_days = 7
+    try:
+        usage_month_days = max(1, int(usage_raw.get("month_days", 30)))
+    except (ValueError, TypeError):
+        usage_month_days = 30
+    usage_model_costs = usage_raw.get("model_costs", {})
+    if not isinstance(usage_model_costs, dict):
+        usage_model_costs = {}
+    usage_config = UsageConfig(
+        week_days=usage_week_days,
+        month_days=usage_month_days,
+    )
+    if usage_model_costs:
+        # Merge user-provided costs with defaults (user overrides win)
+        merged = dict(usage_config.model_costs)
+        for model_name, costs in usage_model_costs.items():
+            if isinstance(costs, dict):
+                merged[str(model_name)] = {
+                    "input": float(costs.get("input", 0)),
+                    "output": float(costs.get("output", 0)),
+                }
+        usage_config.model_costs = merged
+
     cli_config = CliConfig(
         builtin_tools=cli_raw.get("builtin_tools", True),
         max_tool_iterations=int(cli_raw.get("max_tool_iterations", 50)),
@@ -679,6 +733,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         file_reference_max_chars=file_reference_max_chars,
         model_context_window=model_context_window,
         planning=planning_config,
+        usage=usage_config,
     )
 
     identity_raw = raw.get("identity", {})

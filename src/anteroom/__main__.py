@@ -187,6 +187,95 @@ def _run_db(args) -> None:
         sys.exit(1)
 
 
+def _run_usage(
+    config, period: str | None = None, conversation_id: str | None = None, output_json: bool = False
+) -> None:
+    """Show token usage and cost statistics."""
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    from .db import init_db
+    from .services import storage
+
+    db = init_db(config.app.data_dir)
+    usage_cfg = config.cli.usage
+    now = datetime.now(timezone.utc)
+
+    if period:
+        periods = {
+            "day": ("Today", (now - timedelta(days=1)).isoformat()),
+            "week": ("This week", (now - timedelta(days=usage_cfg.week_days)).isoformat()),
+            "month": ("This month", (now - timedelta(days=usage_cfg.month_days)).isoformat()),
+            "all": ("All time", None),
+        }
+        selected = [periods[period]]
+    else:
+        selected = [
+            ("Today", (now - timedelta(days=1)).isoformat()),
+            ("This week", (now - timedelta(days=usage_cfg.week_days)).isoformat()),
+            ("This month", (now - timedelta(days=usage_cfg.month_days)).isoformat()),
+            ("All time", None),
+        ]
+
+    all_results = {}
+    for label, since in selected:
+        stats = storage.get_usage_stats(db, since=since, conversation_id=conversation_id)
+        total_prompt = sum(s.get("prompt_tokens", 0) or 0 for s in stats)
+        total_completion = sum(s.get("completion_tokens", 0) or 0 for s in stats)
+        total_tokens = sum(s.get("total_tokens", 0) or 0 for s in stats)
+        total_messages = sum(s.get("message_count", 0) or 0 for s in stats)
+
+        total_cost = 0.0
+        for s in stats:
+            model = s.get("model", "") or ""
+            prompt_t = s.get("prompt_tokens", 0) or 0
+            completion_t = s.get("completion_tokens", 0) or 0
+            costs = usage_cfg.model_costs.get(model, {})
+            input_rate = costs.get("input", 0.0)
+            output_rate = costs.get("output", 0.0)
+            total_cost += (prompt_t / 1_000_000) * input_rate + (completion_t / 1_000_000) * output_rate
+
+        all_results[label] = {
+            "prompt_tokens": total_prompt,
+            "completion_tokens": total_completion,
+            "total_tokens": total_tokens,
+            "message_count": total_messages,
+            "estimated_cost": round(total_cost, 4),
+            "by_model": [
+                {
+                    "model": s.get("model", "unknown"),
+                    "prompt_tokens": s.get("prompt_tokens", 0) or 0,
+                    "completion_tokens": s.get("completion_tokens", 0) or 0,
+                    "total_tokens": s.get("total_tokens", 0) or 0,
+                    "message_count": s.get("message_count", 0) or 0,
+                }
+                for s in stats
+            ],
+        }
+
+    if output_json:
+        print(json.dumps(all_results, indent=2))
+        return
+
+    print("\nToken Usage")
+    print("=" * 50)
+    for label, data in all_results.items():
+        if data["total_tokens"] == 0:
+            print(f"\n  {label}: no usage data")
+            continue
+        print(f"\n  {label} ({data['message_count']} messages)")
+        print(f"    Prompt:     {data['prompt_tokens']:>12,} tokens")
+        print(f"    Completion: {data['completion_tokens']:>12,} tokens")
+        print(f"    Total:      {data['total_tokens']:>12,} tokens")
+        if data["estimated_cost"] > 0:
+            print(f"    Est. cost:  ${data['estimated_cost']:>11,.4f}")
+        if len(data["by_model"]) > 1:
+            print("    By model:")
+            for m in data["by_model"]:
+                print(f"      {m['model']}: {m['total_tokens']:,} tokens")
+    print()
+
+
 def _run_web(config, config_path: Path) -> None:
     """Launch the web UI server."""
     print(f"Config loaded from {config_path}")
@@ -473,6 +562,27 @@ def main() -> None:
         help="Trust and load the project's ANTEROOM.md (skipped by default in exec mode)",
     )
 
+    # `aroom usage` subcommand
+    usage_parser = subparsers.add_parser("usage", help="Show token usage and cost statistics")
+    usage_parser.add_argument(
+        "--period",
+        choices=["day", "week", "month", "all"],
+        default=None,
+        help="Time period (default: show all periods)",
+    )
+    usage_parser.add_argument(
+        "--conversation",
+        dest="conversation_id",
+        default=None,
+        help="Filter to a specific conversation ID",
+    )
+    usage_parser.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        help="Output as JSON",
+    )
+
     # `aroom db` subcommand
     db_parser = subparsers.add_parser("db", help="Manage shared databases")
     db_parser.add_argument("db_action", choices=["create", "list", "connect"], help="Database action")
@@ -549,6 +659,15 @@ def main() -> None:
 
     if args.test:
         asyncio.run(_test_connection(config))
+        return
+
+    if args.command == "usage":
+        _run_usage(
+            config,
+            period=getattr(args, "period", None),
+            conversation_id=getattr(args, "conversation_id", None),
+            output_json=getattr(args, "output_json", False),
+        )
         return
 
     if args.command == "chat":
