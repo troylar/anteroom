@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 23, 2026
 
+### v1.34.0
+
+**New:**
+
+- **Graceful tool limit handling**: Automatically caps tools per API request (default 128) to prevent errors when many MCP servers are connected (#311)
+- **Configurable tool limit**: Set `ai.max_tools` in config or `AI_CHAT_MAX_TOOLS` env var to adjust the cap (#311)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.34.0)
+
 ### v1.33.0
 
 **New:**
