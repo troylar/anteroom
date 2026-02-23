@@ -1,94 +1,119 @@
 # Anteroom Roadmap
 
-Aligned with [VISION.md](VISION.md). Updated 2026-02-22.
-
-## Deeper Agentic Capabilities
-
-### High
-- [ ] #218 — Structured JSON output mode for agent events
-- [ ] #266 — Render live plan checklist with execution progress
-- [ ] #166 — Render execution plan as live checklist during agentic runs
-- [ ] #272 — Add plan mode approval flow to web UI
-- [ ] #281 — Add code changes summary after tool execution
-- [ ] #231 — OS-level sandboxing for command execution
-
-### Medium
-- [ ] #268 — Multi-pane AI-managed context panels for CLI and web
-- [ ] #230 — Glob-pattern bash permission rules
-- [ ] #225 — Built-in web fetch and search tools
-- [ ] #284 — Expose OpenAI-compatible proxy API with agentic capabilities
-- [ ] #282 — Add API conversation type for tracking external tool calls
-- [ ] #99 — Store sub-agent tool calls in database for audit trail
-
-### Low
-- [ ] #81 — Multi-session task harness: delegate work that spans days
-- [ ] #79 — Heartbeat agent: proactive AI that doesn't wait for you
-- [ ] #77 — Scheduled/background conversations
-- [ ] #216 — Lifecycle hooks for agent loop events
-- [ ] #214 — Multi-model pipeline with reasoning and editing roles
-- [ ] #235 — Conversation forking for branching explorations
-- [ ] #227 — Undo/redo for file modifications
+Aligned with [VISION.md](VISION.md). Updated 2026-02-23.
 
 ## Knowledge Management
 
 ### High
-- [ ] #179 — Document upload to knowledgebase with global and project scope
+
+- [ ] #109 — feat: default embeddings to disabled, improve separate endpoint config
 
 ### Medium
-- [ ] #217 — save_memory tool for agent-initiated cross-session persistence
-- [ ] #212 — Tree-sitter codebase index for token-efficient context
-- [ ] #78 — Transparent Markdown-based memory with sqlite-vec index
+
+- [ ] #78 — feat: Transparent Markdown-based memory with sqlite-vec index
+- [ ] #83 — feat: Knowledge notebooks — conversation types for logs, docs, and searchable content
+- [ ] #212 — feat: add tree-sitter codebase index for token-efficient context
+- [ ] #217 — feat(tools): add save_memory tool for agent-initiated cross-session persistence
+- [ ] #225 — feat(tools): add built-in web fetch and search tools
+- [ ] #310 — Add token budget warnings for usage self-regulation
 
 ### Low
-- [ ] #72 — Markdown journaling with auto-export and Obsidian compatibility
-- [ ] #75 — Conversation branching UI with tree visualization
-- [ ] #74 — Conversation templates for recurring workflows
-- [ ] #60 — Web UI: conversation import from markdown
-- [ ] #178 — Document source scanning with folder watch and Confluence connector
+
+- [ ] #72 — feat: Markdown journaling with auto-export and Obsidian compatibility
+- [ ] #178 — Add document source scanning with folder watch and Confluence connector
+
+## Deeper Agentic Capabilities
+
+### High
+
+- [ ] #213 — feat(agent): auto-validate edits with lint and test feedback loop
+- [ ] #231 — feat(tools): add OS-level sandboxing for command execution (macOS/Linux)
+- [ ] #266 — feat(cli): render live plan checklist with execution progress
+- [ ] #272 — feat(web): add plan mode approval flow to web UI
+
+### Medium
+
+- [ ] #99 — Store sub-agent tool calls in database for audit trail
+- [ ] #228 — feat(config): add agent configuration profiles
+- [ ] #230 — feat(tools): add glob-pattern bash permission rules
+- [ ] #257 — feat(cli): redesign prompt with persistent status header and context bar
+- [ ] #268 — feat: multi-pane AI-managed context panels for CLI and web
+- [ ] #282 — Add API conversation type for tracking external tool calls
+- [ ] #297 — feat(tools): OS-level sandboxing for command execution (Windows)
+- [ ] #298 — Add file change cards to web UI for write_file and edit_file results
+- [ ] #301 — feat(routers): add live plan checklist to web UI chat
+
+### Low
+
+- [ ] #77 — feat: Scheduled/background conversations
+- [ ] #79 — feat: Heartbeat agent — proactive AI that doesn't wait for you
+- [ ] #80 — feat: Live multi-user agent sessions — collaborative prompting
+- [ ] #81 — feat: Multi-session task harness — delegate work that spans days
+- [ ] #176 — feat: add webhook agent backend for n8n and external endpoints
+- [ ] #214 — feat: multi-model pipeline with reasoning and editing roles
+- [ ] #227 — feat(tools): add undo/redo for file modifications
+- [ ] #235 — feat(cli): add conversation forking for branching explorations
+- [ ] #273 — Add real-time conversation sync between web UI and CLI
 
 ## Extensibility
 
 ### High
-- [ ] #224 — Drop-in custom tool authoring via Python scripts
-- [ ] #233 — MCP server mode so Anteroom can be used as a tool
-- [ ] #109 — Default embeddings to disabled, improve separate endpoint config
+
+- [ ] #224 — feat(tools): add drop-in custom tool authoring via Python scripts
+- [ ] #233 — feat(mcp): add MCP server mode so Anteroom can be used as a tool
+- [ ] #284 — feat(routers): expose OpenAI-compatible proxy API with agentic capabilities
+- [ ] #319 — feat: deferred MCP tool loading to reduce context token overhead
+- [ ] #323 — feat: call_mcp meta-tool for code-execution-with-MCP pattern
 
 ### Medium
-- [ ] #228 — Agent configuration profiles
+
+- [ ] #216 — feat: add lifecycle hooks for agent loop events
+- [ ] #321 — feat: track and warn on tool definition token overhead
+- [ ] #322 — feat: hybrid skills that declare MCP tool dependencies for on-demand loading
+- [ ] #324 — feat: adaptive tool context — dynamically load/unload tools by topic
 
 ### Low
+
 - [ ] #96 — Load .parlor/commands/ as Anteroom skills
-- [ ] #65 — Real-time collaboration on shared databases
-- [ ] #80 — Live multi-user agent sessions: collaborative prompting
+- [ ] #320 — feat: skill-as-API-guide pattern for lightweight service integrations
 
 ## Developer Workflow
 
 ### High
-- [ ] #243 — Add VS Code extension for Anteroom
-- [ ] #213 — Auto-validate edits with lint and test feedback loop
+
+- [ ] #159 — fix(cli): collapse_long_input shows raw ANSI codes when pasting multiline content
+- [ ] #218 — feat(cli): add structured JSON output mode for agent events
+- [ ] #267 — feat(cli): auto-invoke skills from natural language prompts
 
 ### Medium
-- [ ] #237 — VS Code extension with chat, code assistant, and conversation sync
-- [ ] #248 — VS Code @file/@folder mentions and partial file pasting
+
+- [ ] #114 — CLI: accessibility improvements (NO_COLOR, text markers, screen reader compat)
+- [ ] #243 — Add VS Code extension for Anteroom
+- [ ] #248 — feat(vscode): add @file/@folder mentions and partial file pasting in chat
 - [ ] #274 — Store working directory in conversations for cross-interface continuity
-- [ ] #226 — Usage stats command for token and cost tracking
 
 ### Low
-- [ ] #48 — MkDocs Material documentation site and /write-docs skill
-- [ ] #229 — LSP integration for codebase-aware context
-- [ ] #167 — Persistent task panel above prompt box
+
+- [ ] #74 — feat: Conversation templates for recurring workflows
+- [ ] #167 — feat(cli): persistent task panel above prompt box using prompt_toolkit layout
+- [ ] #199 — feat(cli): compressed paste blocks with atomic delete
+- [ ] #229 — feat(cli): add LSP integration for codebase-aware context
+- [ ] #237 — feat: add VS Code extension with chat, code assistant, and conversation sync
+- [ ] #258 — feat: build anteroom-shell (ashell) — cross-platform AI shell on xonsh
 
 ## Other
 
 ### Medium
-- [ ] #114 — CLI: accessibility improvements (NO_COLOR, text markers, screen reader compat)
+
 - [ ] #113 — Web UI: WCAG 2.2 AA compliance (ARIA, focus, contrast)
 
 ### Low
-- [ ] #258 — anteroom-shell (ashell) on xonsh *(vision-review)*
-- [ ] #199 — Compressed paste blocks with atomic delete
-- [ ] #116 — Color theme support for CLI with color-blindness safe themes
-- [ ] #112 — WCAG 2.2 AA accessibility rules and PR validation
-- [ ] #273 — Real-time conversation sync between web UI and CLI
+
+- [ ] #48 — Add MkDocs Material documentation site and /write-docs skill
 - [ ] #57 — Web UI: infinite scroll for conversation list
 - [ ] #58 — Web UI: bulk operations on conversations
+- [ ] #60 — Web UI: conversation import from markdown
+- [ ] #65 — Real-time collaboration on shared databases
+- [ ] #75 — feat: Conversation branching UI with tree visualization
+- [ ] #112 — Add WCAG 2.2 AA accessibility rules and PR validation
+- [ ] #116 — Add color theme support to CLI with color-blindness safe themes
