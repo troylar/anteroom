@@ -93,7 +93,7 @@ A full-featured chat interface with projects, folders, tags, file attachments, c
 
 ### CLI REPL
 
-An agentic terminal with **10 built-in tools**, MCP integration, sub-agent orchestration, a skills system, and planning mode &mdash; all with Rich markdown rendering. Type while the AI works; messages queue automatically.
+An agentic terminal with **11 built-in tools**, MCP integration, sub-agent orchestration, a skills system, and planning mode &mdash; all with Rich markdown rendering. Type while the AI works; messages queue automatically.
 
 ```
 $ aroom chat
