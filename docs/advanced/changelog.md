@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 24, 2026
 
+### v1.39.0
+
+**New:**
+
+- **Plan mode in web UI**: Toggle planning mode, review AI-generated plans in a side panel, approve to execute or reject to start over — full parity with CLI (#340)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.39.0)
+
 ### v1.38.0
 
 **New:**
