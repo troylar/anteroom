@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 24, 2026
 
+### v1.42.0
+
+**New:**
+
+- Human-readable conversation slugs — conversations get auto-generated names like `bold-azure-cliff` for easy resume and reference (#367)
+- Rename slugs with `/slug my-project` in CLI, with uniqueness suggestions when names are taken (#367)
+- Slug display in CLI `/list` and web UI sidebar (#367)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.42.0)
+
 ### v1.41.0
 
 **New:**
