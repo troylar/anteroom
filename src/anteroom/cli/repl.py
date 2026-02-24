@@ -2681,6 +2681,15 @@ async def _run_repl(
             except BaseException:
                 pass
 
+        # Show resume hint if the conversation has messages
+        if conv.get("id") and not is_first_message:
+            cid = conv["id"]
+            renderer.console.print(
+                f"\n[{CHROME}]To resume this conversation:[/{CHROME}]"
+                f"\n[{CHROME}]  aroom chat -c              [/{CHROME}][{MUTED}](continue last)[/{MUTED}]"
+                f"\n[{CHROME}]  aroom chat -r {cid[:8]}   [/{CHROME}][{MUTED}](this conversation)[/{MUTED}]\n"
+            )
+
 
 async def _compact_messages(
     ai_service: AIService,
