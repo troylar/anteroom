@@ -394,10 +394,11 @@ class TestUUIDValidation:
         resp = client.delete("/api/conversations/not-a-uuid")
         assert resp.status_code == 400
 
-    def test_patch_conversation_invalid_uuid(self) -> None:
+    def test_patch_conversation_invalid_identifier(self) -> None:
         app = _make_app()
         client = TestClient(app)
-        resp = client.patch("/api/conversations/not-a-uuid", json={"title": "Test"})
+        # Input that is neither a valid UUID nor a valid slug
+        resp = client.patch("/api/conversations/NOT-VALID!", json={"title": "Test"})
         assert resp.status_code == 400
 
     def test_entries_path_traversal_uuid(self) -> None:

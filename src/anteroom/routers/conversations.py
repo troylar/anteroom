@@ -171,7 +171,7 @@ async def get_conversation(conversation_id: str, request: Request):
 
 @router.patch("/conversations/{conversation_id}")
 async def update_conversation(conversation_id: str, body: ConversationUpdate, request: Request):
-    _validate_uuid(conversation_id)
+    _validate_uuid_or_slug(conversation_id)
     db = _get_db(request)
     conv = storage.get_conversation(db, conversation_id)
     if not conv:

@@ -315,16 +315,15 @@ async def _check_for_update(current: str) -> str | None:
     return None
 
 
-def _resolve_conversation(db: Any, target: str) -> str | None:
-    """Resolve a target (list number, UUID, or slug) to a conversation ID."""
+def _resolve_conversation(db: Any, target: str) -> dict[str, Any] | None:
+    """Resolve a target (list number, UUID, or slug) to a conversation dict."""
     if target.isdigit():
         idx = int(target) - 1
         convs = storage.list_conversations(db, limit=20)
         if 0 <= idx < len(convs):
-            return convs[idx]["id"]
+            return storage.get_conversation(db, convs[idx]["id"])
         return None
-    conv = storage.get_conversation(db, target)
-    return conv["id"] if conv else None
+    return storage.get_conversation(db, target)
 
 
 def _show_resume_info(db: Any, conv: dict[str, Any], ai_messages: list[dict[str, Any]]) -> None:
@@ -1866,13 +1865,9 @@ async def _run_repl(
                         renderer.console.print(f"[{CHROME}]Usage: /delete <number|slug|id>[/{CHROME}]\n")
                         continue
                     target = parts[1].strip()
-                    resolved_id = _resolve_conversation(db, target)
-                    if not resolved_id:
-                        renderer.render_error(f"Conversation not found: {target}. Use /list to see conversations.")
-                        continue
-                    to_delete = storage.get_conversation(db, resolved_id)
+                    to_delete = _resolve_conversation(db, target)
                     if not to_delete:
-                        renderer.render_error(f"Conversation not found: {target}")
+                        renderer.render_error(f"Conversation not found: {target}. Use /list to see conversations.")
                         continue
                     title = to_delete.get("title", "Untitled")
                     try:
@@ -1883,9 +1878,9 @@ async def _run_repl(
                     if answer not in ("y", "yes"):
                         renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
                         continue
-                    storage.delete_conversation(db, resolved_id, config.app.data_dir)
+                    storage.delete_conversation(db, to_delete["id"], config.app.data_dir)
                     renderer.console.print(f"[{CHROME}]Deleted: {title}[/{CHROME}]\n")
-                    if conv.get("id") == resolved_id:
+                    if conv.get("id") == to_delete["id"]:
                         conv = storage.create_conversation(db, **id_kw)
                         ai_messages = []
                         is_first_message = True
@@ -1908,10 +1903,11 @@ async def _run_repl(
                     if len(parts) == 3 and looks_like_target:
                         target = parts[1].strip()
                         new_title = parts[2].strip()
-                        resolved_id = _resolve_conversation(db, target)
-                        if not resolved_id:
+                        resolved = _resolve_conversation(db, target)
+                        if not resolved:
                             renderer.render_error(f"Conversation not found: {target}. Use /list to see conversations.")
                             continue
+                        resolved_id = resolved["id"]
                     else:
                         # /rename <title> — rename current conversation
                         new_title = user_input.split(maxsplit=1)[1].strip()
@@ -1923,10 +1919,6 @@ async def _run_repl(
                         renderer.console.print(
                             f"[{CHROME}]Usage: /rename <title> or /rename <N|id|slug> <title>[/{CHROME}]\n"
                         )
-                        continue
-                    target_conv = storage.get_conversation(db, resolved_id)
-                    if not target_conv:
-                        renderer.render_error(f"Conversation not found: {resolved_id}")
                         continue
                     storage.update_conversation_title(db, resolved_id, new_title)
                     renderer.console.print(f'[{CHROME}]Renamed conversation to "{new_title}"[/{CHROME}]\n')
@@ -1957,7 +1949,9 @@ async def _run_repl(
                             conv["slug"] = desired
                             renderer.console.print(f"[{CHROME}]Slug set to: {desired}[/{CHROME}]\n")
                         except _sqlite3.IntegrityError:
-                            renderer.render_error(f'"{desired}" is taken. Try: {suggestion}')
+                            # Race: slug was taken between check and write
+                            fallback = suggest_unique_slug(db, desired)
+                            renderer.render_error(f'"{desired}" is taken. Try: {fallback}')
                     else:
                         renderer.console.print(f'[{CHROME}]"{desired}" is taken. Suggestion: {suggestion}[/{CHROME}]\n')
                     continue
@@ -2262,18 +2256,14 @@ async def _run_repl(
                         )
                         continue
                     target = parts[1].strip()
-                    resolved_id = _resolve_conversation(db, target)
-                    if not resolved_id:
+                    loaded = _resolve_conversation(db, target)
+                    if not loaded:
                         renderer.render_error(f"Conversation not found: {target}. Use /list to see conversations.")
                         continue
-                    loaded = storage.get_conversation(db, resolved_id)
-                    if loaded:
-                        conv = loaded
-                        ai_messages = _load_conversation_messages(db, conv["id"])
-                        is_first_message = False
-                        _show_resume_info(db, conv, ai_messages)
-                    else:
-                        renderer.render_error(f"Conversation not found: {resolved_id}")
+                    conv = loaded
+                    ai_messages = _load_conversation_messages(db, conv["id"])
+                    is_first_message = False
+                    _show_resume_info(db, conv, ai_messages)
                     continue
                 elif cmd == "/rewind":
                     stored = storage.list_messages(db, conv["id"])
