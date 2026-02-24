@@ -50,7 +50,6 @@ def _estimate_tokens(text: str) -> int:
     return len(text) // _CHARS_PER_TOKEN
 
 
-
 def _gather_config(config: Any) -> dict[str, Any]:
     """Gather config information with secret redaction."""
     result: dict[str, Any] = {}
