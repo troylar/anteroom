@@ -1445,14 +1445,22 @@ async def _run_repl(
     def _newline(event: Any) -> None:
         event.current_buffer.insert_text("\n")
 
-    # Ctrl+C: clear buffer if text present, exit if empty
+    # Ctrl+C: clear buffer if text present (with double-press exit), exit if empty
     _exit_flag: list[bool] = [False]
+    _last_ctrl_c: list[float] = [0.0]
 
     @kb.add("c-c")
     def _handle_ctrl_c(event: Any) -> None:
+        import time
+
         buf = event.current_buffer
+        now = time.monotonic()
         if buf.text:
             buf.reset()
+            _last_ctrl_c[0] = now
+        elif now - _last_ctrl_c[0] < 2.0:
+            _exit_flag[0] = True
+            buf.validate_and_handle()
         else:
             _exit_flag[0] = True
             buf.validate_and_handle()
@@ -2748,15 +2756,18 @@ async def _run_repl(
             except BaseException:
                 pass
 
-        # Show resume hint if the conversation has messages
-        if conv.get("id") and not is_first_message:
-            resume_label = conv.get("slug") or conv["id"][:8]
-            renderer.console.print(
-                f"\n[{CHROME}]To resume this conversation:[/{CHROME}]"
-                f"\n[{CHROME}]  aroom chat -c              [/{CHROME}][{MUTED}](continue last)[/{MUTED}]"
-                f"\n[{CHROME}]  aroom chat -r {resume_label}[/{CHROME}][{MUTED}]"
-                f" (this conversation)[/{MUTED}]\n"
-            )
+    # Show resume hint after patch_stdout exits so output isn't swallowed
+    if conv.get("id") and not is_first_message:
+        resume_label = conv.get("slug") or conv["id"][:8]
+        from rich.console import Console as _HintConsole
+
+        _hint_console = _HintConsole(stderr=True)
+        _hint_console.print(
+            f"\n[{CHROME}]To resume this conversation:[/{CHROME}]"
+            f"\n[{CHROME}]  aroom chat -c              [/{CHROME}][{MUTED}](continue last)[/{MUTED}]"
+            f"\n[{CHROME}]  aroom chat -r {resume_label}[/{CHROME}][{MUTED}]"
+            f" (this conversation)[/{MUTED}]\n"
+        )
 
 
 async def _compact_messages(
