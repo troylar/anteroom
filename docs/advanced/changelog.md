@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 24, 2026
 
+### v1.43.3
+
+**Fixed:**
+
+- REPL autocomplete now includes `/slug`, `/upload`, `/usage`, and `/rename` commands (#377)
+- `/help` dialog now shows `/upload` and `/usage` entries (#377)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.43.3)
+
 ### v1.43.2
 
 **Fixed:**
