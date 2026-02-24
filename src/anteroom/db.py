@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS conversation_tags (
 CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
+    slug TEXT UNIQUE DEFAULT NULL,
     type TEXT NOT NULL DEFAULT 'chat' CHECK(type IN ('chat', 'note', 'document')),
     model TEXT DEFAULT NULL,
     project_id TEXT DEFAULT NULL,
@@ -501,6 +502,10 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
 
     if "type" not in cols:
         conn.execute("ALTER TABLE conversations ADD COLUMN type TEXT NOT NULL DEFAULT 'chat'")
+
+    if "slug" not in cols:
+        conn.execute("ALTER TABLE conversations ADD COLUMN slug TEXT DEFAULT NULL")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_slug ON conversations(slug)")
 
     # Ensure folders table exists for existing databases
     conn.execute(

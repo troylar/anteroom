@@ -35,6 +35,7 @@ from anteroom.services.storage import (
     remove_tag_from_conversation,
     replace_document_content,
     save_attachment,
+    update_conversation_slug,
     update_conversation_title,
     update_conversation_type,
     update_folder,
@@ -177,6 +178,53 @@ class TestConversations:
         delete_conversation(db, conv["id"], tmp_path)
         tcs = db.execute("SELECT * FROM tool_calls WHERE message_id = ?", (msg["id"],)).fetchall()
         assert len(tcs) == 0
+
+
+class TestConversationSlugs:
+    def test_create_conversation_has_slug(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Slugged")
+        assert conv.get("slug") is not None
+        assert len(conv["slug"].split("-")) == 3
+
+    def test_get_conversation_by_slug(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Find Me")
+        fetched = get_conversation(db, conv["slug"])
+        assert fetched is not None
+        assert fetched["id"] == conv["id"]
+
+    def test_list_conversations_includes_slug(self, db: sqlite3.Connection) -> None:
+        create_conversation(db, title="Listed")
+        result = list_conversations(db)
+        assert "slug" in result[0]
+        assert result[0]["slug"] is not None
+
+    def test_update_conversation_slug(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="Rename Slug")
+        updated = update_conversation_slug(db, conv["id"], "my-custom-slug")
+        assert updated is not None
+        assert updated["slug"] == "my-custom-slug"
+
+    def test_update_slug_duplicate_raises(self, db: sqlite3.Connection) -> None:
+        conv1 = create_conversation(db, title="First")
+        create_conversation(db, title="Second")
+        import sqlite3 as _sqlite3
+
+        with pytest.raises(_sqlite3.IntegrityError):
+            update_conversation_slug(db, conv1["id"], create_conversation(db, title="Third")["slug"])
+
+    def test_backfill_slug_on_access(self, db: sqlite3.Connection) -> None:
+        # Simulate an old conversation without a slug
+        db.execute(
+            "INSERT INTO conversations (id, title, type, created_at, updated_at) "
+            "VALUES ('old-id', 'Old Conv', 'chat', '2024-01-01', '2024-01-01')"
+        )
+        db.commit()
+        fetched = get_conversation(db, "old-id")
+        assert fetched is not None
+        assert fetched["slug"] is not None
+        # Verify it was persisted
+        row = db.execute_fetchone("SELECT slug FROM conversations WHERE id = 'old-id'")
+        assert row["slug"] is not None
 
 
 class TestDeleteEmptyConversations:

@@ -372,11 +372,21 @@ class TestEntriesEndpointSecurity:
 class TestUUIDValidation:
     """UUID validation across all endpoints."""
 
-    def test_get_conversation_invalid_uuid(self) -> None:
+    def test_get_conversation_invalid_identifier(self) -> None:
         app = _make_app()
         client = TestClient(app)
-        resp = client.get("/api/conversations/not-a-uuid")
+        # Input that is neither a valid UUID nor a valid slug (contains uppercase/special chars)
+        resp = client.get("/api/conversations/NOT-VALID!")
         assert resp.status_code == 400
+
+    def test_get_conversation_valid_slug_not_found(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        with patch("anteroom.routers.conversations.storage") as mock_storage:
+            mock_storage.get_conversation.return_value = None
+            resp = client.get("/api/conversations/not-a-uuid")
+        # Valid slug format but no conversation found
+        assert resp.status_code == 404
 
     def test_delete_conversation_invalid_uuid(self) -> None:
         app = _make_app()
@@ -384,10 +394,11 @@ class TestUUIDValidation:
         resp = client.delete("/api/conversations/not-a-uuid")
         assert resp.status_code == 400
 
-    def test_patch_conversation_invalid_uuid(self) -> None:
+    def test_patch_conversation_invalid_identifier(self) -> None:
         app = _make_app()
         client = TestClient(app)
-        resp = client.patch("/api/conversations/not-a-uuid", json={"title": "Test"})
+        # Input that is neither a valid UUID nor a valid slug
+        resp = client.patch("/api/conversations/NOT-VALID!", json={"title": "Test"})
         assert resp.status_code == 400
 
     def test_entries_path_traversal_uuid(self) -> None:

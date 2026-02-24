@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sqlite3 as _sqlite3
 import unicodedata
 import uuid
 
@@ -143,20 +144,34 @@ async def create_conversation(request: Request):
     return conv
 
 
+def _validate_uuid_or_slug(value: str) -> None:
+    """Accept a valid UUID4 or a valid slug pattern; reject everything else."""
+    try:
+        uuid.UUID(value, version=4)
+        return
+    except ValueError:
+        pass
+    from ..services.slug import is_valid_slug
+
+    if not is_valid_slug(value):
+        raise HTTPException(status_code=400, detail="Invalid conversation identifier")
+
+
 @router.get("/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str, request: Request):
-    _validate_uuid(conversation_id)
+    _validate_uuid_or_slug(conversation_id)
     db = _get_db(request)
+    # Try UUID first, then slug fallback (get_conversation handles both)
     conv = storage.get_conversation(db, conversation_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    messages = storage.list_messages(db, conversation_id)
+    messages = storage.list_messages(db, conv["id"])
     return {**conv, "messages": messages}
 
 
 @router.patch("/conversations/{conversation_id}")
 async def update_conversation(conversation_id: str, body: ConversationUpdate, request: Request):
-    _validate_uuid(conversation_id)
+    _validate_uuid_or_slug(conversation_id)
     db = _get_db(request)
     conv = storage.get_conversation(db, conversation_id)
     if not conv:
@@ -180,6 +195,11 @@ async def update_conversation(conversation_id: str, body: ConversationUpdate, re
                 )
             )
 
+    if body.slug is not None:
+        try:
+            conv = storage.update_conversation_slug(db, conversation_id, body.slug)
+        except _sqlite3.IntegrityError:
+            raise HTTPException(status_code=409, detail="Slug is already taken")
     if body.type is not None:
         conv = storage.update_conversation_type(db, conversation_id, body.type)
     if body.model is not None:

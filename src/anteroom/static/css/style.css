@@ -519,6 +519,15 @@ body {
     text-overflow: ellipsis;
 }
 
+.conversation-item .conv-slug {
+    display: block;
+    font-size: 0.7em;
+    opacity: 0.5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .conversation-item .conv-actions {
     display: none;
     gap: 4px;

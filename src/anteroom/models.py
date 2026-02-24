@@ -90,6 +90,7 @@ class ConventionsResponse(BaseModel):
 
 class ConversationUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
+    slug: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
     model: str | None = Field(default=None, max_length=200)
     folder_id: str | None = Field(default=None, max_length=200)
     type: str | None = Field(default=None, pattern=r"^(chat|note|document)$")

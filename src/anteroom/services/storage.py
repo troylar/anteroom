@@ -16,6 +16,7 @@ from typing import Any
 import filetype
 
 from ..tools.path_utils import safe_resolve_pathlib
+from .slug import generate_slug
 
 logger = logging.getLogger(__name__)
 
@@ -381,15 +382,18 @@ def create_conversation(
         raise ValueError(f"Invalid conversation type: {conversation_type!r}")
     cid = _uuid()
     now = _now()
+    slug = generate_slug(db)
     db.execute(
-        "INSERT INTO conversations (id, title, type, project_id, user_id, user_display_name, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (cid, title, conversation_type, project_id, user_id, user_display_name, now, now),
+        "INSERT INTO conversations"
+        " (id, title, slug, type, project_id, user_id, user_display_name, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (cid, title, slug, conversation_type, project_id, user_id, user_display_name, now, now),
     )
     db.commit()
     return {
         "id": cid,
         "title": title,
+        "slug": slug,
         "type": conversation_type,
         "model": None,
         "project_id": project_id,
@@ -403,8 +407,18 @@ def create_conversation(
 def get_conversation(db: sqlite3.Connection, conversation_id: str) -> dict[str, Any] | None:
     row = db.execute_fetchone("SELECT * FROM conversations WHERE id = ?", (conversation_id,))
     if not row:
+        # Fallback: try slug lookup
+        row = db.execute_fetchone("SELECT * FROM conversations WHERE slug = ?", (conversation_id,))
+    if not row:
         return None
-    return dict(row)
+    result = dict(row)
+    # Backfill slug for older conversations
+    if not result.get("slug"):
+        slug = generate_slug(db)
+        db.execute("UPDATE conversations SET slug = ? WHERE id = ?", (slug, result["id"]))
+        db.commit()
+        result["slug"] = slug
+    return result
 
 
 def _sanitize_fts_query(query: str) -> str:
@@ -449,7 +463,7 @@ def list_conversations(
 
     if use_fts:
         query = f"""
-            SELECT c.id, c.title, c.type, c.folder_id, c.created_at, c.updated_at,
+            SELECT c.id, c.title, c.slug, c.type, c.folder_id, c.created_at, c.updated_at,
                    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
             FROM conversations c
             JOIN conversations_fts fts ON fts.conversation_id = c.id
@@ -459,7 +473,7 @@ def list_conversations(
         """
     else:
         query = f"""
-            SELECT c.id, c.title, c.type, c.folder_id, c.created_at, c.updated_at,
+            SELECT c.id, c.title, c.slug, c.type, c.folder_id, c.created_at, c.updated_at,
                    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
             FROM conversations c
             {where}
@@ -479,6 +493,17 @@ def update_conversation_title(db: sqlite3.Connection, conversation_id: str, titl
     db.execute(
         "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
         (title, now, conversation_id),
+    )
+    db.commit()
+    return get_conversation(db, conversation_id)
+
+
+def update_conversation_slug(db: sqlite3.Connection, conversation_id: str, slug: str) -> dict[str, Any] | None:
+    """Update the slug of a conversation. Raises sqlite3.IntegrityError on duplicate."""
+    now = _now()
+    db.execute(
+        "UPDATE conversations SET slug = ?, updated_at = ? WHERE id = ?",
+        (slug, now, conversation_id),
     )
     db.commit()
     return get_conversation(db, conversation_id)

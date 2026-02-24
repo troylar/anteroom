@@ -10,6 +10,7 @@ import platform
 import re
 import shutil
 import signal
+import sqlite3 as _sqlite3
 import subprocess
 import sys
 import time
@@ -28,6 +29,7 @@ from ..services.ai_service import AIService, create_ai_service
 from ..services.embeddings import get_effective_dimensions
 from ..services.rewind import collect_file_paths
 from ..services.rewind import rewind_conversation as rewind_service
+from ..services.slug import is_valid_slug, suggest_unique_slug
 from ..tools import ToolRegistry, register_default_tools
 from . import renderer
 from .instructions import (
@@ -311,6 +313,17 @@ async def _check_for_update(current: str) -> str | None:
             except Exception:
                 pass
     return None
+
+
+def _resolve_conversation(db: Any, target: str) -> dict[str, Any] | None:
+    """Resolve a target (list number, UUID, or slug) to a conversation dict."""
+    if target.isdigit():
+        idx = int(target) - 1
+        convs = storage.list_conversations(db, limit=20)
+        if 0 <= idx < len(convs):
+            return storage.get_conversation(db, convs[idx]["id"])
+        return None
+    return storage.get_conversation(db, target)
 
 
 def _show_resume_info(db: Any, conv: dict[str, Any], ai_messages: list[dict[str, Any]]) -> None:
@@ -1474,12 +1487,14 @@ async def _run_repl(
                 (desc, "         Show recent conversations (default 20)\n"),
                 (cmd, "  /search <query>"),
                 (desc, "   Search conversations by content\n"),
-                (cmd, "  /resume <N|id>"),
-                (desc, "    Resume by list number or ID\n"),
-                (cmd, "  /delete <N|id>"),
-                (desc, "    Delete a conversation\n"),
-                (cmd, "  /rename [N|id] <title>"),
-                (desc, " Rename a conversation\n"),
+                (cmd, "  /resume <N|id|slug>"),
+                (desc, " Resume by number, ID, or slug\n"),
+                (cmd, "  /delete <N|id|slug>"),
+                (desc, " Delete a conversation\n"),
+                (cmd, "  /rename [N|id|slug] <title>"),
+                (desc, "\n                          Rename a conversation\n"),
+                (cmd, "  /slug [name]"),
+                (desc, "        Show or set conversation slug\n"),
                 (cmd, "  /rewind"),
                 (desc, "           Roll back to an earlier message\n"),
                 ("", "\n"),
@@ -1832,40 +1847,27 @@ async def _run_repl(
                             msg_count = c.get("message_count", 0)
                             ctype = c.get("type", "chat")
                             type_badge = f" [cyan]\\[{ctype}][/cyan]" if ctype != "chat" else ""
+                            slug_label = f" [{MUTED}]{c['slug']}[/{MUTED}]" if c.get("slug") else ""
                             renderer.console.print(
-                                f"  {i + 1}. {c['title']}{type_badge}"
-                                f" ({msg_count} msgs) [{CHROME}]{c['id'][:8]}...[/{CHROME}]"
+                                f"  {i + 1}. {c['title']}{type_badge} ({msg_count} msgs){slug_label}"
                             )
                         if has_more:
                             more_n = list_limit + 20
                             msg = f"... more available. Use /list {more_n} to show more."
                             renderer.console.print(f"  [{MUTED}]{msg}[/{MUTED}]")
-                        renderer.console.print("  Use [bold]/resume <number>[/bold] or [bold]/resume <id>[/bold]\n")
+                        renderer.console.print("  Use [bold]/resume <number>[/bold] or [bold]/resume <slug>[/bold]\n")
                     else:
                         renderer.console.print(f"[{CHROME}]No conversations[/{CHROME}]\n")
                     continue
                 elif cmd == "/delete":
                     parts = user_input.split(maxsplit=1)
                     if len(parts) < 2:
-                        renderer.console.print(
-                            f"[{CHROME}]Usage: /delete <number> or /delete <conversation_id>[/{CHROME}]\n"
-                        )
+                        renderer.console.print(f"[{CHROME}]Usage: /delete <number|slug|id>[/{CHROME}]\n")
                         continue
                     target = parts[1].strip()
-                    resolved_id = None
-                    if target.isdigit():
-                        idx = int(target) - 1
-                        convs = storage.list_conversations(db, limit=20)
-                        if 0 <= idx < len(convs):
-                            resolved_id = convs[idx]["id"]
-                        else:
-                            renderer.render_error(f"Invalid number: {target}. Use /list to see conversations.")
-                            continue
-                    else:
-                        resolved_id = target
-                    to_delete = storage.get_conversation(db, resolved_id)
+                    to_delete = _resolve_conversation(db, target)
                     if not to_delete:
-                        renderer.render_error(f"Conversation not found: {target}")
+                        renderer.render_error(f"Conversation not found: {target}. Use /list to see conversations.")
                         continue
                     title = to_delete.get("title", "Untitled")
                     try:
@@ -1876,9 +1878,9 @@ async def _run_repl(
                     if answer not in ("y", "yes"):
                         renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
                         continue
-                    storage.delete_conversation(db, resolved_id, config.app.data_dir)
+                    storage.delete_conversation(db, to_delete["id"], config.app.data_dir)
                     renderer.console.print(f"[{CHROME}]Deleted: {title}[/{CHROME}]\n")
-                    if conv.get("id") == resolved_id:
+                    if conv.get("id") == to_delete["id"]:
                         conv = storage.create_conversation(db, **id_kw)
                         ai_messages = []
                         is_first_message = True
@@ -1887,27 +1889,25 @@ async def _run_repl(
                     parts = user_input.split(maxsplit=2)
                     if len(parts) < 2:
                         renderer.console.print(
-                            f"[{CHROME}]Usage: /rename <title> or /rename <N|id> <title>[/{CHROME}]\n"
+                            f"[{CHROME}]Usage: /rename <title> or /rename <N|id|slug> <title>[/{CHROME}]\n"
                         )
                         continue
-                    # Two forms: /rename <title> (current conv) or /rename <N|id> <title>
+                    # Two forms: /rename <title> (current conv) or /rename <target> <title>
                     first_arg = parts[1].strip()
                     looks_like_target = first_arg.isdigit() or ("-" in first_arg and len(first_arg) >= 36)
+                    # Also treat as target if it resolves as a slug
+                    if not looks_like_target and len(parts) == 3:
+                        maybe_conv = storage.get_conversation(db, first_arg)
+                        if maybe_conv:
+                            looks_like_target = True
                     if len(parts) == 3 and looks_like_target:
-                        # Could be /rename <N> <title> or /rename <id> <title>
                         target = parts[1].strip()
                         new_title = parts[2].strip()
-                        resolved_id = None
-                        if target.isdigit():
-                            idx = int(target) - 1
-                            convs = storage.list_conversations(db, limit=20)
-                            if 0 <= idx < len(convs):
-                                resolved_id = convs[idx]["id"]
-                            else:
-                                renderer.render_error(f"Invalid number: {target}. Use /list to see conversations.")
-                                continue
-                        else:
-                            resolved_id = target
+                        resolved = _resolve_conversation(db, target)
+                        if not resolved:
+                            renderer.render_error(f"Conversation not found: {target}. Use /list to see conversations.")
+                            continue
+                        resolved_id = resolved["id"]
                     else:
                         # /rename <title> — rename current conversation
                         new_title = user_input.split(maxsplit=1)[1].strip()
@@ -1917,17 +1917,43 @@ async def _run_repl(
                         continue
                     if not new_title:
                         renderer.console.print(
-                            f"[{CHROME}]Usage: /rename <title> or /rename <N|id> <title>[/{CHROME}]\n"
+                            f"[{CHROME}]Usage: /rename <title> or /rename <N|id|slug> <title>[/{CHROME}]\n"
                         )
-                        continue
-                    target_conv = storage.get_conversation(db, resolved_id)
-                    if not target_conv:
-                        renderer.render_error(f"Conversation not found: {resolved_id}")
                         continue
                     storage.update_conversation_title(db, resolved_id, new_title)
                     renderer.console.print(f'[{CHROME}]Renamed conversation to "{new_title}"[/{CHROME}]\n')
                     if conv.get("id") == resolved_id:
                         conv["title"] = new_title
+                    continue
+                elif cmd == "/slug":
+                    parts = user_input.split(maxsplit=1)
+                    if len(parts) < 2:
+                        # Show current slug
+                        current_slug = conv.get("slug", "none")
+                        renderer.console.print(f"[{CHROME}]Slug: {current_slug}[/{CHROME}]\n")
+                        continue
+                    desired = parts[1].strip().lower()
+                    if not conv.get("id"):
+                        renderer.render_error("No active conversation.")
+                        continue
+                    if not is_valid_slug(desired):
+                        renderer.render_error(
+                            "Invalid slug. Use lowercase letters, numbers, and hyphens (e.g. my-project)."
+                        )
+                        continue
+                    suggestion = suggest_unique_slug(db, desired)
+                    if suggestion is None:
+                        # Desired slug is available
+                        try:
+                            storage.update_conversation_slug(db, conv["id"], desired)
+                            conv["slug"] = desired
+                            renderer.console.print(f"[{CHROME}]Slug set to: {desired}[/{CHROME}]\n")
+                        except _sqlite3.IntegrityError:
+                            # Race: slug was taken between check and write
+                            fallback = suggest_unique_slug(db, desired)
+                            renderer.render_error(f'"{desired}" is taken. Try: {fallback}')
+                    else:
+                        renderer.console.print(f'[{CHROME}]"{desired}" is taken. Suggestion: {suggestion}[/{CHROME}]\n')
                     continue
                 elif cmd == "/search":
                     parts = user_input.split(maxsplit=1)
@@ -2005,7 +2031,7 @@ async def _run_repl(
                             renderer.console.print(
                                 f"  {i + 1}. {c['title']} ({msg_count} msgs) [{CHROME}]{c['id'][:8]}...[/{CHROME}]"
                             )
-                        renderer.console.print("  Use [bold]/resume <number>[/bold] to open\n")
+                        renderer.console.print("  Use [bold]/resume <number|slug>[/bold] to open\n")
                     else:
                         renderer.console.print(f"[{CHROME}]No conversations matching '{query}'[/{CHROME}]\n")
                     continue
@@ -2230,25 +2256,14 @@ async def _run_repl(
                         )
                         continue
                     target = parts[1].strip()
-                    resolved_id = None
-                    if target.isdigit():
-                        idx = int(target) - 1
-                        convs = storage.list_conversations(db, limit=20)
-                        if 0 <= idx < len(convs):
-                            resolved_id = convs[idx]["id"]
-                        else:
-                            renderer.render_error(f"Invalid number: {target}. Use /list to see conversations.")
-                            continue
-                    else:
-                        resolved_id = target
-                    loaded = storage.get_conversation(db, resolved_id)
-                    if loaded:
-                        conv = loaded
-                        ai_messages = _load_conversation_messages(db, conv["id"])
-                        is_first_message = False
-                        _show_resume_info(db, conv, ai_messages)
-                    else:
-                        renderer.render_error(f"Conversation not found: {resolved_id}")
+                    loaded = _resolve_conversation(db, target)
+                    if not loaded:
+                        renderer.render_error(f"Conversation not found: {target}. Use /list to see conversations.")
+                        continue
+                    conv = loaded
+                    ai_messages = _load_conversation_messages(db, conv["id"])
+                    is_first_message = False
+                    _show_resume_info(db, conv, ai_messages)
                     continue
                 elif cmd == "/rewind":
                     stored = storage.list_messages(db, conv["id"])
@@ -2683,11 +2698,12 @@ async def _run_repl(
 
         # Show resume hint if the conversation has messages
         if conv.get("id") and not is_first_message:
-            cid = conv["id"]
+            resume_label = conv.get("slug") or conv["id"][:8]
             renderer.console.print(
                 f"\n[{CHROME}]To resume this conversation:[/{CHROME}]"
                 f"\n[{CHROME}]  aroom chat -c              [/{CHROME}][{MUTED}](continue last)[/{MUTED}]"
-                f"\n[{CHROME}]  aroom chat -r {cid[:8]}   [/{CHROME}][{MUTED}](this conversation)[/{MUTED}]\n"
+                f"\n[{CHROME}]  aroom chat -r {resume_label}[/{CHROME}][{MUTED}]"
+                f" (this conversation)[/{MUTED}]\n"
             )
 
 
