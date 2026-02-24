@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 23, 2026
 
+### v1.36.0
+
+**New:**
+
+- **Named-list merge for team config**: MCP servers and shared databases merge by `name` field instead of replacing wholesale — overlay just the fields you need (#330)
+- **Disable team items**: Set `enabled: false` in personal config to opt out of team-defined MCP servers or databases (#330)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.36.0)
+
 ### v1.35.0
 
 **New:**
