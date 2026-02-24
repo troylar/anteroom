@@ -5,6 +5,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## February 24, 2026
+
+### v1.37.1
+
+**Fixed:**
+
+- CLI paste preview no longer shows raw ANSI escape codes — collapsed multiline input renders colors correctly via Rich (#159)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.37.1)
+
 ## February 23, 2026
 
 ### v1.37.0
