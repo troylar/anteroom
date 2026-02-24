@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 24, 2026
 
+### v1.43.0
+
+**New:**
+
+- AI-powered skill auto-invocation — say "commit my changes" or "review this PR" instead of typing `/commit` or `/review` (#267)
+- Configurable via `cli.skills.auto_invoke` (default true); explicit `/command` still takes priority (#267)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.43.0)
+
 ### v1.42.0
 
 **New:**
