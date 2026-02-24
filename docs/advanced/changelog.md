@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 24, 2026
 
+### v1.38.0
+
+**New:**
+
+- **RAG pipeline**: Conversations now automatically retrieve relevant context from past conversations and knowledge sources via semantic similarity search (#349)
+- Configurable similarity threshold, token budget, and chunk limits — works zero-config with sensible defaults
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.38.0)
+
 ### v1.37.1
 
 **Fixed:**
