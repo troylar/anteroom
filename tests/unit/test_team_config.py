@@ -11,6 +11,8 @@ import yaml
 from anteroom.services.team_config import (
     _MISSING,
     _SAFE_DOT_PATH,
+    _is_named_list,
+    _merge_named_lists,
     _resolve_dot_path,
     _set_dot_path,
     _walk_up_for_team_config,
@@ -171,6 +173,153 @@ class TestDeepMerge:
         overlay = {"a": {"b": {"d": 3, "e": 4}}}
         result = deep_merge(base, overlay)
         assert result == {"a": {"b": {"c": 1, "d": 3, "e": 4}}}
+
+    def test_named_lists_merged_by_name(self) -> None:
+        """Named lists (list of dicts with 'name' keys) merge by name, not replace."""
+        base = {
+            "mcp_servers": [
+                {"name": "github", "command": "uvx mcp-server-github"},
+                {"name": "slack", "command": "uvx mcp-server-slack"},
+            ]
+        }
+        overlay = {
+            "mcp_servers": [
+                {"name": "github", "env": {"GITHUB_TOKEN": "tok123"}},
+            ]
+        }
+        result = deep_merge(base, overlay)
+        # github: merged (command from base + env from overlay)
+        assert result["mcp_servers"][0] == {
+            "name": "github",
+            "command": "uvx mcp-server-github",
+            "env": {"GITHUB_TOKEN": "tok123"},
+        }
+        # slack: unchanged from base
+        assert result["mcp_servers"][1] == {"name": "slack", "command": "uvx mcp-server-slack"}
+
+    def test_named_list_overlay_adds_new_items(self) -> None:
+        """Overlay items not in base are appended."""
+        base = {"mcp_servers": [{"name": "github", "command": "uvx github"}]}
+        overlay = {"mcp_servers": [{"name": "gitlab", "command": "uvx gitlab"}]}
+        result = deep_merge(base, overlay)
+        assert len(result["mcp_servers"]) == 2
+        assert result["mcp_servers"][0]["name"] == "github"
+        assert result["mcp_servers"][1]["name"] == "gitlab"
+
+    def test_named_list_overlay_field_wins(self) -> None:
+        """When both base and overlay set a scalar field, overlay wins."""
+        base = {"servers": [{"name": "s1", "timeout": 30}]}
+        overlay = {"servers": [{"name": "s1", "timeout": 60}]}
+        result = deep_merge(base, overlay)
+        assert result["servers"][0]["timeout"] == 60
+
+    def test_named_list_nested_dicts_merged(self) -> None:
+        """Nested dicts within named-list items are recursively merged."""
+        base = {"servers": [{"name": "s1", "env": {"A": "1", "B": "2"}}]}
+        overlay = {"servers": [{"name": "s1", "env": {"B": "99", "C": "3"}}]}
+        result = deep_merge(base, overlay)
+        assert result["servers"][0]["env"] == {"A": "1", "B": "99", "C": "3"}
+
+    def test_named_list_does_not_mutate_inputs(self) -> None:
+        base = {"servers": [{"name": "s1", "val": 1}]}
+        overlay = {"servers": [{"name": "s1", "val": 2}]}
+        deep_merge(base, overlay)
+        assert base["servers"][0]["val"] == 1
+        assert overlay["servers"][0]["val"] == 2
+
+    def test_named_list_preserves_base_order(self) -> None:
+        """Base items appear in their original order, overlay-only items appended."""
+        base = {"s": [{"name": "c"}, {"name": "a"}, {"name": "b"}]}
+        overlay = {"s": [{"name": "d"}, {"name": "a", "x": 1}]}
+        result = deep_merge(base, overlay)
+        names = [item["name"] for item in result["s"]]
+        assert names == ["c", "a", "b", "d"]
+        assert result["s"][1]["x"] == 1
+
+    def test_mixed_list_without_names_still_replaced(self) -> None:
+        """Lists of dicts without 'name' keys are still replaced wholesale."""
+        base = {"items": [{"id": 1, "val": "a"}, {"id": 2, "val": "b"}]}
+        overlay = {"items": [{"id": 3, "val": "c"}]}
+        result = deep_merge(base, overlay)
+        assert result["items"] == [{"id": 3, "val": "c"}]
+
+    def test_named_list_enabled_false_preserved_in_merge(self) -> None:
+        """enabled:false set by overlay is preserved in the merged result.
+
+        The actual filtering happens downstream in config.py, not in deep_merge.
+        deep_merge just ensures the field is carried through.
+        """
+        base = {"mcp_servers": [{"name": "noisy", "command": "uvx noisy-server"}]}
+        overlay = {"mcp_servers": [{"name": "noisy", "enabled": False}]}
+        result = deep_merge(base, overlay)
+        assert result["mcp_servers"][0]["enabled"] is False
+        assert result["mcp_servers"][0]["command"] == "uvx noisy-server"
+
+
+# ---------------------------------------------------------------------------
+# _is_named_list
+# ---------------------------------------------------------------------------
+
+
+class TestIsNamedList:
+    def test_list_of_dicts_with_name(self) -> None:
+        assert _is_named_list([{"name": "a"}, {"name": "b"}]) is True
+
+    def test_empty_list(self) -> None:
+        assert _is_named_list([]) is False
+
+    def test_list_of_strings(self) -> None:
+        assert _is_named_list(["a", "b", "c"]) is False
+
+    def test_list_of_dicts_without_name(self) -> None:
+        assert _is_named_list([{"id": 1}, {"id": 2}]) is False
+
+    def test_mixed_list(self) -> None:
+        assert _is_named_list([{"name": "a"}, "b"]) is False
+
+    def test_partial_name_keys(self) -> None:
+        """All items must have 'name' for it to be a named list."""
+        assert _is_named_list([{"name": "a"}, {"id": 2}]) is False
+
+    def test_not_a_list(self) -> None:
+        assert _is_named_list("not a list") is False
+        assert _is_named_list(42) is False
+        assert _is_named_list({"name": "a"}) is False
+
+
+# ---------------------------------------------------------------------------
+# _merge_named_lists
+# ---------------------------------------------------------------------------
+
+
+class TestMergeNamedLists:
+    def test_matching_items_merged(self) -> None:
+        base = [{"name": "a", "x": 1}]
+        overlay = [{"name": "a", "y": 2}]
+        result = _merge_named_lists(base, overlay)
+        assert result == [{"name": "a", "x": 1, "y": 2}]
+
+    def test_base_only_items_kept(self) -> None:
+        base = [{"name": "a"}, {"name": "b"}]
+        overlay = [{"name": "a", "x": 1}]
+        result = _merge_named_lists(base, overlay)
+        assert len(result) == 2
+        assert result[1] == {"name": "b"}
+
+    def test_overlay_only_items_appended(self) -> None:
+        base = [{"name": "a"}]
+        overlay = [{"name": "b", "x": 1}]
+        result = _merge_named_lists(base, overlay)
+        assert len(result) == 2
+        assert result[0] == {"name": "a"}
+        assert result[1] == {"name": "b", "x": 1}
+
+    def test_does_not_mutate_inputs(self) -> None:
+        base = [{"name": "a", "x": 1}]
+        overlay = [{"name": "a", "x": 2}]
+        _merge_named_lists(base, overlay)
+        assert base[0]["x"] == 1
+        assert overlay[0]["x"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +647,110 @@ class TestTeamConfigIntegration:
             config, enforced = load_config(config_file)
 
         assert config.ai.base_url == "https://team-env.example.com"
+
+    def test_mcp_servers_merged_by_name(self, tmp_path: Path) -> None:
+        """Team defines MCP servers, personal overlays env vars — merged by name."""
+        from anteroom.config import load_config
+
+        team_file = tmp_path / "team.yaml"
+        _write_yaml(
+            team_file,
+            {
+                "ai": {"base_url": "https://team.example.com", "api_key": "sk-team"},
+                "mcp_servers": [
+                    {"name": "github", "transport": "stdio", "command": "uvx mcp-server-github"},
+                    {"name": "slack", "transport": "stdio", "command": "uvx mcp-server-slack"},
+                ],
+            },
+        )
+
+        config_file = self._write_config(
+            tmp_path,
+            {
+                "ai": {"api_key": "sk-personal"},
+                "mcp_servers": [
+                    {"name": "github", "env": {"GITHUB_TOKEN": "my-token"}},
+                ],
+            },
+        )
+
+        with patch("anteroom.services.trust.check_trust", return_value="trusted"):
+            config, _ = load_config(config_file, team_config_path=team_file)
+
+        assert len(config.mcp_servers) == 2
+        github = next(s for s in config.mcp_servers if s.name == "github")
+        slack = next(s for s in config.mcp_servers if s.name == "slack")
+        # github: command from team, env from personal
+        assert github.command == "uvx mcp-server-github"
+        assert github.env == {"GITHUB_TOKEN": "my-token"}
+        # slack: untouched from team
+        assert slack.command == "uvx mcp-server-slack"
+
+    def test_mcp_server_disabled_by_personal(self, tmp_path: Path) -> None:
+        """Personal config can disable a team-defined MCP server with enabled: false."""
+        from anteroom.config import load_config
+
+        team_file = tmp_path / "team.yaml"
+        _write_yaml(
+            team_file,
+            {
+                "ai": {"base_url": "https://team.example.com", "api_key": "sk-team"},
+                "mcp_servers": [
+                    {"name": "github", "transport": "stdio", "command": "uvx mcp-server-github"},
+                    {"name": "noisy", "transport": "stdio", "command": "uvx noisy-server"},
+                ],
+            },
+        )
+
+        config_file = self._write_config(
+            tmp_path,
+            {
+                "ai": {"api_key": "sk-personal"},
+                "mcp_servers": [
+                    {"name": "noisy", "enabled": False},
+                ],
+            },
+        )
+
+        with patch("anteroom.services.trust.check_trust", return_value="trusted"):
+            config, _ = load_config(config_file, team_config_path=team_file)
+
+        # noisy server should be filtered out
+        assert len(config.mcp_servers) == 1
+        assert config.mcp_servers[0].name == "github"
+
+    def test_personal_adds_mcp_server_not_in_team(self, tmp_path: Path) -> None:
+        """Personal config can add MCP servers that aren't in the team config."""
+        from anteroom.config import load_config
+
+        team_file = tmp_path / "team.yaml"
+        _write_yaml(
+            team_file,
+            {
+                "ai": {"base_url": "https://team.example.com", "api_key": "sk-team"},
+                "mcp_servers": [
+                    {"name": "github", "transport": "stdio", "command": "uvx mcp-server-github"},
+                ],
+            },
+        )
+
+        config_file = self._write_config(
+            tmp_path,
+            {
+                "ai": {"api_key": "sk-personal"},
+                "mcp_servers": [
+                    {"name": "my-local", "transport": "stdio", "command": "my-local-tool"},
+                ],
+            },
+        )
+
+        with patch("anteroom.services.trust.check_trust", return_value="trusted"):
+            config, _ = load_config(config_file, team_config_path=team_file)
+
+        assert len(config.mcp_servers) == 2
+        names = [s.name for s in config.mcp_servers]
+        assert "github" in names
+        assert "my-local" in names
 
 
 # ---------------------------------------------------------------------------
