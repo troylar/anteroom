@@ -219,6 +219,7 @@ _MCP_SERVER_KEYS = {
     "timeout",
     "tools_include",
     "tools_exclude",
+    "enabled",
 }
 
 
@@ -436,6 +437,14 @@ def validate_config(raw: dict[str, Any]) -> ValidationResult:
                         message="MCP server entry missing required 'name' field",
                     )
                 )
+            # Items with enabled: false will be filtered out during parsing,
+            # so skip transport/command/url checks.  Partial overlay entries
+            # are also valid — they exist to overlay fields (like env vars)
+            # onto a team-defined server via named-list merge.  We detect a
+            # partial overlay when the entry has no explicit transport AND
+            # no command AND no url — i.e. it only carries overlay fields.
+            is_disabled = srv.get("enabled") is False
+            is_partial_overlay = "transport" not in srv and not srv.get("command") and not srv.get("url")
             transport = srv.get("transport", "stdio")
             if transport not in ("stdio", "sse"):
                 result.errors.append(
@@ -444,20 +453,21 @@ def validate_config(raw: dict[str, Any]) -> ValidationResult:
                         message=f"invalid transport '{transport}'; must be 'stdio' or 'sse'",
                     )
                 )
-            if transport == "stdio" and not srv.get("command"):
-                result.errors.append(
-                    ConfigError(
-                        path=f"{prefix}.command",
-                        message="stdio transport requires 'command' field",
+            if not is_disabled and not is_partial_overlay:
+                if transport == "stdio" and not srv.get("command"):
+                    result.errors.append(
+                        ConfigError(
+                            path=f"{prefix}.command",
+                            message="stdio transport requires 'command' field",
+                        )
                     )
-                )
-            if transport == "sse" and not srv.get("url"):
-                result.errors.append(
-                    ConfigError(
-                        path=f"{prefix}.url",
-                        message="sse transport requires 'url' field",
+                if transport == "sse" and not srv.get("url"):
+                    result.errors.append(
+                        ConfigError(
+                            path=f"{prefix}.url",
+                            message="sse transport requires 'url' field",
+                        )
                     )
-                )
             for key in srv:
                 if key not in _MCP_SERVER_KEYS:
                     result.errors.append(

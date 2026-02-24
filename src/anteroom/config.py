@@ -648,6 +648,11 @@ def load_config(
 
     mcp_servers: list[McpServerConfig] = []
     for srv in raw.get("mcp_servers", []):
+        # Skip servers explicitly disabled by personal config (enabled: false).
+        # This lets users opt out of team-defined servers without removing them.
+        if not srv.get("enabled", True):
+            logger.info("MCP server '%s' is disabled (enabled: false), skipping", srv.get("name", "?"))
+            continue
         env_raw = srv.get("env", {})
         env: dict[str, str] = {}
         for k, v in env_raw.items():
@@ -683,6 +688,9 @@ def load_config(
 
     shared_databases: list[SharedDatabaseConfig] = []
     for sdb in raw.get("shared_databases", []):
+        if not sdb.get("enabled", True):
+            logger.info("Shared database '%s' is disabled (enabled: false), skipping", sdb.get("name", "?"))
+            continue
         shared_databases.append(
             SharedDatabaseConfig(
                 name=sdb["name"],

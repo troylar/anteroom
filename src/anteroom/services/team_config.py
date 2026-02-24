@@ -205,12 +205,122 @@ def _prompt_trust(path: Path, *, is_changed: bool) -> bool:
     return answer in ("y", "yes")
 
 
+def _is_named_list(value: Any) -> bool:
+    """Return True if *value* is a list of dicts that all contain a ``name`` key.
+
+    Named lists get special merge treatment: items are matched by their
+    ``name`` field and merged individually, rather than the overlay list
+    replacing the base list wholesale.
+
+    Examples of named lists (merged by name)::
+
+        mcp_servers:
+          - name: my-server
+            command: uvx my-server
+
+        shared_databases:
+          - name: team-db
+            path: /shared/team.db
+
+    Examples of plain lists (overlay replaces base)::
+
+        safety:
+          denied_tools: ["bash", "rm"]
+        args: ["--verbose", "--port", "8080"]
+    """
+    if not isinstance(value, list) or len(value) == 0:
+        return False
+    return all(isinstance(item, dict) and "name" in item for item in value)
+
+
+def _merge_named_lists(base_list: list[dict[str, Any]], overlay_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge two named lists by matching items on their ``name`` field.
+
+    Merge rules:
+
+    1. **Matching names**: When both lists contain an item with the same
+       ``name``, the overlay item's fields are merged into the base item.
+       Overlay fields win for scalars and plain lists; nested dicts are
+       merged recursively via ``deep_merge``.
+
+    2. **Base-only names**: Items in the base list with no matching overlay
+       item are kept unchanged.
+
+    3. **Overlay-only names**: Items in the overlay list with no matching
+       base item are appended to the result.
+
+    4. **Order**: Base items appear first (in original order), followed by
+       any overlay-only items (in overlay order).
+
+    This enables a common team-config pattern where the team defines MCP
+    servers with shared settings, and individual users overlay just the
+    fields they need (e.g. env vars with API tokens)::
+
+        # team.yaml (base)
+        mcp_servers:
+          - name: github
+            transport: stdio
+            command: uvx mcp-server-github
+
+        # personal config (overlay)
+        mcp_servers:
+          - name: github
+            env:
+              GITHUB_TOKEN: "${GITHUB_TOKEN}"
+
+        # result: merged — command from team, env from personal
+        mcp_servers:
+          - name: github
+            transport: stdio
+            command: uvx mcp-server-github
+            env:
+              GITHUB_TOKEN: "${GITHUB_TOKEN}"
+    """
+    base_by_name: dict[str, dict[str, Any]] = {}
+    base_order: list[str] = []
+    for item in base_list:
+        name = item["name"]
+        base_by_name[name] = item
+        base_order.append(name)
+
+    overlay_by_name: dict[str, dict[str, Any]] = {}
+    overlay_order: list[str] = []
+    for item in overlay_list:
+        name = item["name"]
+        overlay_by_name[name] = item
+        overlay_order.append(name)
+
+    result: list[dict[str, Any]] = []
+
+    # Base items first (preserving base order), merged with overlay if present
+    for name in base_order:
+        base_item = base_by_name[name]
+        if name in overlay_by_name:
+            result.append(deep_merge(base_item, overlay_by_name[name]))
+        else:
+            result.append(dict(base_item))
+
+    # Overlay-only items appended at the end
+    for name in overlay_order:
+        if name not in base_by_name:
+            result.append(dict(overlay_by_name[name]))
+
+    return result
+
+
 def deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge *overlay* into *base*.
 
-    - Dicts are merged recursively (overlay keys win for scalars).
-    - Lists are replaced wholesale (overlay list replaces base list).
-    - Scalars in overlay overwrite base.
+    Merge strategy by value type:
+
+    - **Dicts** are merged recursively (overlay keys win for scalars).
+    - **Named lists** (lists of dicts where every item has a ``name`` key)
+      are merged by matching on the ``name`` field. This allows personal
+      config to overlay specific fields onto team-defined items without
+      replacing the entire list. See :func:`_merge_named_lists` for details.
+    - **Plain lists** (strings, numbers, or mixed items) are replaced
+      wholesale — the overlay list completely replaces the base list.
+    - **Scalars** in overlay overwrite base.
 
     Returns a new dict; neither input is mutated.
     """
@@ -219,6 +329,8 @@ def deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
         base_val = result.get(key)
         if isinstance(base_val, dict) and isinstance(overlay_val, dict):
             result[key] = deep_merge(base_val, overlay_val)
+        elif _is_named_list(base_val) and _is_named_list(overlay_val):
+            result[key] = _merge_named_lists(base_val, overlay_val)
         else:
             result[key] = overlay_val
     return result
