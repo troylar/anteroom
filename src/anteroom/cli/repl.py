@@ -10,6 +10,7 @@ import platform
 import re
 import shutil
 import signal
+import sqlite3 as _sqlite3
 import subprocess
 import sys
 import time
@@ -28,7 +29,7 @@ from ..services.ai_service import AIService, create_ai_service
 from ..services.embeddings import get_effective_dimensions
 from ..services.rewind import collect_file_paths
 from ..services.rewind import rewind_conversation as rewind_service
-from ..services.slug import suggest_unique_slug
+from ..services.slug import is_valid_slug, suggest_unique_slug
 from ..tools import ToolRegistry, register_default_tools
 from . import renderer
 from .instructions import (
@@ -1943,11 +1944,14 @@ async def _run_repl(
                     if not conv.get("id"):
                         renderer.render_error("No active conversation.")
                         continue
+                    if not is_valid_slug(desired):
+                        renderer.render_error(
+                            "Invalid slug. Use lowercase letters, numbers, and hyphens (e.g. my-project)."
+                        )
+                        continue
                     suggestion = suggest_unique_slug(db, desired)
                     if suggestion is None:
                         # Desired slug is available
-                        import sqlite3 as _sqlite3
-
                         try:
                             storage.update_conversation_slug(db, conv["id"], desired)
                             conv["slug"] = desired

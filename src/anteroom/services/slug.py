@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
-import random
+import re
+import secrets
 import sqlite3
+
+SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
+
+
+def is_valid_slug(slug: str) -> bool:
+    """Check if a string is a valid slug format."""
+    return bool(SLUG_PATTERN.match(slug)) and len(slug) <= 100
+
 
 ADJECTIVES = [
     "autumn",
@@ -249,13 +258,13 @@ MAX_RETRIES = 5
 def generate_slug(db: sqlite3.Connection) -> str:
     """Generate a unique adjective-color-noun slug."""
     for _ in range(MAX_RETRIES):
-        slug = f"{random.choice(ADJECTIVES)}-{random.choice(COLORS)}-{random.choice(NOUNS)}"
+        slug = f"{secrets.choice(ADJECTIVES)}-{secrets.choice(COLORS)}-{secrets.choice(NOUNS)}"
         existing = db.execute_fetchone("SELECT 1 FROM conversations WHERE slug = ?", (slug,))
         if not existing:
             return slug
     # Fallback: append random digits
-    base = f"{random.choice(ADJECTIVES)}-{random.choice(COLORS)}-{random.choice(NOUNS)}"
-    return f"{base}-{random.randint(100, 999)}"
+    base = f"{secrets.choice(ADJECTIVES)}-{secrets.choice(COLORS)}-{secrets.choice(NOUNS)}"
+    return f"{base}-{secrets.randbelow(900) + 100}"
 
 
 def suggest_unique_slug(db: sqlite3.Connection, desired: str) -> str | None:
@@ -270,4 +279,4 @@ def suggest_unique_slug(db: sqlite3.Connection, desired: str) -> str | None:
         candidate = f"{desired}-{suffix}"
         if not db.execute_fetchone("SELECT 1 FROM conversations WHERE slug = ?", (candidate,)):
             return candidate
-    return f"{desired}-{random.randint(100, 999)}"
+    return f"{desired}-{secrets.randbelow(900) + 100}"

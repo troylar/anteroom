@@ -372,13 +372,20 @@ class TestEntriesEndpointSecurity:
 class TestUUIDValidation:
     """UUID validation across all endpoints."""
 
-    def test_get_conversation_invalid_uuid(self) -> None:
+    def test_get_conversation_invalid_identifier(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        # Input that is neither a valid UUID nor a valid slug (contains uppercase/special chars)
+        resp = client.get("/api/conversations/NOT-VALID!")
+        assert resp.status_code == 400
+
+    def test_get_conversation_valid_slug_not_found(self) -> None:
         app = _make_app()
         client = TestClient(app)
         with patch("anteroom.routers.conversations.storage") as mock_storage:
             mock_storage.get_conversation.return_value = None
             resp = client.get("/api/conversations/not-a-uuid")
-        # GET accepts both UUIDs and slugs; returns 404 when not found
+        # Valid slug format but no conversation found
         assert resp.status_code == 404
 
     def test_delete_conversation_invalid_uuid(self) -> None:
