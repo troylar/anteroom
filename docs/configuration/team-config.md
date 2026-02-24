@@ -101,13 +101,27 @@ Once trusted, subsequent runs skip the prompt unless the file content changes.
 
 ## Configuration Merging
 
-The merge process uses **deep merge** with these rules:
+When team and personal configs are combined, Anteroom uses a **deep merge** with three distinct strategies depending on the type of value being merged:
 
-- **Nested dicts** merge recursively (team and personal keys are combined)
-- **Lists** in personal config replace team config lists wholesale (no append)
-- **Scalars** in personal config overwrite team config values
+### 1. Dicts merge recursively
 
-### Example
+Nested dictionaries are merged key by key. Personal config keys overlay team config keys; keys only present in team config are preserved.
+
+### 2. Named lists merge by `name`
+
+A **named list** is a list of dictionaries where every item has a `name` field --- for example, `mcp_servers` and `shared_databases`. These are merged by matching items on their `name` field:
+
+- **Same name in both**: the personal item's fields are merged into the team item (personal wins for individual fields)
+- **Only in team**: the item is kept unchanged
+- **Only in personal**: the item is appended
+
+This is the key feature that allows teams to define shared MCP servers with base settings, while individual users overlay just the fields they need (like API tokens in `env`).
+
+### 3. Plain lists replace wholesale
+
+Lists of simple values (strings, numbers) or lists of dicts without `name` keys are replaced entirely by the personal config value. For example, `denied_tools: ["bash"]` in personal config replaces the team's `denied_tools: ["bash", "rm"]`.
+
+### Example: Scalar and Dict Merging
 
 Team config:
 ```yaml
@@ -140,8 +154,70 @@ ai:
 
 safety:
   approval_mode: ask_for_writes           # from team (not in personal)
-  denied_tools: []                        # personal replaces team list
+  denied_tools: []                        # plain list — personal replaces team
 ```
+
+### Example: MCP Server Merging (Named Lists)
+
+This is the most common use case for named-list merging. The team defines which MCP servers to use and how to connect to them, while individual users add their own credentials.
+
+Team config:
+```yaml
+mcp_servers:
+  - name: github
+    transport: stdio
+    command: uvx mcp-server-github
+  - name: slack
+    transport: stdio
+    command: uvx mcp-server-slack
+```
+
+Personal config:
+```yaml
+mcp_servers:
+  - name: github
+    env:
+      GITHUB_TOKEN: "${GITHUB_TOKEN}"
+  - name: my-local-tool
+    transport: stdio
+    command: /usr/local/bin/my-tool
+```
+
+Merged result:
+```yaml
+mcp_servers:
+  # github: command from team, env from personal (merged by name)
+  - name: github
+    transport: stdio
+    command: uvx mcp-server-github
+    env:
+      GITHUB_TOKEN: "${GITHUB_TOKEN}"
+
+  # slack: unchanged from team (no personal overlay)
+  - name: slack
+    transport: stdio
+    command: uvx mcp-server-slack
+
+  # my-local-tool: personal-only server, appended
+  - name: my-local-tool
+    transport: stdio
+    command: /usr/local/bin/my-tool
+```
+
+### Disabling Team-Defined Items
+
+To opt out of a team-defined MCP server or shared database without removing it from the team config, set `enabled: false` in your personal config:
+
+```yaml
+# Personal config — disable a noisy team server
+mcp_servers:
+  - name: noisy-monitoring
+    enabled: false
+```
+
+The server will be skipped during startup. This only affects your local instance --- other team members still get the server unless they also disable it.
+
+> **Note:** `enabled: false` is evaluated during config parsing, not during merging. The item still appears in the merged YAML but is filtered out before Anteroom connects to it.
 
 ## Enforcement
 
@@ -227,21 +303,33 @@ Users can still set their own `api_key`, `system_prompt`, and other non-enforced
 
 ### Share MCP Servers
 
-Provide team-wide access to shared MCP tool servers:
+Provide team-wide access to shared MCP tool servers. Individual users can overlay their own credentials without replacing the server definitions:
 
+**Team config:**
 ```yaml
 mcp_servers:
-  postgres:
-    stdio:
-      command: node /opt/mcp-servers/postgres.js
-      args:
-        - --db-host=db.company.com
-        - --db-port=5432
+  - name: postgres
+    transport: stdio
+    command: node /opt/mcp-servers/postgres.js
+    args:
+      - --db-host=db.company.com
+      - --db-port=5432
+  - name: slack
+    transport: stdio
+    command: /opt/mcp-servers/slack.sh
+```
 
-  slack:
-    stdio:
-      command: /opt/mcp-servers/slack.sh
+**Personal config** (overlay just the tokens):
+```yaml
+mcp_servers:
+  - name: slack
+    env:
+      SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN}"
+```
 
+The result: both servers are available, with the Slack server getting the user's token from their environment. To lock the server list so users cannot remove servers, enforce it:
+
+```yaml
 enforce:
   - mcp_servers
 ```
