@@ -7,6 +7,12 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 24, 2026
 
+### v1.43.1
+
+*Maintenance release — bumped CodeQL CI action from v3 to v4.*
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.43.1)
+
 ### v1.43.0
 
 **New:**
