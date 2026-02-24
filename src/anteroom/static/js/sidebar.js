@@ -207,6 +207,13 @@ const Sidebar = (() => {
         title.textContent = c.title;
         div.appendChild(title);
 
+        if (c.slug) {
+            const slug = document.createElement('span');
+            slug.className = 'conv-slug';
+            slug.textContent = c.slug;
+            div.appendChild(slug);
+        }
+
         // Tags
         if (c.tags && c.tags.length > 0) {
             const tagRow = document.createElement('span');

@@ -86,6 +86,7 @@ class TestInitDb:
         assert col_names == {
             "id",
             "title",
+            "slug",
             "type",
             "model",
             "project_id",

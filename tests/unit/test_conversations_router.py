@@ -375,8 +375,11 @@ class TestUUIDValidation:
     def test_get_conversation_invalid_uuid(self) -> None:
         app = _make_app()
         client = TestClient(app)
-        resp = client.get("/api/conversations/not-a-uuid")
-        assert resp.status_code == 400
+        with patch("anteroom.routers.conversations.storage") as mock_storage:
+            mock_storage.get_conversation.return_value = None
+            resp = client.get("/api/conversations/not-a-uuid")
+        # GET accepts both UUIDs and slugs; returns 404 when not found
+        assert resp.status_code == 404
 
     def test_delete_conversation_invalid_uuid(self) -> None:
         app = _make_app()

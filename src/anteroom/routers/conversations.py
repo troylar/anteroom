@@ -145,12 +145,12 @@ async def create_conversation(request: Request):
 
 @router.get("/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str, request: Request):
-    _validate_uuid(conversation_id)
     db = _get_db(request)
+    # Try UUID first, then slug fallback (get_conversation handles both)
     conv = storage.get_conversation(db, conversation_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    messages = storage.list_messages(db, conversation_id)
+    messages = storage.list_messages(db, conv["id"])
     return {**conv, "messages": messages}
 
 
@@ -180,6 +180,13 @@ async def update_conversation(conversation_id: str, body: ConversationUpdate, re
                 )
             )
 
+    if body.slug is not None:
+        import sqlite3 as _sqlite3
+
+        try:
+            conv = storage.update_conversation_slug(db, conversation_id, body.slug)
+        except _sqlite3.IntegrityError:
+            raise HTTPException(status_code=409, detail=f"Slug '{body.slug}' is already taken")
     if body.type is not None:
         conv = storage.update_conversation_type(db, conversation_id, body.type)
     if body.model is not None:
