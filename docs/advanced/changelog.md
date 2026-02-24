@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 23, 2026
 
+### v1.36.1
+
+**Fixed:**
+
+- Init wizard now skips redundant prompts when team config provides AI settings (#333)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.36.1)
+
 ### v1.36.0
 
 **New:**
