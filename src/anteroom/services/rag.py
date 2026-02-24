@@ -132,6 +132,8 @@ def format_rag_context(chunks: list[RetrievedChunk]) -> str:
             attribution = f'from conversation "{label}"'
         else:
             attribution = f'from source "{label}"'
+        # SECURITY-REVIEW: chunk.content is user-controlled (past messages / uploaded sources).
+        # Prompt injection is an accepted architectural trade-off for RAG pipelines.
         parts.append(f"<retrieved-context {attribution}>\n{chunk.content}\n</retrieved-context>")
 
     return (
