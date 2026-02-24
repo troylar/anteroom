@@ -82,7 +82,7 @@ def _gather_config(config: Any) -> dict[str, Any]:
     result["app"] = {
         "host": app.host,
         "port": app.port,
-        "data_dir": str(app.data_dir),
+        "data_dir": "~/.anteroom",
         "tls": app.tls,
     }
 
