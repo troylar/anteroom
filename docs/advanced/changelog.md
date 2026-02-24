@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 23, 2026
 
+### v1.37.0
+
+**New:**
+
+- **Introspect tool**: AI can now examine its own runtime context — config, tools, MCP servers, safety gates, skills, and token budget — to answer self-awareness questions accurately (#332)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.37.0)
+
 ### v1.36.1
 
 **Fixed:**
