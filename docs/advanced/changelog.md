@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 24, 2026
 
+### v1.47.0
+
+**New:**
+
+- Parallel MCP server startup — all servers connect simultaneously with live animated status display (#383)
+- Subprocess stderr suppressed for clean terminal output during MCP connection (#383)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.47.0)
+
 ### v1.46.0
 
 **New:**
