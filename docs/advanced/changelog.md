@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 25, 2026
 
+### v1.49.0
+
+**New:**
+
+- `/create-eval` built-in skill — generate promptfoo evals, shell tests, and VHS demos from descriptions or conversations (#430)
+- Tutorial for project-local evals with copy-paste examples for all patterns (#430)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.49.0)
+
 ### v1.48.1
 
 **New:**
