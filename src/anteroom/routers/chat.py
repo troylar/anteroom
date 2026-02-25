@@ -12,6 +12,7 @@ import time as time_mod
 import uuid as uuid_mod
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -258,6 +259,40 @@ def _resolve_sources(
             + "\n\n".join(source_parts)
         )
     return ""
+
+
+def _build_tool_list(
+    tool_registry: Any,
+    mcp_manager: Any,
+    plan_mode: bool,
+    conversation_id: str,
+    data_dir: Path,
+    max_tools: int,
+) -> tuple[list[dict[str, Any]], Path | None, str]:
+    """Build the unified tool list (builtins + MCP) and return (tools, plan_path, plan_prompt).
+
+    plan_prompt is the planning system prompt to inject, or empty string if not in plan mode.
+    """
+    tools_openai: list[dict[str, Any]] = list(tool_registry.get_openai_tools())
+    if mcp_manager:
+        mcp_tools = mcp_manager.get_openai_tools()
+        if mcp_tools:
+            tools_openai.extend(mcp_tools)
+
+    plan_path: Path | None = None
+    plan_prompt = ""
+    if plan_mode:
+        from ..cli.plan import PLAN_MODE_ALLOWED_TOOLS, build_planning_system_prompt, get_plan_file_path
+
+        plan_path = get_plan_file_path(data_dir, conversation_id)
+        tools_openai = [t for t in tools_openai if t.get("function", {}).get("name") in PLAN_MODE_ALLOWED_TOOLS]
+        plan_prompt = "\n\n" + build_planning_system_prompt(plan_path)
+
+    from ..tools import cap_tools
+
+    tools_openai = cap_tools(tools_openai, set(tool_registry.list_tools()), limit=max_tools)
+
+    return tools_openai, plan_path, plan_prompt
 
 
 async def _parse_chat_request(request: Request) -> ChatRequestContext:
@@ -566,26 +601,16 @@ async def chat(conversation_id: str, request: Request):
     if file_instructions:
         extra_system_prompt += "\n\n" + file_instructions
 
-    tools_openai: list[dict[str, Any]] = list(tool_registry.get_openai_tools())
-    if mcp_manager:
-        mcp_tools = mcp_manager.get_openai_tools()
-        if mcp_tools:
-            tools_openai.extend(mcp_tools)
-
-    # Plan mode: filter tools and inject planning prompt
-    plan_path = None
-    if plan_mode:
-        from ..cli.plan import PLAN_MODE_ALLOWED_TOOLS, build_planning_system_prompt, get_plan_file_path, read_plan
-
-        plan_path = get_plan_file_path(request.app.state.config.app.data_dir, conversation_id)
-        tools_openai = [t for t in tools_openai if t.get("function", {}).get("name") in PLAN_MODE_ALLOWED_TOOLS]
-        extra_system_prompt += "\n\n" + build_planning_system_prompt(plan_path)
-
-    # Cap tools to provider limit (default 128), prioritising built-in tools
-    from ..tools import cap_tools
-
-    _max_tools = request.app.state.config.ai.max_tools
-    tools_openai = cap_tools(tools_openai, set(tool_registry.list_tools()), limit=_max_tools)
+    tools_openai, plan_path, plan_prompt = _build_tool_list(
+        tool_registry=tool_registry,
+        mcp_manager=mcp_manager,
+        plan_mode=plan_mode,
+        conversation_id=conversation_id,
+        data_dir=request.app.state.config.app.data_dir,
+        max_tools=request.app.state.config.ai.max_tools,
+    )
+    if plan_prompt:
+        extra_system_prompt += plan_prompt
 
     tools = tools_openai if tools_openai else None
 
@@ -1139,6 +1164,8 @@ async def chat(conversation_id: str, request: Request):
                         and data.get("status") == "success"
                         and plan_path.exists()
                     ):
+                        from ..cli.plan import read_plan
+
                         _plan_content = read_plan(plan_path)
                         if _plan_content:
                             yield {
