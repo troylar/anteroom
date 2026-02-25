@@ -405,6 +405,172 @@ async def _build_chat_system_prompt(
     return extra
 
 
+@dataclass
+class WebConfirmContext:
+    """Shared state for approval and ask_user callbacks."""
+
+    pending_approvals: dict[str, Any]
+    event_bus: Any
+    db_name: str
+    conversation_id: str
+    approval_timeout: int
+    request: Request
+    tool_registry: Any
+    last_resolved_scope: dict[int, str] = field(default_factory=dict)
+
+
+async def _web_confirm_tool(ctx: WebConfirmContext, verdict: Any) -> bool:
+    """Handle tool approval via the web UI event bus."""
+    import secrets as _secrets
+
+    max_pending = 100
+    if len(ctx.pending_approvals) >= max_pending:
+        logger.warning("Pending approvals limit reached (%d); denying", len(ctx.pending_approvals))
+        return False
+
+    approval_id = _secrets.token_urlsafe(16)
+    approval_event = asyncio.Event()
+    entry = {"event": approval_event, "approved": False, "scope": "once"}
+    ctx.pending_approvals[approval_id] = entry
+
+    if ctx.event_bus:
+        await ctx.event_bus.publish(
+            f"global:{ctx.db_name}",
+            {
+                "type": "approval_required",
+                "data": {
+                    "approval_id": approval_id,
+                    "tool_name": verdict.tool_name,
+                    "reason": verdict.reason,
+                    "details": verdict.details,
+                    "conversation_id": ctx.conversation_id,
+                },
+            },
+        )
+
+    try:
+        elapsed = 0.0
+        poll_interval = 1.0
+        while not approval_event.is_set():
+            if elapsed >= ctx.approval_timeout:
+                raise asyncio.TimeoutError()
+            try:
+                if await ctx.request.is_disconnected():
+                    raise asyncio.TimeoutError()
+            except asyncio.TimeoutError:
+                raise
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(approval_event.wait(), timeout=poll_interval)
+            except asyncio.TimeoutError:
+                elapsed += poll_interval
+    except asyncio.TimeoutError:
+        logger.warning("Approval timed out (id=%s): %s", approval_id, verdict.reason)
+        if ctx.event_bus:
+            await ctx.event_bus.publish(
+                f"global:{ctx.db_name}",
+                {
+                    "type": "approval_resolved",
+                    "data": {
+                        "approval_id": approval_id,
+                        "approved": False,
+                        "reason": "timed_out",
+                    },
+                },
+            )
+        return False
+    finally:
+        ctx.pending_approvals.pop(approval_id, None)
+
+    approved = entry.get("approved", False)
+    if approved:
+        scope = entry.get("scope", "once")
+        task = asyncio.current_task()
+        if task is not None:
+            ctx.last_resolved_scope[id(task)] = scope
+        if scope in ("session", "always"):
+            ctx.tool_registry.grant_session_permission(verdict.tool_name)
+        if scope == "always":
+            try:
+                from ..config import write_allowed_tool
+
+                write_allowed_tool(verdict.tool_name)
+            except Exception as e:
+                logger.warning("Could not persist 'Allow Always' for %s: %s", verdict.tool_name, e)
+
+        if ctx.event_bus:
+            await ctx.event_bus.publish(
+                f"conversation:{ctx.conversation_id}",
+                {
+                    "type": "approval_executing",
+                    "data": {
+                        "conversation_id": ctx.conversation_id,
+                        "tool_name": verdict.tool_name,
+                    },
+                },
+            )
+
+    return approved
+
+
+async def _web_ask_user_callback(ctx: WebConfirmContext, question: str, options: list[str] | None = None) -> str:
+    """Handle ask_user tool via the web UI event bus."""
+    import secrets as _secrets
+
+    max_pending = 100
+    if len(ctx.pending_approvals) >= max_pending:
+        logger.warning("Pending approvals limit reached (%d); skipping ask_user", len(ctx.pending_approvals))
+        return ""
+
+    ask_id = _secrets.token_urlsafe(16)
+    ask_event = asyncio.Event()
+    entry: dict[str, Any] = {"event": ask_event, "approved": False, "scope": "once", "answer": ""}
+    ctx.pending_approvals[ask_id] = entry
+
+    event_data: dict[str, Any] = {
+        "ask_id": ask_id,
+        "question": question,
+        "conversation_id": ctx.conversation_id,
+    }
+    if options:
+        event_data["options"] = options
+
+    if ctx.event_bus:
+        await ctx.event_bus.publish(
+            f"global:{ctx.db_name}",
+            {
+                "type": "ask_user_required",
+                "data": event_data,
+            },
+        )
+
+    try:
+        elapsed = 0.0
+        poll_interval = 1.0
+        while not ask_event.is_set():
+            if elapsed >= ctx.approval_timeout:
+                raise asyncio.TimeoutError()
+            try:
+                if await ctx.request.is_disconnected():
+                    raise asyncio.TimeoutError()
+            except asyncio.TimeoutError:
+                raise
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(ask_event.wait(), timeout=poll_interval)
+            except asyncio.TimeoutError:
+                elapsed += poll_interval
+    except asyncio.TimeoutError:
+        logger.warning("ask_user timed out (id=%s)", ask_id)
+        return ""
+    finally:
+        ctx.pending_approvals.pop(ask_id, None)
+
+    return entry.get("answer", "")
+
+
 async def _parse_chat_request(request: Request) -> ChatRequestContext:
     """Parse and validate the chat request body (multipart or JSON)."""
     content_type = request.headers.get("content-type", "")
@@ -727,172 +893,26 @@ async def chat(conversation_id: str, request: Request):
         embedding_service=getattr(request.app.state, "embedding_service", None),
     )
 
-    # Build per-request safety approval callback
-    from ..tools.safety import SafetyVerdict
-
+    # Build per-request safety approval context
     pending_approvals = getattr(request.app.state, "pending_approvals", {})
     safety_config = getattr(request.app.state.config, "safety", None)
     approval_timeout = safety_config.approval_timeout if safety_config else 120
 
-    # Track the last resolved scope per _web_confirm call, keyed by id(coroutine)
-    # to avoid races when concurrent tool calls to the same tool pend approval.
-    _last_resolved_scope: dict[int, str] = {}
+    confirm_ctx = WebConfirmContext(
+        pending_approvals=pending_approvals,
+        event_bus=event_bus,
+        db_name=db_name,
+        conversation_id=conversation_id,
+        approval_timeout=approval_timeout,
+        request=request,
+        tool_registry=tool_registry,
+    )
 
-    async def _web_confirm(verdict: SafetyVerdict) -> bool:
-        import secrets as _secrets
+    async def _web_confirm(verdict: Any) -> bool:
+        return await _web_confirm_tool(confirm_ctx, verdict)
 
-        # Cap pending approvals to prevent unbounded memory growth on client disconnects
-        max_pending = 100
-        if len(pending_approvals) >= max_pending:
-            logger.warning("Pending approvals limit reached (%d); denying", len(pending_approvals))
-            return False
-
-        approval_id = _secrets.token_urlsafe(16)
-        approval_event = asyncio.Event()
-        entry = {"event": approval_event, "approved": False, "scope": "once"}
-        pending_approvals[approval_id] = entry
-
-        if event_bus:
-            await event_bus.publish(
-                f"global:{db_name}",
-                {
-                    "type": "approval_required",
-                    "data": {
-                        "approval_id": approval_id,
-                        "tool_name": verdict.tool_name,
-                        "reason": verdict.reason,
-                        "details": verdict.details,
-                        "conversation_id": conversation_id,
-                    },
-                },
-            )
-
-        try:
-            # Poll for approval with periodic disconnect checks so we don't
-            # block for the full timeout when the client has already left.
-            elapsed = 0.0
-            poll_interval = 1.0
-            while not approval_event.is_set():
-                if elapsed >= approval_timeout:
-                    raise asyncio.TimeoutError()
-                try:
-                    if await request.is_disconnected():
-                        raise asyncio.TimeoutError()
-                except asyncio.TimeoutError:
-                    raise
-                except Exception:
-                    pass
-                try:
-                    await asyncio.wait_for(approval_event.wait(), timeout=poll_interval)
-                except asyncio.TimeoutError:
-                    elapsed += poll_interval
-        except asyncio.TimeoutError:
-            logger.warning("Approval timed out (id=%s): %s", approval_id, verdict.reason)
-            if event_bus:
-                await event_bus.publish(
-                    f"global:{db_name}",
-                    {
-                        "type": "approval_resolved",
-                        "data": {
-                            "approval_id": approval_id,
-                            "approved": False,
-                            "reason": "timed_out",
-                        },
-                    },
-                )
-            return False
-        finally:
-            # Endpoint may have already popped; clean up if still present
-            pending_approvals.pop(approval_id, None)
-
-        approved = entry.get("approved", False)
-        if approved:
-            scope = entry.get("scope", "once")
-            # Store scope keyed by task identity so _tool_executor can read it
-            # without races from concurrent calls to the same tool name.
-            task = asyncio.current_task()
-            if task is not None:
-                _last_resolved_scope[id(task)] = scope
-            if scope in ("session", "always"):
-                tool_registry.grant_session_permission(verdict.tool_name)
-            if scope == "always":
-                try:
-                    from ..config import write_allowed_tool
-
-                    write_allowed_tool(verdict.tool_name)
-                except Exception as e:
-                    logger.warning("Could not persist 'Allow Always' for %s: %s", verdict.tool_name, e)
-
-            # Notify UI that tool is now executing (chat SSE stream is blocked during approval)
-            if event_bus:
-                await event_bus.publish(
-                    f"conversation:{conversation_id}",
-                    {
-                        "type": "approval_executing",
-                        "data": {
-                            "conversation_id": conversation_id,
-                            "tool_name": verdict.tool_name,
-                        },
-                    },
-                )
-
-        return approved
-
-    # Set up ask_user callback for mid-turn questions (reuses approval infrastructure)
     async def _web_ask_user(question: str, options: list[str] | None = None) -> str:
-        import secrets as _secrets
-
-        max_pending = 100
-        if len(pending_approvals) >= max_pending:
-            logger.warning("Pending approvals limit reached (%d); skipping ask_user", len(pending_approvals))
-            return ""
-
-        ask_id = _secrets.token_urlsafe(16)
-        ask_event = asyncio.Event()
-        entry: dict[str, Any] = {"event": ask_event, "approved": False, "scope": "once", "answer": ""}
-        pending_approvals[ask_id] = entry
-
-        event_data: dict[str, Any] = {
-            "ask_id": ask_id,
-            "question": question,
-            "conversation_id": conversation_id,
-        }
-        if options:
-            event_data["options"] = options
-
-        if event_bus:
-            await event_bus.publish(
-                f"global:{db_name}",
-                {
-                    "type": "ask_user_required",
-                    "data": event_data,
-                },
-            )
-
-        try:
-            elapsed = 0.0
-            poll_interval = 1.0
-            while not ask_event.is_set():
-                if elapsed >= approval_timeout:
-                    raise asyncio.TimeoutError()
-                try:
-                    if await request.is_disconnected():
-                        raise asyncio.TimeoutError()
-                except asyncio.TimeoutError:
-                    raise
-                except Exception:
-                    pass
-                try:
-                    await asyncio.wait_for(ask_event.wait(), timeout=poll_interval)
-                except asyncio.TimeoutError:
-                    elapsed += poll_interval
-        except asyncio.TimeoutError:
-            logger.warning("ask_user timed out (id=%s)", ask_id)
-            return ""
-        finally:
-            pending_approvals.pop(ask_id, None)
-
-        return entry.get("answer", "")
+        return await _web_ask_user_callback(confirm_ctx, question, options)
 
     _subagent_counter = 0
     _subagent_events: dict[str, list[dict[str, Any]]] = {}
@@ -961,7 +981,7 @@ async def chat(conversation_id: str, request: Request):
         def _scope_to_decision() -> str:
             task = asyncio.current_task()
             task_id = id(task) if task is not None else None
-            scope = _last_resolved_scope.pop(task_id, "once") if task_id else "once"
+            scope = confirm_ctx.last_resolved_scope.pop(task_id, "once") if task_id else "once"
             return {"once": "allowed_once", "session": "allowed_session", "always": "allowed_always"}.get(
                 scope, "allowed_once"
             )
