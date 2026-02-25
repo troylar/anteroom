@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 25, 2026
 
+### v1.50.1
+
+**Fixed:**
+
+- Hung stream no longer blocks web UI after page refresh — disconnect polling auto-cancels orphaned streams (#436)
+- Stop button immediately resets client state for responsive UI during cancellation (#436)
+- Page-load recovery detects active streams and shows Stop button (#436)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.50.1)
+
 ### v1.50.0
 
 **New:**
