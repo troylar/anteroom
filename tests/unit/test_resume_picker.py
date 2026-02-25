@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from anteroom.cli.repl import _picker_format_preview, _picker_relative_time, _picker_type_badge
+from anteroom.cli.pickers import picker_format_preview as _picker_format_preview
+from anteroom.cli.pickers import picker_relative_time as _picker_relative_time
+from anteroom.cli.pickers import picker_type_badge as _picker_type_badge
 
 
 class TestPickerRelativeTime:
