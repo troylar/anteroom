@@ -2347,7 +2347,27 @@ async def _run_repl(
             try:
                 response_token_count = 0
                 total_elapsed = 0.0
-                _pending_usage: dict | None = None
+
+                from .event_handlers import EventContext, handle_repl_event
+
+                _evt_ctx = EventContext(
+                    plan_checklist_steps=_plan_checklist_steps,
+                    plan_current_step=_plan_current_step,
+                    plan_active=_plan_active,
+                    max_retries=config.cli.max_retries,
+                    retry_delay=config.cli.retry_delay,
+                    model_context_window=config.cli.model_context_window,
+                    auto_compact_threshold=config.cli.context_auto_compact_tokens,
+                    auto_plan_mode=config.cli.planning.auto_mode,
+                    cancel_event=cancel_event,
+                    db=db,
+                    conv_id=conv["id"],
+                    identity_kwargs=id_kw,
+                    ai_messages=ai_messages,
+                    apply_plan_mode=_apply_plan_mode,
+                    get_tiktoken_encoding=_get_tiktoken_encoding,
+                    estimate_tokens=_estimate_tokens,
+                )
 
                 # Drain any messages that arrived while we were setting up
                 def _warn(cmd: str) -> None:
@@ -2371,6 +2391,13 @@ async def _run_repl(
                 while True:
                     user_attempt += 1
                     should_retry = False
+                    _evt_ctx.user_attempt = user_attempt
+                    _evt_ctx.thinking = thinking
+                    _evt_ctx.response_token_count = response_token_count
+                    _evt_ctx.total_elapsed = total_elapsed
+                    _evt_ctx.should_retry = False
+                    _evt_ctx.cancel_event = cancel_event
+                    _evt_ctx.conv_id = conv["id"]
 
                     async for event in run_agent_loop(
                         ai_service=ai_service,
@@ -2403,159 +2430,11 @@ async def _run_repl(
                             file_max_chars=config.cli.file_reference_max_chars,
                         )
 
-                        if event.kind == "thinking":
-                            if not thinking:
-                                # Advance plan: if a step was in_progress, mark it complete
-                                # and move to the next step
-                                if _plan_checklist_steps and _plan_current_step[0] < len(_plan_checklist_steps):
-                                    idx = _plan_current_step[0]
-                                    if renderer.get_plan_steps() and idx < len(renderer.get_plan_steps()):
-                                        step_state = renderer.get_plan_steps()[idx]
-                                        if step_state.get("status") == "in_progress":
-                                            renderer.update_plan_step(idx, "complete")
-                                            _plan_current_step[0] = idx + 1
-                                renderer.start_thinking(newline=True)
-                                thinking = True
-                        elif event.kind == "phase":
-                            renderer.set_thinking_phase(event.data.get("phase", ""))
-                        elif event.kind == "retrying":
-                            renderer.set_retrying(event.data)
-                        elif event.kind == "token":
-                            if not thinking:
-                                renderer.start_thinking(newline=True)
-                                thinking = True
-                            renderer.render_token(event.data["content"])
-                            renderer.increment_thinking_tokens()
-                            renderer.increment_streaming_chars(len(event.data.get("content", "")))
-                            renderer.update_thinking()
-                            enc = _get_tiktoken_encoding()
-                            if enc:
-                                response_token_count += len(enc.encode(event.data["content"], allowed_special="all"))
-                            else:
-                                response_token_count += max(1, len(event.data["content"]) // 4)
-                        elif event.kind == "tool_call_start":
-                            if thinking:
-                                total_elapsed += await renderer.stop_thinking()
-                                thinking = False
-                            # Advance plan checklist: mark current step as in_progress
-                            if _plan_checklist_steps and _plan_current_step[0] < len(_plan_checklist_steps):
-                                idx = _plan_current_step[0]
-                                renderer.update_plan_step(idx, "in_progress")
-                            renderer.render_tool_call_start(event.data["tool_name"], event.data["arguments"])
-                        elif event.kind == "tool_call_end":
-                            renderer.render_tool_call_end(
-                                event.data["tool_name"], event.data["status"], event.data["output"]
-                            )
-                        elif event.kind == "auto_plan_suggest":
-                            _auto_mode = config.cli.planning.auto_mode
-                            if _auto_mode == "auto" and not _plan_active[0]:
-                                if thinking:
-                                    total_elapsed += await renderer.stop_thinking()
-                                    thinking = False
-                                renderer.console.print(
-                                    "\n[yellow]Complex task detected "
-                                    f"({event.data['tool_calls']} tool calls). "
-                                    "Switching to planning mode...[/yellow]\n"
-                                )
-                                cancel_event.set()
-                                _apply_plan_mode(conv["id"])
-                            elif _auto_mode == "suggest" and not _plan_active[0]:
-                                if thinking:
-                                    total_elapsed += await renderer.stop_thinking()
-                                    thinking = False
-                                renderer.console.print(
-                                    f"\n[yellow]This task looks complex "
-                                    f"({event.data['tool_calls']} tool calls). "
-                                    f"Consider using /plan for better results.[/yellow]\n"
-                                )
-                                renderer.start_thinking(newline=True)
-                                thinking = True
-                        elif event.kind == "usage":
-                            _pending_usage = event.data
-                        elif event.kind == "assistant_message":
-                            if event.data["content"]:
-                                msg = storage.create_message(
-                                    db, conv["id"], "assistant", event.data["content"], **id_kw
-                                )
-                                if _pending_usage:
-                                    storage.update_message_usage(
-                                        db,
-                                        msg["id"],
-                                        _pending_usage.get("prompt_tokens", 0),
-                                        _pending_usage.get("completion_tokens", 0),
-                                        _pending_usage.get("total_tokens", 0),
-                                        _pending_usage.get("model", ""),
-                                    )
-                                    _pending_usage = None
-                        elif event.kind == "queued_message":
-                            if thinking:
-                                total_elapsed += await renderer.stop_thinking()
-                                thinking = False
-                            renderer.save_turn_history()
-                            renderer.render_newline()
-                            renderer.render_response_end()
-                            renderer.render_newline()
-                            renderer.console.print(f"[{CHROME}]Processing queued message...[/{CHROME}]")
-                            renderer.render_newline()
-                            renderer.clear_turn_history()
-                            response_token_count = 0
-                        elif event.kind == "error":
-                            error_msg = event.data.get("message", "Unknown error")
-                            retryable = event.data.get("retryable", False)
-                            if thinking and retryable and user_attempt < config.cli.max_retries:
-                                should_retry = await renderer.thinking_countdown(
-                                    config.cli.retry_delay, cancel_event, error_msg
-                                )
-                                if should_retry and not cancel_event.is_set():
-                                    cancel_event.clear()
-                                    renderer.start_thinking()
-                                else:
-                                    total_elapsed += await renderer.stop_thinking(cancel_msg="cancelled")
-                                    thinking = False
-                            elif thinking and retryable and user_attempt >= config.cli.max_retries:
-                                total_elapsed += await renderer.stop_thinking(
-                                    error_msg=f"{error_msg} · {user_attempt} attempts failed"
-                                )
-                                thinking = False
-                            elif thinking:
-                                total_elapsed += await renderer.stop_thinking(error_msg=error_msg)
-                                thinking = False
-                            else:
-                                renderer.render_error(error_msg)
-                        elif event.kind == "done":
-                            # Mark any in-progress plan step as complete
-                            if _plan_checklist_steps and _plan_current_step[0] < len(_plan_checklist_steps):
-                                idx = _plan_current_step[0]
-                                if renderer.get_plan_steps() and idx < len(renderer.get_plan_steps()):
-                                    step_state = renderer.get_plan_steps()[idx]
-                                    if step_state.get("status") == "in_progress":
-                                        renderer.update_plan_step(idx, "complete")
-                            collapse = bool(_plan_checklist_steps)
-                            if thinking and cancel_event.is_set():
-                                total_elapsed += await renderer.stop_thinking(
-                                    cancel_msg="cancelled", collapse_plan=collapse
-                                )
-                                thinking = False
-                            elif thinking:
-                                total_elapsed += await renderer.stop_thinking(collapse_plan=collapse)
-                                thinking = False
-                            # Clear plan checklist state after collapsing
-                            if _plan_checklist_steps:
-                                _plan_checklist_steps.clear()
-                                _plan_current_step[0] = 0
-                            if not cancel_event.is_set():
-                                renderer.save_turn_history()
-                                renderer.render_response_end()
-                                renderer.render_newline()
-                                context_tokens = _estimate_tokens(ai_messages)
-                                renderer.render_context_footer(
-                                    current_tokens=context_tokens,
-                                    max_context=config.cli.model_context_window,
-                                    auto_compact_threshold=config.cli.context_auto_compact_tokens,
-                                    response_tokens=response_token_count,
-                                    elapsed=total_elapsed,
-                                )
-                                renderer.render_newline()
+                        await handle_repl_event(_evt_ctx, event)
+                        thinking = _evt_ctx.thinking
+                        response_token_count = _evt_ctx.response_token_count
+                        total_elapsed = _evt_ctx.total_elapsed
+                        should_retry = _evt_ctx.should_retry
 
                     if not should_retry:
                         break
