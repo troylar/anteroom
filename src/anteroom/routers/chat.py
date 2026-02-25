@@ -8,6 +8,7 @@ import copy
 import json
 import logging
 import os
+import re
 import time as time_mod
 import uuid as uuid_mod
 from collections import defaultdict
@@ -112,6 +113,54 @@ def _extract_streaming_content(accumulated_args: str) -> str | None:
         pos += 1
 
     return "".join(result)
+
+
+def _extract_streaming_language(accumulated_args: str) -> str | None:
+    """Extract the 'language' value from an incomplete JSON argument string.
+
+    Returns the language string if found, or None if not yet available.
+    """
+    key = '"language"'
+    key_pos = accumulated_args.find(key)
+    if key_pos == -1:
+        return None
+
+    pos = key_pos + len(key)
+    length = len(accumulated_args)
+
+    while pos < length and accumulated_args[pos] in " \t\n\r":
+        pos += 1
+    if pos >= length or accumulated_args[pos] != ":":
+        return None
+    pos += 1
+    while pos < length and accumulated_args[pos] in " \t\n\r":
+        pos += 1
+    if pos >= length or accumulated_args[pos] != '"':
+        return None
+    pos += 1
+
+    result: list[str] = []
+    while pos < length:
+        ch = accumulated_args[pos]
+        if ch == '"':
+            break
+        if ch == "\\":
+            pos += 1
+            if pos >= length:
+                break
+            esc = accumulated_args[pos]
+            result.append(esc)
+        else:
+            result.append(ch)
+        pos += 1
+
+    val = "".join(result)
+    if not val:
+        return None
+    # Allowlist: only safe language identifier characters to prevent markdown injection
+    if not re.fullmatch(r"[a-zA-Z0-9_+#.\-]{1,50}", val):
+        return None
+    return val
 
 
 MAX_FILES_PER_REQUEST = 10
@@ -683,6 +732,21 @@ async def _execute_web_tool(ctx: ToolExecutorContext, tool_name: str, arguments:
     raise ValueError(f"Unknown tool: {tool_name}")
 
 
+def _canvas_needs_approval(safety_config: Any, tool_registry: Any) -> bool:
+    """Check whether canvas tools would require approval in the current session."""
+    from ..tools.tiers import ApprovalMode, get_tool_tier, parse_approval_mode, should_require_approval
+
+    if safety_config is None:
+        return True
+    raw_mode = safety_config.approval_mode
+    mode = raw_mode if isinstance(raw_mode, ApprovalMode) else parse_approval_mode(str(raw_mode))
+    tier = get_tool_tier("create_canvas", getattr(safety_config, "tool_tiers", None))
+    allowed = getattr(tool_registry, "_session_allowed", None) or set()
+    config_allowed = set(safety_config.allowed_tools) if safety_config.allowed_tools else None
+    result = should_require_approval("create_canvas", tier, mode, config_allowed, None, allowed)
+    return result is True
+
+
 @dataclass
 class StreamContext:
     """State for the SSE chat event stream."""
@@ -710,6 +774,7 @@ class StreamContext:
     conv_title: str
     embedding_worker: Any
     planning_config: Any
+    canvas_needs_approval: bool = False
     token_throttle_interval: float = 0.1
     last_token_broadcast: float = 0.0
 
@@ -789,7 +854,7 @@ async def _stream_chat_events(ctx: StreamContext):
             elif kind == "tool_call_args_delta":
                 tool_name = data.get("tool_name", "")
                 idx = data.get("index", 0)
-                if tool_name in _CANVAS_STREAMING_TOOLS:
+                if tool_name in _CANVAS_STREAMING_TOOLS and not ctx.canvas_needs_approval:
                     _canvas_args_accum.setdefault(idx, "")
                     if len(_canvas_args_accum[idx]) > MAX_CANVAS_ARGS_ACCUM:
                         continue
@@ -802,9 +867,10 @@ async def _stream_chat_events(ctx: StreamContext):
                             _canvas_content_sent[idx] = len(content)
                             if idx not in _canvas_stream_started:
                                 _canvas_stream_started.add(idx)
+                                language = _extract_streaming_language(_canvas_args_accum[idx])
                                 yield {
                                     "event": "canvas_stream_start",
-                                    "data": json.dumps({"tool_name": tool_name}),
+                                    "data": json.dumps({"tool_name": tool_name, "language": language}),
                                 }
                             yield {
                                 "event": "canvas_streaming",
@@ -1432,6 +1498,7 @@ async def chat(conversation_id: str, request: Request):
         conv_title=conv["title"],
         embedding_worker=getattr(request.app.state, "embedding_worker", None),
         planning_config=request.app.state.config.cli.planning,
+        canvas_needs_approval=_canvas_needs_approval(safety_config, tool_registry),
     )
 
     return EventSourceResponse(_stream_chat_events(stream_ctx))

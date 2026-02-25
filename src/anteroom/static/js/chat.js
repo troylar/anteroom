@@ -284,7 +284,7 @@ const Chat = (() => {
                 break;
             case 'canvas_stream_start':
                 hideThinking();
-                Canvas.handleCanvasStreamStart();
+                Canvas.handleCanvasStreamStart(data);
                 break;
             case 'canvas_streaming':
                 Canvas.handleCanvasStreaming(data);
@@ -1201,12 +1201,17 @@ const Chat = (() => {
 
     function showThinking() {
         if (document.getElementById('thinking')) return;
-        const container = document.getElementById('messages-container');
         const el = document.createElement('div');
         el.className = 'thinking-indicator';
         el.id = 'thinking';
         el.innerHTML = '<span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span>';
-        container.appendChild(el);
+        // Place inside the current assistant message so dots appear below the SYSTEM header
+        if (currentAssistantEl) {
+            currentAssistantEl.appendChild(el);
+        } else {
+            const container = document.getElementById('messages-container');
+            container.appendChild(el);
+        }
         scrollToBottom();
     }
 
