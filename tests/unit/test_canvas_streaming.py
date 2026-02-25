@@ -1,6 +1,8 @@
-"""Tests for canvas streaming content extractor."""
+"""Tests for canvas streaming content and language extractors."""
 
-from anteroom.routers.chat import _extract_streaming_content
+from unittest.mock import MagicMock
+
+from anteroom.routers.chat import _canvas_needs_approval, _extract_streaming_content, _extract_streaming_language
 
 
 class TestExtractStreamingContent:
@@ -82,3 +84,107 @@ class TestExtractStreamingContent:
         result = _extract_streaming_content('{"meta": {"content": "wrong"}, "content": "right"}')
         # Current behavior: finds first "content" key (the nested one)
         assert result == "wrong"
+
+
+class TestExtractStreamingLanguage:
+    def test_returns_none_before_language_key(self) -> None:
+        assert _extract_streaming_language('{"title": "My Doc"') is None
+
+    def test_returns_none_for_empty_string(self) -> None:
+        assert _extract_streaming_language("") is None
+
+    def test_extracts_language(self) -> None:
+        assert _extract_streaming_language('{"language": "python", "content": "x') == "python"
+
+    def test_extracts_language_before_content(self) -> None:
+        args = '{"title": "Test", "language": "javascript", "content": "code'
+        assert _extract_streaming_language(args) == "javascript"
+
+    def test_returns_none_for_empty_language_value(self) -> None:
+        assert _extract_streaming_language('{"language": ""') is None
+
+    def test_handles_whitespace_around_colon(self) -> None:
+        assert _extract_streaming_language('{"language" : "rust"') == "rust"
+
+    def test_rejects_backtick_injection(self) -> None:
+        assert _extract_streaming_language('{"language": "python`\\n<script>"') is None
+
+    def test_rejects_space_injection(self) -> None:
+        assert _extract_streaming_language('{"language": "py thon"') is None
+
+    def test_allows_csharp(self) -> None:
+        assert _extract_streaming_language('{"language": "c#"') == "c#"
+
+    def test_allows_cpp(self) -> None:
+        assert _extract_streaming_language('{"language": "c++"') == "c++"
+
+    def test_rejects_too_long(self) -> None:
+        assert _extract_streaming_language('{"language": "' + "a" * 51) is None
+
+
+class TestCanvasNeedsApproval:
+    def test_returns_true_when_no_safety_config(self) -> None:
+        registry = MagicMock()
+        assert _canvas_needs_approval(None, registry) is True
+
+    def test_returns_false_in_auto_mode(self) -> None:
+        from anteroom.tools.tiers import ApprovalMode
+
+        safety = MagicMock()
+        safety.approval_mode = ApprovalMode.AUTO
+        safety.tool_tiers = None
+        safety.allowed_tools = None
+        registry = MagicMock()
+        registry._session_allowed = set()
+        assert _canvas_needs_approval(safety, registry) is False
+
+    def test_returns_true_in_ask_for_writes_mode(self) -> None:
+        from anteroom.tools.tiers import ApprovalMode
+
+        safety = MagicMock()
+        safety.approval_mode = ApprovalMode.ASK_FOR_WRITES
+        safety.tool_tiers = None
+        safety.allowed_tools = None
+        registry = MagicMock()
+        registry._session_allowed = set()
+        assert _canvas_needs_approval(safety, registry) is True
+
+    def test_returns_false_when_session_allowed(self) -> None:
+        from anteroom.tools.tiers import ApprovalMode
+
+        safety = MagicMock()
+        safety.approval_mode = ApprovalMode.ASK_FOR_WRITES
+        safety.tool_tiers = None
+        safety.allowed_tools = None
+        registry = MagicMock()
+        registry._session_allowed = {"create_canvas"}
+        assert _canvas_needs_approval(safety, registry) is False
+
+    def test_returns_false_when_in_allowed_tools(self) -> None:
+        from anteroom.tools.tiers import ApprovalMode
+
+        safety = MagicMock()
+        safety.approval_mode = ApprovalMode.ASK_FOR_WRITES
+        safety.tool_tiers = None
+        safety.allowed_tools = ["create_canvas"]
+        registry = MagicMock()
+        registry._session_allowed = set()
+        assert _canvas_needs_approval(safety, registry) is False
+
+    def test_handles_string_approval_mode(self) -> None:
+        safety = MagicMock()
+        safety.approval_mode = "ask_for_writes"
+        safety.tool_tiers = None
+        safety.allowed_tools = None
+        registry = MagicMock()
+        registry._session_allowed = set()
+        assert _canvas_needs_approval(safety, registry) is True
+
+    def test_handles_string_auto_mode(self) -> None:
+        safety = MagicMock()
+        safety.approval_mode = "auto"
+        safety.tool_tiers = None
+        safety.allowed_tools = None
+        registry = MagicMock()
+        registry._session_allowed = set()
+        assert _canvas_needs_approval(safety, registry) is False

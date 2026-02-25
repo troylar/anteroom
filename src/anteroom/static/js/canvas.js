@@ -8,6 +8,7 @@ const Canvas = (() => {
     let _suppressDirty = false;
     let _isStreaming = false;
     let _streamingContent = '';
+    let _streamingLanguage = null;
 
     function init() {
         const closeBtn = document.getElementById('canvas-close');
@@ -137,7 +138,7 @@ const Canvas = (() => {
             }
         } else {
             const content = _getMarkdown();
-            _renderPreview(content);
+            _renderPreview(content, _canvasData ? _canvasData.language : null);
             cmWrap.style.display = 'none';
             preview.style.display = '';
         }
@@ -149,14 +150,18 @@ const Canvas = (() => {
         }
     }
 
-    function _renderPreview(content) {
+    function _renderPreview(content, language) {
         const preview = document.getElementById('canvas-preview');
         if (!preview) return;
         if (!content) {
             preview.innerHTML = '<p style="color:var(--text-muted)">Empty canvas</p>';
             return;
         }
-        preview.innerHTML = _mdToHtml(content);
+        let md = content;
+        if (language) {
+            md = '```' + language + '\n' + content + '\n```';
+        }
+        preview.innerHTML = _mdToHtml(md);
         preview.querySelectorAll('pre code').forEach(block => {
             hljs.highlightElement(block);
         });
@@ -187,7 +192,7 @@ const Canvas = (() => {
         if (cmWrap) cmWrap.style.display = 'none';
         if (preview) {
             preview.style.display = '';
-            _renderPreview(data.content || '');
+            _renderPreview(data.content || '', data.language || null);
         }
 
         const toggle = document.getElementById('canvas-mode-toggle');
@@ -262,6 +267,7 @@ const Canvas = (() => {
     function handleCanvasCreated(data) {
         _isStreaming = false;
         _streamingContent = '';
+        _streamingLanguage = null;
         openCanvas(data);
     }
 
@@ -280,7 +286,7 @@ const Canvas = (() => {
         }
 
         if (_mode === 'preview' && data.content != null) {
-            _renderPreview(data.content);
+            _renderPreview(data.content, _canvasData ? _canvasData.language : null);
         }
 
         _isDirty = false;
@@ -290,6 +296,7 @@ const Canvas = (() => {
     function handleCanvasUpdated(data) {
         _isStreaming = false;
         _streamingContent = '';
+        _streamingLanguage = null;
         if (!_canvasData) {
             openCanvas(data);
             return;
@@ -299,7 +306,7 @@ const Canvas = (() => {
 
         if (data.content != null) {
             _setCmContent(data.content);
-            if (_mode === 'preview') _renderPreview(data.content);
+            if (_mode === 'preview') _renderPreview(data.content, _canvasData ? _canvasData.language : null);
             _isDirty = false;
             _updateSaveBtn();
         }
@@ -379,9 +386,10 @@ const Canvas = (() => {
         }
     }
 
-    function handleCanvasStreamStart() {
+    function handleCanvasStreamStart(data) {
         _isStreaming = true;
         _streamingContent = '';
+        _streamingLanguage = (data && data.language) || null;
 
         const panel = document.getElementById('canvas-panel');
         const chatMain = document.querySelector('.chat-main');
@@ -417,7 +425,7 @@ const Canvas = (() => {
         if (!_streamRafId) {
             _streamRafId = requestAnimationFrame(() => {
                 _streamRafId = null;
-                _renderPreview(_streamingContent);
+                _renderPreview(_streamingContent, _streamingLanguage);
             });
         }
     }

@@ -284,7 +284,7 @@ const Chat = (() => {
                 break;
             case 'canvas_stream_start':
                 hideThinking();
-                Canvas.handleCanvasStreamStart();
+                Canvas.handleCanvasStreamStart(data);
                 break;
             case 'canvas_streaming':
                 Canvas.handleCanvasStreaming(data);
