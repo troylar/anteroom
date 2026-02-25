@@ -14,6 +14,16 @@ const Chat = (() => {
     let _remoteAssistantEl = null;
     let _remoteAssistantContent = '';
 
+    // Lifecycle phase tracking
+    let _thinkingPhase = '';
+    let _streamingChars = 0;
+    let _phaseStartTime = 0;
+    let _lastChunkTime = 0;
+    let _phaseElapsedInterval = null;
+    let _stallCheckInterval = null;
+    const _STALL_THRESHOLD_MS = 5000;
+    const _PHASE_ELAPSED_DELAY_MS = 1500;
+
     // Configure marked for safe link rendering (marked v15 passes token object)
     const renderer = new marked.Renderer();
     const originalLink = renderer.link.bind(renderer);
@@ -269,9 +279,16 @@ const Chat = (() => {
             case 'thinking':
                 showThinking();
                 break;
+            case 'phase':
+                updateThinkingPhase(data.phase, null);
+                break;
+            case 'retrying':
+                updateThinkingPhase('retrying', data);
+                break;
             case 'token':
-                hideThinking();
+                _hideThinkingKeepPhase();
                 _webDedupFlush();
+                _onStreamingToken(data.content ? data.content.length : 0);
                 currentAssistantContent += data.content;
                 renderAssistantContent();
                 break;
@@ -1199,13 +1216,13 @@ const Chat = (() => {
         return el;
     }
 
-    function showThinking() {
+    function _ensureThinkingElement() {
         if (document.getElementById('thinking')) return;
         const el = document.createElement('div');
         el.className = 'thinking-indicator';
         el.id = 'thinking';
-        el.innerHTML = '<span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span>';
-        // Place inside the current assistant message so dots appear below the SYSTEM header
+        el.innerHTML = '<span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span>'
+            + '<span class="thinking-phase-label" id="thinking-phase"></span>';
         if (currentAssistantEl) {
             currentAssistantEl.appendChild(el);
         } else {
@@ -1215,8 +1232,123 @@ const Chat = (() => {
         scrollToBottom();
     }
 
+    function showThinking() {
+        if (document.getElementById('thinking')) return;
+        _phaseStartTime = Date.now();
+        _lastChunkTime = Date.now();
+        _streamingChars = 0;
+        _thinkingPhase = '';
+        _ensureThinkingElement();
+        _startPhaseElapsedTimer();
+    }
+
     function hideThinking() {
         document.querySelectorAll('.thinking-indicator').forEach(el => el.remove());
+        _thinkingPhase = '';
+        _streamingChars = 0;
+        _phaseStartTime = 0;
+        _lastChunkTime = 0;
+        if (_phaseElapsedInterval) {
+            clearInterval(_phaseElapsedInterval);
+            _phaseElapsedInterval = null;
+        }
+        if (_stallCheckInterval) {
+            clearInterval(_stallCheckInterval);
+            _stallCheckInterval = null;
+        }
+    }
+
+    function _hideThinkingKeepPhase() {
+        // Remove the dots UI but keep phase tracking alive for stall detection
+        document.querySelectorAll('.thinking-indicator').forEach(el => el.remove());
+    }
+
+    function _formatElapsed(ms) {
+        const s = Math.floor(ms / 1000);
+        return s + 's';
+    }
+
+    function _setPhaseLabel(text, isStall) {
+        const label = document.getElementById('thinking-phase');
+        if (!label) return;
+        label.textContent = text;
+        if (isStall) {
+            label.classList.add('stall');
+        } else {
+            label.classList.remove('stall');
+        }
+    }
+
+    function _startPhaseElapsedTimer() {
+        if (_phaseElapsedInterval) clearInterval(_phaseElapsedInterval);
+        if (_stallCheckInterval) clearInterval(_stallCheckInterval);
+
+        _phaseElapsedInterval = setInterval(() => {
+            _renderPhaseLabel();
+        }, 500);
+
+        _stallCheckInterval = setInterval(() => {
+            if (_thinkingPhase === 'streaming' && _lastChunkTime > 0) {
+                const gap = Date.now() - _lastChunkTime;
+                if (gap >= _STALL_THRESHOLD_MS) {
+                    _ensureThinkingElement();
+                    _renderPhaseLabel();
+                }
+            }
+        }, 1000);
+    }
+
+    function _renderPhaseLabel() {
+        const phaseAge = Date.now() - _phaseStartTime;
+        const elapsed = phaseAge >= _PHASE_ELAPSED_DELAY_MS ? ' (' + _formatElapsed(phaseAge) + ')' : '';
+
+        switch (_thinkingPhase) {
+            case 'connecting':
+                _setPhaseLabel('connecting\u2026' + elapsed, false);
+                break;
+            case 'waiting':
+                _setPhaseLabel('waiting for first token\u2026' + elapsed, false);
+                break;
+            case 'streaming': {
+                const chars = _streamingChars.toLocaleString();
+                const gap = Date.now() - _lastChunkTime;
+                if (gap >= _STALL_THRESHOLD_MS) {
+                    const stallSecs = _formatElapsed(gap);
+                    _setPhaseLabel('streaming \u00b7 ' + chars + ' chars \u00b7 stalled ' + stallSecs, true);
+                } else {
+                    _setPhaseLabel('streaming \u00b7 ' + chars + ' chars', false);
+                }
+                break;
+            }
+            case 'retrying':
+                // Rendered directly by updateThinkingPhase with retry data
+                break;
+            default:
+                if (!_thinkingPhase) _setPhaseLabel('', false);
+                break;
+        }
+    }
+
+    function updateThinkingPhase(phase, data) {
+        _ensureThinkingElement();
+        _thinkingPhase = phase;
+        _phaseStartTime = Date.now();
+
+        if (phase === 'retrying' && data) {
+            const label = 'retry ' + data.attempt + '/' + data.max_attempts;
+            _setPhaseLabel(label, true);
+        } else {
+            _renderPhaseLabel();
+        }
+    }
+
+    function _onStreamingToken(contentLength) {
+        _streamingChars += contentLength;
+        _lastChunkTime = Date.now();
+        if (_thinkingPhase !== 'streaming') {
+            _thinkingPhase = 'streaming';
+            _phaseStartTime = Date.now();
+        }
     }
 
     function showError(msgEl, message) {
