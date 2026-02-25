@@ -683,6 +683,355 @@ async def _execute_web_tool(ctx: ToolExecutorContext, tool_name: str, arguments:
     raise ValueError(f"Unknown tool: {tool_name}")
 
 
+@dataclass
+class StreamContext:
+    """State for the SSE chat event stream."""
+
+    ai_service: Any
+    ai_messages: list[dict[str, Any]]
+    tool_executor: Any
+    tools: list[dict[str, Any]] | None
+    cancel_event: asyncio.Event
+    extra_system_prompt: str
+    conversation_id: str
+    plan_mode: bool
+    plan_path: Path | None
+    db: Any
+    db_name: str
+    uid: str | None
+    uname: str | None
+    event_bus: Any
+    client_id: str
+    tool_registry: Any
+    mcp_manager: Any
+    subagent_events: dict[str, list[dict[str, Any]]]
+    is_first_message: bool
+    first_user_text: str
+    conv_title: str
+    embedding_worker: Any
+    planning_config: Any
+    token_throttle_interval: float = 0.1
+    last_token_broadcast: float = 0.0
+
+
+async def _stream_chat_events(ctx: StreamContext):
+    """Async generator that yields SSE events for the chat stream."""
+    from ..services.agent_loop import run_agent_loop
+
+    current_assistant_msg = None
+    _pending_tool_inputs: dict[str, Any] = {}
+    _streamed_content = ""
+    _canvas_args_accum: dict[int, str] = {}
+    _canvas_content_sent: dict[int, int] = {}
+    _canvas_stream_started: set[int] = set()
+
+    if ctx.event_bus:
+        await ctx.event_bus.publish(
+            f"conversation:{ctx.conversation_id}",
+            {
+                "type": "stream_start",
+                "data": {"conversation_id": ctx.conversation_id, "client_id": ctx.client_id},
+            },
+        )
+
+    try:
+        _planning_cfg = ctx.planning_config
+        async for agent_event in run_agent_loop(
+            ai_service=ctx.ai_service,
+            messages=ctx.ai_messages,
+            tool_executor=ctx.tool_executor,
+            tools_openai=ctx.tools,
+            cancel_event=ctx.cancel_event,
+            extra_system_prompt=ctx.extra_system_prompt,
+            message_queue=_message_queues.get(ctx.conversation_id),
+            narration_cadence=ctx.ai_service.config.narration_cadence,
+            auto_plan_threshold=(
+                _planning_cfg.auto_threshold_tools if not ctx.plan_mode and _planning_cfg.auto_mode != "off" else 0
+            ),
+        ):
+            _pending_usage: dict[str, Any] | None = None
+            kind = agent_event.kind
+            data = agent_event.data
+
+            if kind == "usage":
+                _pending_usage = data
+                continue
+
+            elif kind == "thinking":
+                yield {"event": "thinking", "data": json.dumps({})}
+
+            elif kind == "phase":
+                yield {"event": "phase", "data": json.dumps(data)}
+
+            elif kind == "retrying":
+                yield {"event": "retrying", "data": json.dumps(data)}
+
+            elif kind == "token":
+                yield {"event": "token", "data": json.dumps(data)}
+                _streamed_content += data.get("content", "")
+
+                if ctx.event_bus:
+                    now = time_mod.monotonic()
+                    if now - ctx.last_token_broadcast >= ctx.token_throttle_interval:
+                        ctx.last_token_broadcast = now
+                        await ctx.event_bus.publish(
+                            f"conversation:{ctx.conversation_id}",
+                            {
+                                "type": "stream_token",
+                                "data": {
+                                    "conversation_id": ctx.conversation_id,
+                                    "content": data.get("content", ""),
+                                    "client_id": ctx.client_id,
+                                },
+                            },
+                        )
+
+            elif kind == "tool_call_args_delta":
+                tool_name = data.get("tool_name", "")
+                idx = data.get("index", 0)
+                if tool_name in _CANVAS_STREAMING_TOOLS:
+                    _canvas_args_accum.setdefault(idx, "")
+                    if len(_canvas_args_accum[idx]) > MAX_CANVAS_ARGS_ACCUM:
+                        continue
+                    _canvas_args_accum[idx] += data.get("delta", "")
+                    content = _extract_streaming_content(_canvas_args_accum[idx])
+                    if content is not None:
+                        prev_len = _canvas_content_sent.get(idx, 0)
+                        if len(content) > prev_len:
+                            delta_text = content[prev_len:]
+                            _canvas_content_sent[idx] = len(content)
+                            if idx not in _canvas_stream_started:
+                                _canvas_stream_started.add(idx)
+                                yield {
+                                    "event": "canvas_stream_start",
+                                    "data": json.dumps({"tool_name": tool_name}),
+                                }
+                            yield {
+                                "event": "canvas_streaming",
+                                "data": json.dumps({"content_delta": delta_text}),
+                            }
+
+            elif kind == "tool_call_start":
+                _canvas_args_accum.clear()
+                _canvas_content_sent.clear()
+                _canvas_stream_started.clear()
+                _pending_tool_inputs[data["id"]] = data["arguments"]
+                yield {
+                    "event": "tool_call_start",
+                    "data": json.dumps(
+                        {
+                            "id": data["id"],
+                            "tool_name": data["tool_name"],
+                            "server_name": "",
+                            "input": data["arguments"],
+                        }
+                    ),
+                }
+
+            elif kind == "assistant_message":
+                current_assistant_msg = storage.create_message(
+                    ctx.db,
+                    ctx.conversation_id,
+                    "assistant",
+                    data["content"],
+                    user_id=ctx.uid,
+                    user_display_name=ctx.uname,
+                )
+
+                if _pending_usage and current_assistant_msg:
+                    storage.update_message_usage(
+                        ctx.db,
+                        current_assistant_msg["id"],
+                        _pending_usage.get("prompt_tokens", 0),
+                        _pending_usage.get("completion_tokens", 0),
+                        _pending_usage.get("total_tokens", 0),
+                        _pending_usage.get("model", ""),
+                    )
+                    _pending_usage = None
+
+                if ctx.embedding_worker and current_assistant_msg:
+                    asyncio.create_task(
+                        ctx.embedding_worker.embed_message(
+                            current_assistant_msg["id"],
+                            data["content"],
+                            ctx.conversation_id,
+                        )
+                    )
+
+                if ctx.event_bus and current_assistant_msg:
+                    await ctx.event_bus.publish(
+                        f"conversation:{ctx.conversation_id}",
+                        {
+                            "type": "new_message",
+                            "data": {
+                                "conversation_id": ctx.conversation_id,
+                                "message_id": current_assistant_msg["id"],
+                                "role": "assistant",
+                                "content": data["content"],
+                                "position": current_assistant_msg["position"],
+                                "client_id": ctx.client_id,
+                            },
+                        },
+                    )
+
+            elif kind == "tool_call_end":
+                if current_assistant_msg:
+                    tool_input = _pending_tool_inputs.pop(data["id"], {})
+                    if ctx.tool_registry.has_tool(data["tool_name"]):
+                        server_name = "builtin"
+                    elif ctx.mcp_manager:
+                        server_name = ctx.mcp_manager.get_tool_server_name(data["tool_name"])
+                    else:
+                        server_name = "unknown"
+                    tool_output = data["output"]
+                    approval_decision = None
+                    if isinstance(tool_output, dict):
+                        approval_decision = tool_output.pop("_approval_decision", None)
+                    storage.create_tool_call(
+                        ctx.db,
+                        current_assistant_msg["id"],
+                        data["tool_name"],
+                        server_name,
+                        tool_input,
+                        data["id"],
+                        approval_decision=approval_decision,
+                    )
+                    storage.update_tool_call(ctx.db, data["id"], tool_output, data["status"])
+                sse_output = data["output"]
+                yield {
+                    "event": "tool_call_end",
+                    "data": json.dumps({"id": data["id"], "output": sse_output, "status": data["status"]}),
+                }
+
+                if (
+                    ctx.plan_mode
+                    and ctx.plan_path
+                    and data["tool_name"] == "write_file"
+                    and data.get("status") == "success"
+                    and ctx.plan_path.exists()
+                ):
+                    from ..cli.plan import read_plan
+
+                    _plan_content = read_plan(ctx.plan_path)
+                    if _plan_content:
+                        yield {
+                            "event": "plan_saved",
+                            "data": json.dumps({"content": _plan_content, "conversation_id": ctx.conversation_id}),
+                        }
+
+                if data["tool_name"] == "create_canvas" and data.get("status") == "success":
+                    output = data.get("output", {})
+                    if output.get("status") == "created":
+                        canvas_full = storage.get_canvas(ctx.db, output["id"])
+                        if canvas_full:
+                            yield {
+                                "event": "canvas_created",
+                                "data": json.dumps(
+                                    {
+                                        "id": canvas_full["id"],
+                                        "title": canvas_full["title"],
+                                        "content": canvas_full["content"],
+                                        "language": canvas_full.get("language"),
+                                    }
+                                ),
+                            }
+                elif data["tool_name"] == "update_canvas" and data.get("status") == "success":
+                    output = data.get("output", {})
+                    if output.get("status") == "updated":
+                        canvas_full = storage.get_canvas(ctx.db, output["id"])
+                        if canvas_full:
+                            yield {
+                                "event": "canvas_updated",
+                                "data": json.dumps(
+                                    {
+                                        "id": canvas_full["id"],
+                                        "title": canvas_full["title"],
+                                        "content": canvas_full["content"],
+                                        "language": canvas_full.get("language"),
+                                    }
+                                ),
+                            }
+                elif data["tool_name"] == "patch_canvas" and data.get("status") == "success":
+                    output = data.get("output", {})
+                    if output.get("status") == "patched":
+                        canvas_full = storage.get_canvas(ctx.db, output["id"])
+                        if canvas_full:
+                            yield {
+                                "event": "canvas_patched",
+                                "data": json.dumps(
+                                    {
+                                        "id": canvas_full["id"],
+                                        "title": canvas_full["title"],
+                                        "version": canvas_full["version"],
+                                        "edits_applied": output.get("edits_applied", 0),
+                                        "content": canvas_full["content"],
+                                    }
+                                ),
+                            }
+
+                if data["tool_name"] == "run_agent":
+                    for sa_agent_id in list(ctx.subagent_events.keys()):
+                        events = ctx.subagent_events[sa_agent_id]
+                        if any(e["kind"] == "subagent_end" for e in events):
+                            for sa_event in events:
+                                yield {
+                                    "event": "subagent_event",
+                                    "data": json.dumps(sa_event),
+                                }
+                            del ctx.subagent_events[sa_agent_id]
+
+            elif kind == "error":
+                yield {"event": "error", "data": json.dumps(data)}
+
+            elif kind == "queued_message":
+                current_assistant_msg = None
+                _streamed_content = ""
+                yield {"event": "queued_message", "data": json.dumps(data)}
+
+            elif kind == "done":
+                if ctx.is_first_message and ctx.conv_title == "New Conversation":
+                    title = await ctx.ai_service.generate_title(ctx.first_user_text)
+                    title = (title or "")[:200] or "New Conversation"
+                    storage.update_conversation_title(ctx.db, ctx.conversation_id, title)
+                    yield {"event": "title", "data": json.dumps({"title": title})}
+
+                    if ctx.event_bus:
+                        await ctx.event_bus.publish(
+                            f"global:{ctx.db_name}",
+                            {
+                                "type": "title_changed",
+                                "data": {
+                                    "conversation_id": ctx.conversation_id,
+                                    "title": title,
+                                    "client_id": ctx.client_id,
+                                },
+                            },
+                        )
+
+                if ctx.event_bus:
+                    await ctx.event_bus.publish(
+                        f"conversation:{ctx.conversation_id}",
+                        {
+                            "type": "stream_done",
+                            "data": {"conversation_id": ctx.conversation_id, "client_id": ctx.client_id},
+                        },
+                    )
+
+                yield {"event": "done", "data": json.dumps({"plan_mode": ctx.plan_mode})}
+
+    except Exception:
+        logger.exception("Chat stream error")
+        yield {"event": "error", "data": json.dumps({"message": "An internal error occurred"})}
+    finally:
+        _active_streams.pop(ctx.conversation_id, None)
+        queue = _message_queues.get(ctx.conversation_id)
+        if queue and queue.empty():
+            _message_queues.pop(ctx.conversation_id, None)
+        _cancel_events.get(ctx.conversation_id, set()).discard(ctx.cancel_event)
+        if not _cancel_events.get(ctx.conversation_id):
+            _cancel_events.pop(ctx.conversation_id, None)
+
+
 async def _parse_chat_request(request: Request) -> ChatRequestContext:
     """Parse and validate the chat request body (multipart or JSON)."""
     content_type = request.headers.get("content-type", "")
@@ -1059,340 +1408,33 @@ async def chat(conversation_id: str, request: Request):
     async def _tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return await _execute_web_tool(tool_exec_ctx, tool_name, arguments)
 
-    from ..services.agent_loop import run_agent_loop
+    stream_ctx = StreamContext(
+        ai_service=ai_service,
+        ai_messages=ai_messages,
+        tool_executor=_tool_executor,
+        tools=tools,
+        cancel_event=cancel_event,
+        extra_system_prompt=extra_system_prompt,
+        conversation_id=conversation_id,
+        plan_mode=plan_mode,
+        plan_path=plan_path,
+        db=db,
+        db_name=db_name,
+        uid=uid,
+        uname=uname,
+        event_bus=event_bus,
+        client_id=client_id,
+        tool_registry=tool_registry,
+        mcp_manager=mcp_manager,
+        subagent_events=_subagent_events,
+        is_first_message=is_first_message,
+        first_user_text=first_user_text,
+        conv_title=conv["title"],
+        embedding_worker=getattr(request.app.state, "embedding_worker", None),
+        planning_config=request.app.state.config.cli.planning,
+    )
 
-    _token_throttle_interval = 0.1  # seconds between broadcast token events
-    _last_token_broadcast = 0.0
-
-    async def event_generator():
-        nonlocal ai_messages, _last_token_broadcast
-        current_assistant_msg = None
-        _pending_tool_inputs: dict[str, Any] = {}
-        _streamed_content = ""
-        _canvas_args_accum: dict[int, str] = {}
-        _canvas_content_sent: dict[int, int] = {}
-        _canvas_stream_started: set[int] = set()
-
-        # Broadcast stream_start
-        if event_bus:
-            await event_bus.publish(
-                f"conversation:{conversation_id}",
-                {"type": "stream_start", "data": {"conversation_id": conversation_id, "client_id": client_id}},
-            )
-
-        try:
-            _planning_cfg = request.app.state.config.cli.planning
-            async for agent_event in run_agent_loop(
-                ai_service=ai_service,
-                messages=ai_messages,
-                tool_executor=_tool_executor,
-                tools_openai=tools,
-                cancel_event=cancel_event,
-                extra_system_prompt=extra_system_prompt,
-                message_queue=_message_queues.get(conversation_id),
-                narration_cadence=ai_service.config.narration_cadence,
-                auto_plan_threshold=(
-                    _planning_cfg.auto_threshold_tools if not plan_mode and _planning_cfg.auto_mode != "off" else 0
-                ),
-            ):
-                _pending_usage: dict[str, Any] | None = None
-                kind = agent_event.kind
-                data = agent_event.data
-
-                if kind == "usage":
-                    _pending_usage = data
-                    continue
-
-                elif kind == "thinking":
-                    yield {"event": "thinking", "data": json.dumps({})}
-
-                elif kind == "phase":
-                    yield {"event": "phase", "data": json.dumps(data)}
-
-                elif kind == "retrying":
-                    yield {"event": "retrying", "data": json.dumps(data)}
-
-                elif kind == "token":
-                    yield {"event": "token", "data": json.dumps(data)}
-                    _streamed_content += data.get("content", "")
-
-                    # Throttled broadcast of streaming tokens to other clients
-                    if event_bus:
-                        import time
-
-                        now = time.monotonic()
-                        if now - _last_token_broadcast >= _token_throttle_interval:
-                            _last_token_broadcast = now
-                            await event_bus.publish(
-                                f"conversation:{conversation_id}",
-                                {
-                                    "type": "stream_token",
-                                    "data": {
-                                        "conversation_id": conversation_id,
-                                        "content": data.get("content", ""),
-                                        "client_id": client_id,
-                                    },
-                                },
-                            )
-
-                elif kind == "tool_call_args_delta":
-                    tool_name = data.get("tool_name", "")
-                    idx = data.get("index", 0)
-                    if tool_name in _CANVAS_STREAMING_TOOLS:
-                        _canvas_args_accum.setdefault(idx, "")
-                        # Cap accumulator to prevent unbounded memory growth
-                        if len(_canvas_args_accum[idx]) > MAX_CANVAS_ARGS_ACCUM:
-                            continue
-                        _canvas_args_accum[idx] += data.get("delta", "")
-                        content = _extract_streaming_content(_canvas_args_accum[idx])
-                        if content is not None:
-                            prev_len = _canvas_content_sent.get(idx, 0)
-                            if len(content) > prev_len:
-                                delta_text = content[prev_len:]
-                                _canvas_content_sent[idx] = len(content)
-                                if idx not in _canvas_stream_started:
-                                    _canvas_stream_started.add(idx)
-                                    yield {
-                                        "event": "canvas_stream_start",
-                                        "data": json.dumps({"tool_name": tool_name}),
-                                    }
-                                yield {
-                                    "event": "canvas_streaming",
-                                    "data": json.dumps({"content_delta": delta_text}),
-                                }
-
-                elif kind == "tool_call_start":
-                    _canvas_args_accum.clear()
-                    _canvas_content_sent.clear()
-                    _canvas_stream_started.clear()
-                    _pending_tool_inputs[data["id"]] = data["arguments"]
-                    yield {
-                        "event": "tool_call_start",
-                        "data": json.dumps(
-                            {
-                                "id": data["id"],
-                                "tool_name": data["tool_name"],
-                                "server_name": "",
-                                "input": data["arguments"],
-                            }
-                        ),
-                    }
-
-                elif kind == "assistant_message":
-                    current_assistant_msg = storage.create_message(
-                        db,
-                        conversation_id,
-                        "assistant",
-                        data["content"],
-                        user_id=uid,
-                        user_display_name=uname,
-                    )
-
-                    # Store token usage if available
-                    if _pending_usage and current_assistant_msg:
-                        storage.update_message_usage(
-                            db,
-                            current_assistant_msg["id"],
-                            _pending_usage.get("prompt_tokens", 0),
-                            _pending_usage.get("completion_tokens", 0),
-                            _pending_usage.get("total_tokens", 0),
-                            _pending_usage.get("model", ""),
-                        )
-                        _pending_usage = None
-
-                    # Trigger async embedding for assistant message
-                    _emb_worker = getattr(request.app.state, "embedding_worker", None)
-                    if _emb_worker and current_assistant_msg:
-                        asyncio.create_task(
-                            _emb_worker.embed_message(
-                                current_assistant_msg["id"],
-                                data["content"],
-                                conversation_id,
-                            )
-                        )
-
-                    if event_bus and current_assistant_msg:
-                        await event_bus.publish(
-                            f"conversation:{conversation_id}",
-                            {
-                                "type": "new_message",
-                                "data": {
-                                    "conversation_id": conversation_id,
-                                    "message_id": current_assistant_msg["id"],
-                                    "role": "assistant",
-                                    "content": data["content"],
-                                    "position": current_assistant_msg["position"],
-                                    "client_id": client_id,
-                                },
-                            },
-                        )
-
-                elif kind == "tool_call_end":
-                    if current_assistant_msg:
-                        tool_input = _pending_tool_inputs.pop(data["id"], {})
-                        if tool_registry.has_tool(data["tool_name"]):
-                            server_name = "builtin"
-                        elif mcp_manager:
-                            server_name = mcp_manager.get_tool_server_name(data["tool_name"])
-                        else:
-                            server_name = "unknown"
-                        # Extract audit metadata before storing
-                        tool_output = data["output"]
-                        approval_decision = None
-                        if isinstance(tool_output, dict):
-                            approval_decision = tool_output.pop("_approval_decision", None)
-                        storage.create_tool_call(
-                            db,
-                            current_assistant_msg["id"],
-                            data["tool_name"],
-                            server_name,
-                            tool_input,
-                            data["id"],
-                            approval_decision=approval_decision,
-                        )
-                        storage.update_tool_call(db, data["id"], tool_output, data["status"])
-                    sse_output = data["output"]
-                    yield {
-                        "event": "tool_call_end",
-                        "data": json.dumps({"id": data["id"], "output": sse_output, "status": data["status"]}),
-                    }
-
-                    # Emit plan_saved SSE event when write_file succeeds in plan mode
-                    # and the plan file now exists on disk
-                    if (
-                        plan_mode
-                        and plan_path
-                        and data["tool_name"] == "write_file"
-                        and data.get("status") == "success"
-                        and plan_path.exists()
-                    ):
-                        from ..cli.plan import read_plan
-
-                        _plan_content = read_plan(plan_path)
-                        if _plan_content:
-                            yield {
-                                "event": "plan_saved",
-                                "data": json.dumps({"content": _plan_content, "conversation_id": conversation_id}),
-                            }
-
-                    # Emit canvas SSE events after canvas tool calls
-                    if data["tool_name"] == "create_canvas" and data.get("status") == "success":
-                        output = data.get("output", {})
-                        if output.get("status") == "created":
-                            canvas_full = storage.get_canvas(db, output["id"])
-                            if canvas_full:
-                                yield {
-                                    "event": "canvas_created",
-                                    "data": json.dumps(
-                                        {
-                                            "id": canvas_full["id"],
-                                            "title": canvas_full["title"],
-                                            "content": canvas_full["content"],
-                                            "language": canvas_full.get("language"),
-                                        }
-                                    ),
-                                }
-                    elif data["tool_name"] == "update_canvas" and data.get("status") == "success":
-                        output = data.get("output", {})
-                        if output.get("status") == "updated":
-                            canvas_full = storage.get_canvas(db, output["id"])
-                            if canvas_full:
-                                yield {
-                                    "event": "canvas_updated",
-                                    "data": json.dumps(
-                                        {
-                                            "id": canvas_full["id"],
-                                            "title": canvas_full["title"],
-                                            "content": canvas_full["content"],
-                                            "language": canvas_full.get("language"),
-                                        }
-                                    ),
-                                }
-                    elif data["tool_name"] == "patch_canvas" and data.get("status") == "success":
-                        output = data.get("output", {})
-                        if output.get("status") == "patched":
-                            canvas_full = storage.get_canvas(db, output["id"])
-                            if canvas_full:
-                                yield {
-                                    "event": "canvas_patched",
-                                    "data": json.dumps(
-                                        {
-                                            "id": canvas_full["id"],
-                                            "title": canvas_full["title"],
-                                            "version": canvas_full["version"],
-                                            "edits_applied": output.get("edits_applied", 0),
-                                            "content": canvas_full["content"],
-                                        }
-                                    ),
-                                }
-
-                    # Emit buffered sub-agent events when a run_agent tool completes.
-                    # Only drain partitions whose subagent_end has been received,
-                    # preserving events for still-running concurrent sub-agents.
-                    if data["tool_name"] == "run_agent":
-                        for sa_agent_id in list(_subagent_events.keys()):
-                            events = _subagent_events[sa_agent_id]
-                            if any(e["kind"] == "subagent_end" for e in events):
-                                for sa_event in events:
-                                    yield {
-                                        "event": "subagent_event",
-                                        "data": json.dumps(sa_event),
-                                    }
-                                del _subagent_events[sa_agent_id]
-
-                elif kind == "error":
-                    yield {"event": "error", "data": json.dumps(data)}
-
-                elif kind == "queued_message":
-                    current_assistant_msg = None
-                    _streamed_content = ""
-                    yield {"event": "queued_message", "data": json.dumps(data)}
-
-                elif kind == "done":
-                    if is_first_message and conv["title"] == "New Conversation":
-                        title = await ai_service.generate_title(first_user_text)
-                        title = (title or "")[:200] or "New Conversation"
-                        storage.update_conversation_title(db, conversation_id, title)
-                        yield {"event": "title", "data": json.dumps({"title": title})}
-
-                        if event_bus:
-                            await event_bus.publish(
-                                f"global:{db_name}",
-                                {
-                                    "type": "title_changed",
-                                    "data": {
-                                        "conversation_id": conversation_id,
-                                        "title": title,
-                                        "client_id": client_id,
-                                    },
-                                },
-                            )
-
-                    # Broadcast stream_done
-                    if event_bus:
-                        await event_bus.publish(
-                            f"conversation:{conversation_id}",
-                            {
-                                "type": "stream_done",
-                                "data": {"conversation_id": conversation_id, "client_id": client_id},
-                            },
-                        )
-
-                    yield {"event": "done", "data": json.dumps({"plan_mode": plan_mode})}
-
-        except Exception:
-            logger.exception("Chat stream error")
-            yield {"event": "error", "data": json.dumps({"message": "An internal error occurred"})}
-        finally:
-            _active_streams.pop(conversation_id, None)
-            queue = _message_queues.get(conversation_id)
-            if queue and queue.empty():
-                _message_queues.pop(conversation_id, None)
-            _cancel_events.get(conversation_id, set()).discard(cancel_event)
-            if not _cancel_events.get(conversation_id):
-                _cancel_events.pop(conversation_id, None)
-
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(_stream_chat_events(stream_ctx))
 
 
 @router.post("/conversations/{conversation_id}/stop")
