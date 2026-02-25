@@ -28,6 +28,7 @@ from ..services.ai_service import AIService, create_ai_service
 from ..services.embeddings import get_effective_dimensions
 from ..tools import ToolRegistry, register_default_tools
 from . import renderer
+from .agent_turn import AgentTurnContext, inject_rag_context, run_agent_turn
 from .commands import CommandResult, ReplSession, handle_slash_command
 from .instructions import (
     CONVENTIONS_TOKEN_WARNING_THRESHOLD,
@@ -1684,174 +1685,55 @@ async def _run_repl(
             ai_messages.append({"role": "user", "content": expanded})
 
             # RAG: retrieve relevant context from knowledge base
-            if config.rag.enabled and not _plan_active[0]:
-                try:
-                    from ..services.rag import format_rag_context, retrieve_context, strip_rag_context
-
-                    _rag_emb = await _get_rag_embedding_service()
-                    if _rag_emb:
-                        _rag_chunks = await retrieve_context(
-                            query=expanded,
-                            db=db,
-                            embedding_service=_rag_emb,
-                            config=config.rag,
-                            current_conversation_id=conv["id"],
-                        )
-                        # Strip any previous RAG context and inject fresh
-                        extra_system_prompt = strip_rag_context(extra_system_prompt)
-                        if _rag_chunks:
-                            extra_system_prompt += format_rag_context(_rag_chunks)
-                            renderer.console.print(
-                                f"  [{MUTED}][RAG: {len(_rag_chunks)} relevant chunk(s) retrieved][/{MUTED}]"
-                            )
-                except Exception:
-                    logger.debug("RAG retrieval failed in CLI", exc_info=True)
+            extra_system_prompt = await inject_rag_context(
+                config=config,
+                plan_active=_plan_active,
+                db=db,
+                conv_id=conv["id"],
+                expanded=expanded,
+                extra_system_prompt=extra_system_prompt,
+                get_rag_embedding_service=_get_rag_embedding_service,
+            )
 
             # Build message queue for queued follow-ups during agent loop
             msg_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
             if skill_msg_queue_ref is not None:
                 skill_msg_queue_ref[0] = msg_queue
 
-            # Stream response
-            renderer.clear_turn_history()
-            renderer.clear_subagent_state()
-            if subagent_limiter is not None:
-                subagent_limiter.reset()
+            # Stream response via agent turn
             cancel_event = asyncio.Event()
-            _current_cancel_event[0] = cancel_event
-            if cancel_event_ref is not None:
-                cancel_event_ref[0] = cancel_event
-            loop = asyncio.get_event_loop()
-            original_handler = signal.getsignal(signal.SIGINT)
-            _add_signal_handler(loop, signal.SIGINT, cancel_event.set)
-
-            agent_busy.set()
-
-            thinking = False
-            user_attempt = 0
-            try:
-                response_token_count = 0
-                total_elapsed = 0.0
-
-                from .event_handlers import EventContext, handle_repl_event
-
-                _evt_ctx = EventContext(
-                    plan_checklist_steps=_plan_checklist_steps,
-                    plan_current_step=_plan_current_step,
-                    plan_active=_plan_active,
-                    max_retries=config.cli.max_retries,
-                    retry_delay=config.cli.retry_delay,
-                    model_context_window=config.cli.model_context_window,
-                    auto_compact_threshold=config.cli.context_auto_compact_tokens,
-                    auto_plan_mode=config.cli.planning.auto_mode,
-                    cancel_event=cancel_event,
-                    db=db,
-                    conv_id=conv["id"],
-                    identity_kwargs=id_kw,
-                    ai_messages=ai_messages,
-                    apply_plan_mode=_apply_plan_mode,
-                    get_tiktoken_encoding=_get_tiktoken_encoding,
-                    estimate_tokens=_estimate_tokens,
-                )
-
-                # Drain any messages that arrived while we were setting up
-                def _warn(cmd: str) -> None:
-                    renderer.console.print(
-                        f"[yellow]Command {cmd} ignored during streaming. Queue messages only.[/yellow]"
-                    )
-
-                await _drain_input_to_msg_queue(
-                    input_queue,
-                    msg_queue,
-                    working_dir,
-                    db,
-                    conv["id"],
-                    cancel_event,
-                    exit_flag,
-                    warn_callback=_warn,
-                    identity_kwargs=id_kw,
-                    file_max_chars=config.cli.file_reference_max_chars,
-                )
-
-                while True:
-                    user_attempt += 1
-                    should_retry = False
-                    _evt_ctx.user_attempt = user_attempt
-                    _evt_ctx.thinking = thinking
-                    _evt_ctx.response_token_count = response_token_count
-                    _evt_ctx.total_elapsed = total_elapsed
-                    _evt_ctx.should_retry = False
-                    _evt_ctx.cancel_event = cancel_event
-                    _evt_ctx.conv_id = conv["id"]
-
-                    async for event in run_agent_loop(
-                        ai_service=ai_service,
-                        messages=ai_messages,
-                        tool_executor=tool_executor,
-                        tools_openai=tools_openai,
-                        cancel_event=cancel_event,
-                        extra_system_prompt=extra_system_prompt,
-                        max_iterations=config.cli.max_tool_iterations,
-                        message_queue=msg_queue,
-                        narration_cadence=ai_service.config.narration_cadence,
-                        tool_output_max_chars=config.cli.tool_output_max_chars,
-                        auto_plan_threshold=(
-                            config.cli.planning.auto_threshold_tools
-                            if not _plan_active[0] and config.cli.planning.auto_mode != "off"
-                            else 0
-                        ),
-                    ):
-                        # Drain input_queue into msg_queue during streaming
-                        await _drain_input_to_msg_queue(
-                            input_queue,
-                            msg_queue,
-                            working_dir,
-                            db,
-                            conv["id"],
-                            cancel_event,
-                            exit_flag,
-                            warn_callback=_warn,
-                            identity_kwargs=id_kw,
-                            file_max_chars=config.cli.file_reference_max_chars,
-                        )
-
-                        await handle_repl_event(_evt_ctx, event)
-                        thinking = _evt_ctx.thinking
-                        response_token_count = _evt_ctx.response_token_count
-                        total_elapsed = _evt_ctx.total_elapsed
-                        should_retry = _evt_ctx.should_retry
-
-                    if not should_retry:
-                        break
-
-                # Generate title on first exchange (skip if user cancelled)
-                if is_first_message:
-                    is_first_message = False
-                    if not cancel_event.is_set():
-                        try:
-                            title = await ai_service.generate_title(user_input)
-                            storage.update_conversation_title(db, conv["id"], title)
-                        except Exception:
-                            pass
-
-            except KeyboardInterrupt:
-                if thinking:
-                    renderer.stop_thinking_sync()
-                renderer.render_response_end()
-            finally:
-                if thinking:
-                    renderer.stop_thinking_sync()
-                    thinking = False
-                if not _has_pending_work():
-                    agent_busy.clear()
-                    session.app.invalidate()
-                _current_cancel_event[0] = None
-                if cancel_event_ref is not None:
-                    cancel_event_ref[0] = None
-                cancel_event.set()
-                _remove_signal_handler(loop, signal.SIGINT)
-                if not _IS_WINDOWS:
-                    signal.signal(signal.SIGINT, original_handler)
+            turn_ctx = AgentTurnContext(
+                ai_service=ai_service,
+                ai_messages=ai_messages,
+                tool_executor=tool_executor,
+                tools_openai=tools_openai,
+                extra_system_prompt=extra_system_prompt,
+                cancel_event=cancel_event,
+                config=config,
+                db=db,
+                conv=conv,
+                identity_kwargs=id_kw,
+                user_input=user_input,
+                is_first_message=is_first_message,
+                msg_queue=msg_queue,
+                input_queue=input_queue,
+                exit_flag=exit_flag,
+                working_dir=working_dir,
+                subagent_limiter=subagent_limiter,
+                cancel_event_ref=cancel_event_ref,
+                current_cancel_event=_current_cancel_event,
+                agent_busy=agent_busy,
+                session_invalidate=session.app.invalidate,
+                has_pending_work=_has_pending_work,
+                plan_checklist_steps=_plan_checklist_steps,
+                plan_current_step=_plan_current_step,
+                plan_active=_plan_active,
+                apply_plan_mode=_apply_plan_mode,
+                get_tiktoken_encoding=_get_tiktoken_encoding,
+                estimate_tokens_fn=_estimate_tokens,
+                drain_input_fn=_drain_input_to_msg_queue,
+            )
+            is_first_message = await run_agent_turn(turn_ctx)
 
     from prompt_toolkit.patch_stdout import patch_stdout as _patch_stdout
 
