@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 24, 2026
 
+### v1.46.0
+
+**New:**
+
+- Tree-sitter codebase index — AI automatically understands your project's functions, classes, and import structure (#212)
+- Supports 10 languages with token-budgeted output and graceful degradation without tree-sitter installed (#212)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.46.0)
+
 ### v1.44.0
 
 **New:**
