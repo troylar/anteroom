@@ -1508,11 +1508,7 @@ async def _run_repl(
         nonlocal current_model, ai_service, extra_system_prompt
 
         # -- Plan mode state --
-        from .plan import (
-            PLAN_MODE_ALLOWED_TOOLS,
-            build_planning_system_prompt,
-            get_plan_file_path,
-        )
+        from .plan import enter_plan_mode, leave_plan_mode
 
         _plan_active: list[bool] = [plan_mode]
         _plan_file: list[Path | None] = [None]
@@ -1546,43 +1542,27 @@ async def _run_repl(
 
         def _apply_plan_mode(conv_id: str) -> None:
             nonlocal tools_openai, extra_system_prompt
-            plan_path = get_plan_file_path(config.app.data_dir, conv_id)
-            _plan_file[0] = plan_path
-            _plan_active[0] = True
-            # Back up full tools before filtering
-            _full_tools_backup[0] = tools_openai
-
-            # Filter tools to plan-mode allowlist
-            if tools_openai:
-                tools_openai = [t for t in tools_openai if t.get("function", {}).get("name") in PLAN_MODE_ALLOWED_TOOLS]
-
-            # Inject planning prompt (remove existing if re-entering)
-            extra_system_prompt = _strip_planning_prompt(extra_system_prompt)
-            extra_system_prompt += "\n\n" + build_planning_system_prompt(plan_path)
+            tools_openai, extra_system_prompt = enter_plan_mode(
+                conv_id,
+                config.app.data_dir,
+                _plan_active,
+                _plan_file,
+                _full_tools_backup,
+                tools_openai,
+                extra_system_prompt,
+            )
 
         def _exit_plan_mode(plan_content: str | None = None) -> None:
             nonlocal tools_openai, extra_system_prompt
-            _plan_active[0] = False
-
-            # Restore full tools
-            if _full_tools_backup[0] is not None:
-                tools_openai = _full_tools_backup[0]
-                _full_tools_backup[0] = None
-            else:
-                _rebuild_tools()
-
-            # Remove planning prompt, optionally inject approved plan
-            extra_system_prompt = _strip_planning_prompt(extra_system_prompt)
-            if plan_content:
-                extra_system_prompt += (
-                    "\n\n<approved_plan>\n"
-                    "The user has approved the following implementation plan. "
-                    "Execute it step by step.\n\n" + plan_content + "\n</approved_plan>"
-                )
-
-        def _strip_planning_prompt(prompt: str) -> str:
-            prompt = re.sub(r"\n*<planning_mode>.*?</planning_mode>", "", prompt, flags=re.DOTALL)
-            return prompt
+            result_tools, extra_system_prompt = leave_plan_mode(
+                _plan_active,
+                _full_tools_backup,
+                extra_system_prompt,
+                rebuild_tools_fn=_rebuild_tools,
+                plan_content=plan_content,
+            )
+            if result_tools is not None:
+                tools_openai = result_tools
 
         # Apply plan mode at startup if --plan was passed
         if _plan_active[0]:

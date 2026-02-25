@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 _PLAN_SUBCOMMANDS = frozenset({"on", "start", "approve", "status", "edit", "off"})
 
@@ -123,3 +124,68 @@ def parse_plan_command(user_input: str) -> tuple[str | None, str | None]:
     # Everything after "/plan " is the inline prompt
     prompt = user_input.split(maxsplit=1)[1] if len(user_input.split(maxsplit=1)) > 1 else ""
     return (None, prompt if prompt else None)
+
+
+def strip_planning_prompt(prompt: str) -> str:
+    """Remove the ``<planning_mode>`` XML block from a system prompt."""
+    return re.sub(r"\n*<planning_mode>.*?</planning_mode>", "", prompt, flags=re.DOTALL)
+
+
+def enter_plan_mode(
+    conv_id: str,
+    data_dir: Path,
+    plan_active: list[bool],
+    plan_file: list[Path | None],
+    full_tools_backup: list[list[dict[str, Any]] | None],
+    tools_openai: list[dict[str, Any]] | None,
+    extra_system_prompt: str,
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """Activate plan mode: filter tools, inject planning prompt.
+
+    Returns the updated (tools_openai, extra_system_prompt).
+    """
+    plan_path = get_plan_file_path(data_dir, conv_id)
+    plan_file[0] = plan_path
+    plan_active[0] = True
+    full_tools_backup[0] = tools_openai
+
+    if tools_openai:
+        tools_openai = [t for t in tools_openai if t.get("function", {}).get("name") in PLAN_MODE_ALLOWED_TOOLS]
+
+    extra_system_prompt = strip_planning_prompt(extra_system_prompt)
+    extra_system_prompt += "\n\n" + build_planning_system_prompt(plan_path)
+
+    return tools_openai, extra_system_prompt
+
+
+def leave_plan_mode(
+    plan_active: list[bool],
+    full_tools_backup: list[list[dict[str, Any]] | None],
+    extra_system_prompt: str,
+    rebuild_tools_fn: Any | None = None,
+    plan_content: str | None = None,
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """Deactivate plan mode: restore tools, optionally inject approved plan.
+
+    Returns the updated (tools_openai, extra_system_prompt).
+    """
+    plan_active[0] = False
+
+    if full_tools_backup[0] is not None:
+        tools_openai = full_tools_backup[0]
+        full_tools_backup[0] = None
+    elif rebuild_tools_fn:
+        rebuild_tools_fn()
+        tools_openai = None  # rebuilt externally
+    else:
+        tools_openai = None
+
+    extra_system_prompt = strip_planning_prompt(extra_system_prompt)
+    if plan_content:
+        extra_system_prompt += (
+            "\n\n<approved_plan>\n"
+            "The user has approved the following implementation plan. "
+            "Execute it step by step.\n\n" + plan_content + "\n</approved_plan>"
+        )
+
+    return tools_openai, extra_system_prompt
