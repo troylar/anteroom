@@ -5,6 +5,17 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## February 25, 2026
+
+### v1.48.0
+
+**New:**
+
+- Auto-detect embedding support at startup — probes endpoint once instead of failing every 30s for enterprise APIs without embeddings (#109)
+- Zero-config for both paths: embedding-capable APIs work automatically, others silently skip
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.48.0)
+
 ## February 24, 2026
 
 ### v1.47.0
