@@ -1672,6 +1672,19 @@ body {
     40% { transform: scale(1); opacity: 1; }
 }
 
+.thinking-phase-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    opacity: 0.7;
+    margin-left: 6px;
+    white-space: nowrap;
+    transition: color 0.3s ease, opacity 0.3s ease;
+}
+.thinking-phase-label.stall {
+    color: var(--warning, #e2a93b);
+    opacity: 1;
+}
+
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
