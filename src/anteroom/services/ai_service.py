@@ -19,6 +19,7 @@ from openai import (
 )
 
 from ..config import AIConfig
+from .egress_allowlist import check_egress_allowed
 from .token_provider import TokenProvider, TokenProviderError
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,20 @@ class AIService:
     def __init__(self, config: AIConfig, token_provider: TokenProvider | None = None) -> None:
         self.config = config
         self._token_provider = token_provider
+        self._validate_egress()
         self._build_client()
+
+    def _validate_egress(self) -> None:
+        """Validate base_url against egress domain allowlist. Raises ValueError if blocked."""
+        if not check_egress_allowed(
+            self.config.base_url,
+            self.config.allowed_domains,
+            block_localhost=self.config.block_localhost_api,
+        ):
+            raise ValueError(
+                f"Egress blocked: {self.config.base_url} is not in the allowed domains list. "
+                f"Allowed: {', '.join(self.config.allowed_domains) or '(block_localhost_api is enabled)'}"
+            )
 
     def _build_client(self) -> None:
         """Build (or rebuild) the AsyncOpenAI client with the current API key.
