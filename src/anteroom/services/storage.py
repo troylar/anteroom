@@ -847,6 +847,24 @@ def get_usage_stats(
     return [dict(row) for row in rows]
 
 
+def get_conversation_token_total(db: sqlite3.Connection, conversation_id: str) -> int:
+    """Get total tokens consumed in a conversation."""
+    row = db.execute_fetchone(
+        "SELECT COALESCE(SUM(total_tokens), 0) FROM messages WHERE conversation_id = ? AND total_tokens IS NOT NULL",
+        (conversation_id,),
+    )
+    return int(row[0]) if row else 0
+
+
+def get_daily_token_total(db: sqlite3.Connection) -> int:
+    """Get total tokens consumed today (UTC calendar day)."""
+    row = db.execute_fetchone(
+        "SELECT COALESCE(SUM(total_tokens), 0) FROM messages "
+        "WHERE created_at >= date('now') AND total_tokens IS NOT NULL",
+    )
+    return int(row[0]) if row else 0
+
+
 def list_messages(db: sqlite3.Connection, conversation_id: str) -> list[dict[str, Any]]:
     rows = db.execute_fetchall(
         "SELECT * FROM messages WHERE conversation_id = ? ORDER BY position",

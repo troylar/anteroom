@@ -298,6 +298,18 @@ class PlanningConfig:
 
 
 @dataclass
+class BudgetConfig:
+    """Token budget enforcement for denial-of-wallet prevention."""
+
+    enabled: bool = False
+    max_tokens_per_request: int = 0  # 0 = unlimited
+    max_tokens_per_conversation: int = 0  # 0 = unlimited
+    max_tokens_per_day: int = 0  # 0 = unlimited
+    warn_threshold_percent: int = 80  # emit warning at this % of limit
+    action_on_exceed: str = "block"  # "block" or "warn"
+
+
+@dataclass
 class UsageConfig:
     """Token usage tracking and cost estimation settings."""
 
@@ -318,6 +330,7 @@ class UsageConfig:
             "claude-haiku-4-20250514": {"input": 0.80, "output": 4.00},
         }
     )  # per 1M tokens
+    budgets: BudgetConfig = field(default_factory=BudgetConfig)
 
 
 @dataclass
@@ -887,6 +900,83 @@ def load_config(
                     "output": float(costs.get("output", 0)),
                 }
         usage_config.model_costs = merged
+
+    # Parse budget config (under usage.budgets or top-level env vars)
+    budgets_raw = usage_raw.get("budgets", {})
+    if not isinstance(budgets_raw, dict):
+        budgets_raw = {}
+    budget_enabled_raw = budgets_raw.get("enabled", os.environ.get("AI_CHAT_BUDGET_ENABLED"))
+    if budget_enabled_raw is not None:
+        budget_enabled = str(budget_enabled_raw).lower() not in ("false", "0", "no")
+    else:
+        budget_enabled = False
+    try:
+        budget_max_per_request = max(
+            0,
+            int(
+                budgets_raw.get(
+                    "max_tokens_per_request",
+                    os.environ.get("AI_CHAT_BUDGET_MAX_TOKENS_PER_REQUEST", 0),
+                )
+            ),
+        )
+    except (ValueError, TypeError):
+        budget_max_per_request = 0
+    try:
+        budget_max_per_conversation = max(
+            0,
+            int(
+                budgets_raw.get(
+                    "max_tokens_per_conversation",
+                    os.environ.get("AI_CHAT_BUDGET_MAX_TOKENS_PER_CONVERSATION", 0),
+                )
+            ),
+        )
+    except (ValueError, TypeError):
+        budget_max_per_conversation = 0
+    try:
+        budget_max_per_day = max(
+            0,
+            int(
+                budgets_raw.get(
+                    "max_tokens_per_day",
+                    os.environ.get("AI_CHAT_BUDGET_MAX_TOKENS_PER_DAY", 0),
+                )
+            ),
+        )
+    except (ValueError, TypeError):
+        budget_max_per_day = 0
+    try:
+        budget_warn_pct = max(
+            0,
+            min(
+                100,
+                int(
+                    budgets_raw.get(
+                        "warn_threshold_percent",
+                        os.environ.get("AI_CHAT_BUDGET_WARN_THRESHOLD_PERCENT", 80),
+                    )
+                ),
+            ),
+        )
+    except (ValueError, TypeError):
+        budget_warn_pct = 80
+    budget_action = str(
+        budgets_raw.get(
+            "action_on_exceed",
+            os.environ.get("AI_CHAT_BUDGET_ACTION_ON_EXCEED", "block"),
+        )
+    ).lower()
+    if budget_action not in ("block", "warn"):
+        budget_action = "block"
+    usage_config.budgets = BudgetConfig(
+        enabled=budget_enabled,
+        max_tokens_per_request=budget_max_per_request,
+        max_tokens_per_conversation=budget_max_per_conversation,
+        max_tokens_per_day=budget_max_per_day,
+        warn_threshold_percent=budget_warn_pct,
+        action_on_exceed=budget_action,
+    )
 
     skills_raw = cli_raw.get("skills", {})
     if not isinstance(skills_raw, dict):

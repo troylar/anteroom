@@ -1225,6 +1225,10 @@ def render_error(message: str) -> None:
     console.print(f"\n[red bold]Error:[/red bold] {escape(message)}")
 
 
+def render_warning(message: str) -> None:
+    console.print(f"\n[yellow bold]Warning:[/yellow bold] {escape(message)}")
+
+
 def startup_step(message: str) -> Status:
     """Create a dim animated spinner for a startup step.
 

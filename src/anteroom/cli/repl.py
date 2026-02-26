@@ -1222,6 +1222,14 @@ async def _run_one_shot(
         while True:
             user_attempt += 1
             should_retry = False
+            _budget_cfg = config.cli.usage.budgets if hasattr(config.cli.usage, "budgets") else None
+
+            async def _get_token_totals() -> tuple[int, int]:
+                return (
+                    storage.get_conversation_token_total(db, conv["id"]),
+                    storage.get_daily_token_total(db),
+                )
+
             async for event in run_agent_loop(
                 ai_service=ai_service,
                 messages=messages,
@@ -1232,6 +1240,8 @@ async def _run_one_shot(
                 max_iterations=config.cli.max_tool_iterations,
                 narration_cadence=ai_service.config.narration_cadence,
                 tool_output_max_chars=config.cli.tool_output_max_chars,
+                budget_config=_budget_cfg,
+                get_token_totals=_get_token_totals,
             ):
                 if event.kind == "thinking":
                     if not thinking:
@@ -1285,6 +1295,11 @@ async def _run_one_shot(
                         thinking = False
                     else:
                         renderer.render_error(error_msg)
+                elif event.kind == "budget_warning":
+                    if thinking:
+                        await renderer.stop_thinking()
+                        thinking = False
+                    renderer.render_warning(event.data.get("message", "Token budget warning"))
                 elif event.kind == "done":
                     if thinking and cancel_event.is_set():
                         await renderer.stop_thinking(cancel_msg="cancelled")
@@ -2786,6 +2801,14 @@ async def _run_repl(
                     user_attempt += 1
                     should_retry = False
 
+                    _budget_cfg2 = config.cli.usage.budgets if hasattr(config.cli.usage, "budgets") else None
+
+                    async def _get_token_totals2() -> tuple[int, int]:
+                        return (
+                            storage.get_conversation_token_total(db, conv["id"]),
+                            storage.get_daily_token_total(db),
+                        )
+
                     async for event in run_agent_loop(
                         ai_service=ai_service,
                         messages=ai_messages,
@@ -2802,6 +2825,8 @@ async def _run_repl(
                             if not _plan_active[0] and config.cli.planning.auto_mode != "off"
                             else 0
                         ),
+                        budget_config=_budget_cfg2,
+                        get_token_totals=_get_token_totals2,
                     ):
                         # Drain input_queue into msg_queue during streaming
                         await _drain_input_to_msg_queue(
@@ -2936,6 +2961,11 @@ async def _run_repl(
                                 thinking = False
                             else:
                                 renderer.render_error(error_msg)
+                        elif event.kind == "budget_warning":
+                            if thinking:
+                                total_elapsed += await renderer.stop_thinking()
+                                thinking = False
+                            renderer.render_warning(event.data.get("message", "Token budget warning"))
                         elif event.kind == "done":
                             # Mark any in-progress plan step as complete
                             if _plan_checklist_steps and _plan_current_step[0] < len(_plan_checklist_steps):

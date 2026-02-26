@@ -778,6 +778,7 @@ class StreamContext:
     conv_title: str
     embedding_worker: Any
     planning_config: Any
+    budget_config: Any = None
     request: Any = None
     canvas_needs_approval: bool = False
     token_throttle_interval: float = 0.1
@@ -868,6 +869,13 @@ async def _stream_chat_events(ctx: StreamContext):
 
     try:
         _planning_cfg = ctx.planning_config
+
+        async def _get_token_totals() -> tuple[int, int]:
+            return (
+                storage.get_conversation_token_total(ctx.db, ctx.conversation_id),
+                storage.get_daily_token_total(ctx.db),
+            )
+
         agent_gen = run_agent_loop(
             ai_service=ctx.ai_service,
             messages=ctx.ai_messages,
@@ -880,6 +888,8 @@ async def _stream_chat_events(ctx: StreamContext):
             auto_plan_threshold=(
                 _planning_cfg.auto_threshold_tools if not ctx.plan_mode and _planning_cfg.auto_mode != "off" else 0
             ),
+            budget_config=ctx.budget_config,
+            get_token_totals=_get_token_totals,
         )
         async for agent_event in _with_keepalive(agent_gen):
             if isinstance(agent_event, dict) and "comment" in agent_event:
@@ -1120,6 +1130,9 @@ async def _stream_chat_events(ctx: StreamContext):
 
             elif kind == "error":
                 yield {"event": "error", "data": json.dumps(data)}
+
+            elif kind == "budget_warning":
+                yield {"event": "budget_warning", "data": json.dumps(data)}
 
             elif kind == "queued_message":
                 current_assistant_msg = None
@@ -1576,6 +1589,7 @@ async def chat(conversation_id: str, request: Request):
         conv_title=conv["title"],
         embedding_worker=getattr(request.app.state, "embedding_worker", None),
         planning_config=request.app.state.config.cli.planning,
+        budget_config=getattr(request.app.state.config.cli.usage, "budgets", None),
         canvas_needs_approval=_canvas_needs_approval(safety_config, tool_registry),
         request=request,
     )
