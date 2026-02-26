@@ -94,6 +94,18 @@ class ToolRegistry:
             )
 
         tier = get_tool_tier(tool_name, tier_overrides=config.tool_tiers)
+
+        # Read-only mode: hard-deny any tool above READ tier as defense-in-depth.
+        # The tool list is already filtered at assembly time, but this backstop
+        # catches any tool call that bypasses the filtered list (e.g. via prompt
+        # injection or a misbehaving model emitting unlisted tool calls).
+        if config.read_only and tier != ToolTier.READ:
+            return SafetyVerdict(
+                needs_approval=True,
+                reason=f"Tool '{tool_name}' blocked: read-only mode is active",
+                tool_name=tool_name,
+                hard_denied=True,
+            )
         mode = parse_approval_mode(config.approval_mode)
 
         result = should_require_approval(

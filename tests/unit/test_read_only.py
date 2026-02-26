@@ -338,6 +338,74 @@ class TestBuildToolListReadOnly:
             assert plan_path is not None
 
 
+class TestReadOnlyExecutionTimeEnforcement:
+    """Tests for defense-in-depth: check_safety() hard-denies non-READ tools in read-only mode."""
+
+    def test_check_safety_blocks_write_tool_in_read_only(self) -> None:
+        from anteroom.tools import ToolRegistry
+
+        registry = ToolRegistry()
+        config = SafetyConfig(read_only=True)
+        registry.set_safety_config(config)
+
+        verdict = registry.check_safety("write_file", {"path": "/tmp/test", "content": "x"})
+        assert verdict is not None
+        assert verdict.hard_denied is True
+        assert "read-only" in verdict.reason
+
+    def test_check_safety_blocks_bash_in_read_only(self) -> None:
+        from anteroom.tools import ToolRegistry
+
+        registry = ToolRegistry()
+        config = SafetyConfig(read_only=True)
+        registry.set_safety_config(config)
+
+        verdict = registry.check_safety("bash", {"command": "ls"})
+        assert verdict is not None
+        assert verdict.hard_denied is True
+
+    def test_check_safety_blocks_mcp_tool_in_read_only(self) -> None:
+        from anteroom.tools import ToolRegistry
+
+        registry = ToolRegistry()
+        config = SafetyConfig(read_only=True)
+        registry.set_safety_config(config)
+
+        verdict = registry.check_safety("mcp_some_tool", {"arg": "val"})
+        assert verdict is not None
+        assert verdict.hard_denied is True
+
+    def test_check_safety_allows_read_tool_in_read_only(self) -> None:
+        from anteroom.tools import ToolRegistry
+
+        registry = ToolRegistry()
+        config = SafetyConfig(read_only=True)
+        registry.set_safety_config(config)
+
+        verdict = registry.check_safety("read_file", {"path": "/tmp/test"})
+        assert verdict is None  # auto-allowed
+
+    def test_check_safety_allows_all_when_not_read_only(self) -> None:
+        from anteroom.tools import ToolRegistry
+
+        registry = ToolRegistry()
+        config = SafetyConfig(read_only=False, approval_mode="auto")
+        registry.set_safety_config(config)
+
+        verdict = registry.check_safety("bash", {"command": "ls"})
+        assert verdict is None  # auto-allowed in auto mode
+
+    def test_read_only_override_promotes_tool(self) -> None:
+        from anteroom.tools import ToolRegistry
+
+        registry = ToolRegistry()
+        config = SafetyConfig(read_only=True, tool_tiers={"bash": "read"})
+        registry.set_safety_config(config)
+
+        verdict = registry.check_safety("bash", {"command": "ls"})
+        assert verdict is None  # promoted to READ via override
+
+
 class TestAppConfigResponseReadOnly:
     """Tests for read_only field in AppConfigResponse model."""
 
