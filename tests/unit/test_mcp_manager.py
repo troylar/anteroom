@@ -171,7 +171,7 @@ class TestMcpManagerCallTool:
                 "summary": "Test with special chars: $100 & (parens) {braces}",
             },
         )
-        assert result == {"content": "OK"}
+        assert result["content"] == "OK"
         mock_session.call_tool.assert_awaited_once()
 
     @pytest.mark.asyncio()

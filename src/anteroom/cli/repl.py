@@ -26,6 +26,7 @@ from ..db import init_db
 from ..services import storage
 from ..services.agent_loop import _build_compaction_history, run_agent_loop
 from ..services.ai_service import AIService, create_ai_service
+from ..services.context_trust import trusted_section_marker, untrusted_section_marker
 from ..services.embeddings import get_effective_dimensions
 from ..services.rewind import collect_file_paths
 from ..services.rewind import rewind_conversation as rewind_service
@@ -589,7 +590,7 @@ def _build_system_prompt(
         interface="cli",
         working_dir=working_dir,
     )
-    parts = [runtime_ctx]
+    parts = [trusted_section_marker() + runtime_ctx]
 
     # Project context
     project_ctx = _detect_project_context(working_dir)
@@ -1093,6 +1094,9 @@ async def run_cli(
         builtin_tools=tool_registry.list_tools(),
         mcp_servers=mcp_statuses,
     )
+
+    # Structural separation: everything below is external/auto-generated context
+    extra_system_prompt += untrusted_section_marker()
 
     # Inject codebase index (tree-sitter symbol map) if enabled
     try:

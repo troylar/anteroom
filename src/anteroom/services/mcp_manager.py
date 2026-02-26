@@ -451,6 +451,10 @@ class McpManager:
             logger.error("MCP tool '%s' on server '%s' failed: %s", tool_name, server_name, e, exc_info=True)
             raise ValueError(f"MCP server '{server_name}' returned an error for tool '{tool_name}'") from e
 
+        # Resolve per-server trust level for context tagging
+        srv_config = self._configs.get(server_name)
+        trust = srv_config.trust_level if srv_config else "untrusted"
+
         if hasattr(result, "content"):
             contents = []
             for item in result.content:
@@ -460,9 +464,13 @@ class McpManager:
                     contents.append(str(item.data))
                 else:
                     contents.append(str(item))
-            return {"content": "\n".join(contents)}
+            return {
+                "content": "\n".join(contents),
+                "_context_trust": trust,
+                "_context_origin": f"mcp:{server_name}",
+            }
 
-        return {"result": str(result)}
+        return {"result": str(result), "_context_trust": trust, "_context_origin": f"mcp:{server_name}"}
 
     def get_tool_server_name(self, tool_name: str) -> str:
         return self._tool_to_server.get(tool_name, "unknown")
