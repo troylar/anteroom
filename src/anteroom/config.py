@@ -966,7 +966,7 @@ def load_config(
         _raw_allowed_domains = []
     allowed_domains: list[str] = [str(d).strip() for d in _raw_allowed_domains if d]
     _env_allowed_domains = os.environ.get("AI_CHAT_ALLOWED_DOMAINS", "")
-    if _env_allowed_domains and not allowed_domains:
+    if _env_allowed_domains:
         allowed_domains = [d.strip() for d in _env_allowed_domains.split(",") if d.strip()]
 
     _raw_block_localhost = ai_raw.get("block_localhost_api", os.environ.get("AI_CHAT_BLOCK_LOCALHOST_API", "false"))
