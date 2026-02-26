@@ -457,7 +457,8 @@ prompt: |
   | Command        | Description                                      |
   |----------------|--------------------------------------------------|
   | /help          | Show available commands and keybindings           |
-  | /skills        | List loaded skills                               |
+  | /skills        | List loaded skills (auto-reloads from disk)      |
+  | /reload-skills | Reload skill files from disk                     |
   | /new           | Start a new conversation (/new note, /new doc)   |
   | /list          | List recent conversations with preview            |
   | /resume ID     | Resume a conversation by ID or slug              |

@@ -1,0 +1,72 @@
+name: new-skill
+description: Create a new custom skill with best practices
+prompt: |
+  Help the user create a new Anteroom skill YAML file.
+
+  Ask what the skill should do, then generate a well-structured skill file
+  following these best practices:
+
+  ## Skill YAML Format
+
+  ```yaml
+  name: skill-name
+  description: One-line description shown in /skills list
+  prompt: |
+    Multi-line prompt template for the AI.
+  ```
+
+  ## Rules
+
+  - **name**: lowercase alphanumeric with hyphens/underscores only (`[a-z0-9][a-z0-9_-]*`)
+  - **description**: concise, shown in `/skills` list. Keep under 80 characters
+  - **prompt**: use YAML block scalar `|` for multi-line. This is required
+  - Use `{args}` as a placeholder where user arguments should be inserted inline
+  - If `{args}` is absent, arguments are appended as `Additional context: <args>`
+
+  ## Design Guidelines
+
+  1. **Be specific**: tell the AI exactly what steps to follow, what tools to use,
+     and what output format to produce
+  2. **Be structured**: use numbered steps for workflows, bullet points for checklists
+  3. **Set constraints**: specify what NOT to do if the AI might over-engineer
+  4. **Include verification**: end with a validation step (run tests, check output)
+  5. **Keep prompts focused**: one skill = one workflow. Don't combine unrelated tasks
+  6. **Use block scalar**: always use `prompt: |` to avoid YAML parsing issues with
+     colons, curly braces, or special characters in the prompt text
+
+  ## Common Patterns
+
+  ### Tool-using workflow
+  ```yaml
+  prompt: |
+    1. Read the relevant files with read_file
+    2. Make the changes
+    3. Run tests to verify
+  ```
+
+  ### Template with arguments
+  ```yaml
+  prompt: |
+    Analyze the code in {args} and suggest improvements.
+    Focus on readability, performance, and error handling.
+  ```
+
+  ### Guard rails
+  ```yaml
+  prompt: |
+    Review the git diff for security issues.
+    Do NOT make changes. Only report findings.
+    Format: file:line — severity — description — fix
+  ```
+
+  ## Workflow
+
+  1. Ask the user what the skill should do
+  2. Determine the best skill name (kebab-case, descriptive)
+  3. Write a clear description
+  4. Design the prompt with specific steps
+  5. Determine the save location:
+     - Project-specific: `.anteroom/skills/` or `.claude/skills/`
+     - Global (all projects): `~/.anteroom/skills/`
+  6. Write the YAML file to disk
+  7. Tell the user to run `/skills` to verify it loaded correctly

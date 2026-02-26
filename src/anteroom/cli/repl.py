@@ -1072,8 +1072,10 @@ async def run_cli(
                 # Trust boundary: args originate from the LLM, not the user.
                 # Truncate to limit injection surface; the skill prompt itself
                 # is from trusted local YAML files.
+                from .skills import _expand_args
+
                 args = args[:2000]
-                prompt = f"{prompt}\n\nARGUMENTS: {args}"
+                prompt = _expand_args(prompt, args)
             await queue.put({"role": "user", "content": prompt})
             return {"status": "skill_invoked", "skill": skill_name}
         if tool_name == "run_agent":
@@ -1724,6 +1726,7 @@ async def _run_repl(
         "conventions",
         "tools",
         "skills",
+        "reload-skills",
         "project",
         "projects",
         "mcp",
@@ -1917,7 +1920,9 @@ async def _run_repl(
                 (cmd, "  /tools"),
                 (desc, "            List available tools\n"),
                 (cmd, "  /skills"),
-                (desc, "           List loaded skills\n"),
+                (desc, "           List loaded skills (auto-reloads)\n"),
+                (cmd, "  /reload-skills"),
+                (desc, "    Reload skill files from disk\n"),
                 (cmd, "  /mcp"),
                 (desc, "              Show MCP server status\n"),
                 (cmd, "  /conventions"),
@@ -2631,20 +2636,26 @@ async def _run_repl(
                     else:
                         renderer.console.print(f"[{CHROME}]No conversations matching '{query}'[/{CHROME}]\n")
                     continue
-                elif cmd == "/skills":
+                elif cmd in ("/skills", "/reload-skills"):
                     if skill_registry:
+                        skill_registry.reload(working_dir)
                         skills = skill_registry.list_skills()
                         if skills:
                             renderer.console.print("\n[bold]Available skills:[/bold]")
                             for s in skills:
                                 src = s.source
                                 renderer.console.print(f"  /{s.name} - {s.description} [{CHROME}]({src})[/{CHROME}]")
-                            renderer.console.print()
                         else:
                             renderer.console.print(
-                                f"[{CHROME}]No skills loaded. Add .yaml files to"
-                                f" ~/.anteroom/skills/ or .anteroom/skills/[/{CHROME}]\n"
+                                f"\n[{CHROME}]No skills loaded. Add .yaml files to"
+                                f" ~/.anteroom/skills/ or .anteroom/skills/[/{CHROME}]"
                             )
+                        if skill_registry.load_warnings:
+                            n = len(skill_registry.load_warnings)
+                            renderer.console.print(f"\n[yellow]Warnings ({n}):[/yellow]")
+                            for warn in skill_registry.load_warnings:
+                                renderer.console.print(f"  [yellow]- {warn}[/yellow]")
+                        renderer.console.print()
                     continue
                 elif cmd in ("/projects", "/project"):
                     parts = user_input.split(maxsplit=2)
