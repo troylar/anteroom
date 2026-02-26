@@ -206,6 +206,20 @@ class TestCustomPatterns:
         assert result.matched
         assert len(result.matches) == 2
 
+    def test_scan_patterns_only(self) -> None:
+        patterns = [OutputFilterPatternConfig(name="key", pattern=r"SECRET_\w+", description="Secret")]
+        scanner = _make_scanner(system_prompt=_LEAK_PROMPT, custom_patterns=patterns, leak_threshold=0.3)
+        # scan_patterns_only should detect custom patterns but NOT leak detection
+        result = scanner.scan_patterns_only("SECRET_abc and " + _LEAK_PROMPT)
+        assert result.matched
+        assert len(result.matches) == 1
+        assert result.matches[0].rule_name == "key"
+
+    def test_scan_patterns_only_no_rules(self) -> None:
+        scanner = _make_scanner(system_prompt=_LEAK_PROMPT)
+        result = scanner.scan_patterns_only(_LEAK_PROMPT)
+        assert not result.matched
+
 
 # ---------------------------------------------------------------------------
 # System Prompt Leak Detection

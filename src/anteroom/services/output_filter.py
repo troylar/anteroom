@@ -105,12 +105,12 @@ class OutputContentFilter:
         for pat in config.custom_patterns:
             if not pat.name or not pat.pattern:
                 continue
+            if not _validate_pattern_safety(pat.pattern, pat.name):
+                continue
             try:
                 compiled = re.compile(pat.pattern)
             except re.error as e:
                 logger.warning("Output filter pattern '%s' has invalid regex, skipping: %s", pat.name, e)
-                continue
-            if not _validate_pattern_safety(pat.pattern, pat.name):
                 continue
             self._rules.append(
                 _CompiledRule(
@@ -156,6 +156,29 @@ class OutputContentFilter:
             match_count=len(overlap),
             description=f"System prompt leak detected ({ratio:.0%} n-gram overlap)",
         )
+
+    def scan_patterns_only(self, text: str) -> OutputFilterScanResult:
+        """Scan text for custom patterns only (no leak detection).
+
+        Useful for per-chunk streaming scans where n-gram leak detection
+        needs full text context.
+        """
+        if not self._enabled or not self._rules:
+            return OutputFilterScanResult(matched=False, action="pass")
+        if not text or not text.strip():
+            return OutputFilterScanResult(matched=False, action="pass")
+
+        scan_text = text[:MAX_SCAN_LENGTH] if len(text) > MAX_SCAN_LENGTH else text
+        matches: list[OutputFilterMatch] = []
+        for rule in self._rules:
+            found = rule.regex.findall(scan_text)
+            if found:
+                matches.append(
+                    OutputFilterMatch(rule_name=rule.name, match_count=len(found), description=rule.description)
+                )
+        if not matches:
+            return OutputFilterScanResult(matched=False, action="pass")
+        return OutputFilterScanResult(matched=True, action=self._action, matches=matches)
 
     def scan(self, text: str) -> OutputFilterScanResult:
         """Scan text for forbidden content. Returns scan result without modifying text."""

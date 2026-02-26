@@ -354,6 +354,13 @@ async def run_exec_mode(
     except (NotImplementedError, RuntimeError):
         pass
 
+    # Construct output filter if enabled
+    _output_filter = None
+    if config.safety.output_filter.enabled:
+        from ..services.output_filter import OutputContentFilter
+
+        _output_filter = OutputContentFilter(config.safety.output_filter, system_prompt=extra_system_prompt)
+
     # Run the agent loop with a wall-clock timeout
     exit_code = 0
     output_chunks: list[str] = []
@@ -373,6 +380,7 @@ async def run_exec_mode(
             max_iterations=config.cli.max_tool_iterations,
             narration_cadence=0,
             tool_output_max_chars=config.cli.tool_output_max_chars,
+            output_filter=_output_filter,
         ):
             if event.kind == "token":
                 if output_total_chars < _MAX_OUTPUT_CHARS:
@@ -442,6 +450,18 @@ async def run_exec_mode(
                     elif not assistant_msg_id:
                         msg = storage.create_message(db, conv["id"], "assistant", "[exec audit]", **id_kw)
                         assistant_msg_id = msg["id"]
+
+            elif event.kind == "output_filter_blocked":
+                if not quiet:
+                    rules = ", ".join(event.data.get("matches", []))
+                    print(f"Output blocked by content filter: {rules}", file=sys.stderr)
+                exit_code = 1
+                break
+
+            elif event.kind == "output_filter_warning":
+                if not quiet:
+                    rules = ", ".join(event.data.get("matches", []))
+                    print(f"Output filter warning: {rules}", file=sys.stderr)
 
             elif event.kind == "error":
                 error_msg = event.data.get("message", "Unknown error")

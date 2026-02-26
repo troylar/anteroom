@@ -324,6 +324,17 @@ async def run_agent_loop(
                         )
                         _dlp_blocked = True
                         break
+                # Per-chunk output filter: custom pattern block (leak detection
+                # requires full text and runs post-stream).
+                if output_filter is not None and output_filter.enabled:
+                    chunk_result = output_filter.scan_patterns_only(chunk)
+                    if chunk_result.matched and chunk_result.action == "block":
+                        yield AgentEvent(
+                            kind="output_filter_blocked",
+                            data={"matches": [m.rule_name for m in chunk_result.matches]},
+                        )
+                        _dlp_blocked = True  # reuse flag to skip final scan
+                        break
                 assistant_content += chunk
                 yield AgentEvent(kind="token", data={"content": chunk})
             elif etype == "tool_call":
@@ -446,7 +457,18 @@ async def run_agent_loop(
             assistant_content, _ = dlp_scanner.apply(assistant_content, "output")
         # Output filter scan on tool-call turn text
         if output_filter is not None and output_filter.enabled and assistant_content:
-            assistant_content, _ = output_filter.apply(assistant_content)
+            assistant_content, of_result = output_filter.apply(assistant_content)
+            if of_result.matched and of_result.action == "block":
+                yield AgentEvent(
+                    kind="output_filter_blocked",
+                    data={"matches": [m.rule_name for m in of_result.matches]},
+                )
+                return
+            if of_result.matched and of_result.action in ("warn", "redact"):
+                yield AgentEvent(
+                    kind="output_filter_warning",
+                    data={"matches": [m.rule_name for m in of_result.matches]},
+                )
 
         # Save assistant message with tool calls into message history
         yield AgentEvent(kind="assistant_message", data={"content": assistant_content})
