@@ -5,7 +5,13 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from anteroom.cli.skills import SkillRegistry, load_skills
+from anteroom.cli.skills import (
+    MAX_SKILLS,
+    SkillRegistry,
+    _expand_args,
+    _validate_skill_name,
+    load_skills,
+)
 
 
 class TestLoadSkills:
@@ -16,32 +22,100 @@ class TestLoadSkills:
             (skills_dir / "greet.yaml").write_text(
                 "name: greet\ndescription: Say hello\nprompt: Say hello to the user\n"
             )
-            skills = load_skills(tmpdir)
-            assert len(skills) == 1
-            assert skills[0].name == "greet"
-            assert skills[0].description == "Say hello"
+            result = load_skills(tmpdir)
+            assert len(result.skills) == 1
+            assert result.skills[0].name == "greet"
+            assert result.skills[0].description == "Say hello"
 
     def test_empty_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            skills = load_skills(tmpdir)
-            assert len(skills) == 0
+            result = load_skills(tmpdir)
+            assert len(result.skills) == 0
 
     def test_skip_invalid_yaml(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             skills_dir = Path(tmpdir) / ".anteroom" / "skills"
             skills_dir.mkdir(parents=True)
             (skills_dir / "bad.yaml").write_text("not: valid: yaml: [[[")
-            skills = load_skills(tmpdir)
-            # Should not crash, just skip
-            assert len(skills) == 0
+            result = load_skills(tmpdir)
+            assert len(result.skills) == 0
+            assert len(result.warnings) >= 1
 
     def test_skip_no_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             skills_dir = Path(tmpdir) / ".anteroom" / "skills"
             skills_dir.mkdir(parents=True)
             (skills_dir / "empty.yaml").write_text("name: empty\ndescription: No prompt\n")
-            skills = load_skills(tmpdir)
-            assert len(skills) == 0
+            result = load_skills(tmpdir)
+            assert len(result.skills) == 0
+            assert any("missing 'prompt'" in w for w in result.warnings)
+
+
+class TestValidateSkillName:
+    def test_valid_name(self) -> None:
+        name, warning = _validate_skill_name("commit", "commit")
+        assert name == "commit"
+        assert warning is None
+
+    def test_valid_name_with_hyphens_underscores(self) -> None:
+        name, warning = _validate_skill_name("my-skill_v2", "file")
+        assert name == "my-skill_v2"
+        assert warning is None
+
+    def test_empty_name_defaults_to_stem(self) -> None:
+        name, warning = _validate_skill_name("", "fallback")
+        assert name == "fallback"
+        assert warning is None
+
+    def test_whitespace_name_defaults_to_stem(self) -> None:
+        name, warning = _validate_skill_name("   ", "fallback")
+        assert name == "fallback"
+        assert warning is None
+
+    def test_whitespace_trimmed(self) -> None:
+        name, warning = _validate_skill_name("  test  ", "file")
+        assert name == "test"
+        assert warning is None
+
+    def test_rejects_special_chars(self) -> None:
+        name, warning = _validate_skill_name("test/bad", "file")
+        assert name == ""
+        assert warning is not None
+        assert "invalid skill name" in warning
+
+    def test_rejects_newline(self) -> None:
+        name, warning = _validate_skill_name("test\nmalicious", "file")
+        assert name == ""
+        assert warning is not None
+
+    def test_rejects_uppercase(self) -> None:
+        name, warning = _validate_skill_name("MySkill", "file")
+        assert name == ""
+        assert warning is not None
+
+    def test_rejects_starting_with_hyphen(self) -> None:
+        name, warning = _validate_skill_name("-bad", "file")
+        assert name == ""
+        assert warning is not None
+
+
+class TestExpandArgs:
+    def test_placeholder_replacement(self) -> None:
+        result = _expand_args("Process {args} now", "my input")
+        assert result == "Process my input now"
+
+    def test_multiple_placeholders(self) -> None:
+        result = _expand_args("First: {args}, Second: {args}", "data")
+        assert result == "First: data, Second: data"
+
+    def test_fallback_append(self) -> None:
+        result = _expand_args("Do something", "extra context")
+        assert result == "Do something\n\nAdditional context: extra context"
+
+    def test_empty_args_not_appended(self) -> None:
+        prompt = "Do something"
+        result = _expand_args(prompt, "")
+        assert result == "Do something\n\nAdditional context: "
 
 
 class TestSkillRegistry:
@@ -76,7 +150,6 @@ class TestSkillRegistry:
             reg = self._make_registry(tmpdir)
             skills = reg.list_skills()
             names = [s.name for s in skills]
-            # Should include both user skills and defaults
             assert "commit" in names
             assert "review" in names
 
@@ -94,6 +167,29 @@ class TestSkillRegistry:
             assert is_skill
             assert "fix the bug" in prompt
 
+    def test_resolve_input_args_interpolation(self) -> None:
+        """When prompt contains {args}, it should be replaced inline."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / ".anteroom" / "skills"
+            skills_dir.mkdir(parents=True)
+            (skills_dir / "greet.yaml").write_text(
+                "name: greet\ndescription: Greet\nprompt: |\n  Hello {args}, welcome!\n"
+            )
+            reg = SkillRegistry()
+            reg.load(tmpdir)
+            is_skill, prompt = reg.resolve_input("/greet world")
+            assert is_skill
+            assert "Hello world, welcome!" in prompt
+            assert "Additional context" not in prompt
+
+    def test_resolve_input_args_fallback_append(self) -> None:
+        """When prompt has no {args}, args are appended as Additional context."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            reg = self._make_registry(tmpdir)
+            is_skill, prompt = reg.resolve_input("/commit fix it")
+            assert is_skill
+            assert "Additional context: fix it" in prompt
+
     def test_resolve_input_not_skill(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             reg = self._make_registry(tmpdir)
@@ -107,17 +203,30 @@ class TestSkillRegistry:
             is_skill, prompt = reg.resolve_input("hello world")
             assert not is_skill
 
+    def test_resolve_input_slash_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            reg = self._make_registry(tmpdir)
+            is_skill, prompt = reg.resolve_input("/")
+            assert not is_skill
+            assert prompt == "/"
+
+    def test_resolve_input_slash_space(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            reg = self._make_registry(tmpdir)
+            is_skill, prompt = reg.resolve_input("/ ")
+            assert not is_skill
+
     def test_default_skills_loaded(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             reg = SkillRegistry()
             reg.load(tmpdir)
-            # Default skills should be loaded
             skills = reg.list_skills()
             names = [s.name for s in skills]
             assert "commit" in names
             assert "review" in names
             assert "explain" in names
             assert "a-help" in names
+            assert "new-skill" in names
 
     def test_load_warnings_for_invalid_skills(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -132,6 +241,17 @@ class TestSkillRegistry:
             assert "bad.yaml" in warning_text
             assert "noprompt.yaml" in warning_text
 
+    def test_load_warnings_include_yaml_line_numbers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / ".anteroom" / "skills"
+            skills_dir.mkdir(parents=True)
+            (skills_dir / "broken.yaml").write_text("name: broken\nprompt: value: bad: here\n")
+            reg = SkillRegistry()
+            reg.load(tmpdir)
+            yaml_warnings = [w for w in reg.load_warnings if "broken.yaml" in w]
+            assert len(yaml_warnings) >= 1
+            assert "line" in yaml_warnings[0].lower()
+
     def test_no_warnings_for_valid_skills(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             skills_dir = Path(tmpdir) / ".anteroom" / "skills"
@@ -139,17 +259,128 @@ class TestSkillRegistry:
             (skills_dir / "good.yaml").write_text("name: good\ndescription: Works\nprompt: Do something\n")
             reg = SkillRegistry()
             reg.load(tmpdir)
+            # Filter out collision warnings (user 'good' doesn't collide with any default)
             assert len(reg.load_warnings) == 0
+
+    def test_load_warnings_collision_info(self) -> None:
+        """When a user skill overrides a built-in, a warning is emitted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / ".anteroom" / "skills"
+            skills_dir.mkdir(parents=True)
+            (skills_dir / "commit.yaml").write_text("name: commit\ndescription: My commit\nprompt: Custom commit\n")
+            reg = SkillRegistry()
+            reg.load(tmpdir)
+            collision_warnings = [w for w in reg.load_warnings if "overrides" in w]
+            assert len(collision_warnings) == 1
+            assert "commit" in collision_warnings[0]
+
+    def test_empty_skill_name_defaults_to_stem(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / ".anteroom" / "skills"
+            skills_dir.mkdir(parents=True)
+            (skills_dir / "deploy.yaml").write_text('name: ""\ndescription: Deploy\nprompt: Deploy now\n')
+            reg = SkillRegistry()
+            reg.load(tmpdir)
+            assert reg.has_skill("deploy")
+
+    def test_skill_name_whitespace_trimmed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / ".anteroom" / "skills"
+            skills_dir.mkdir(parents=True)
+            (skills_dir / "test.yaml").write_text('name: "  test  "\ndescription: Test\nprompt: Run tests\n')
+            reg = SkillRegistry()
+            reg.load(tmpdir)
+            assert reg.has_skill("test")
+            assert not reg.has_skill("  test  ")
+
+    def test_skill_name_rejects_special_chars(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / ".anteroom" / "skills"
+            skills_dir.mkdir(parents=True)
+            (skills_dir / "bad.yaml").write_text('name: "test/bad"\ndescription: Bad\nprompt: Do bad things\n')
+            reg = SkillRegistry()
+            reg.load(tmpdir)
+            assert not reg.has_skill("test/bad")
+            assert any("invalid skill name" in w for w in reg.load_warnings)
+
+    def test_duplicate_skill_names_last_wins(self) -> None:
+        """Project skills override global skills with the same name."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / ".anteroom" / "skills"
+            skills_dir.mkdir(parents=True)
+            (skills_dir / "commit.yaml").write_text(
+                "name: commit\ndescription: Custom commit\nprompt: My custom commit\n"
+            )
+            reg = SkillRegistry()
+            reg.load(tmpdir)
+            skill = reg.get("commit")
+            assert skill is not None
+            assert skill.prompt == "My custom commit"
+
+    def test_max_skills_limit_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / ".anteroom" / "skills"
+            skills_dir.mkdir(parents=True)
+            for i in range(MAX_SKILLS + 10):
+                (skills_dir / f"skill{i:04d}.yaml").write_text(
+                    f"name: skill{i:04d}\ndescription: Skill {i}\nprompt: Do thing {i}\n"
+                )
+            reg = SkillRegistry()
+            reg.load(tmpdir)
+            assert any("limit" in w.lower() for w in reg.load_warnings)
+
+    def test_reload_picks_up_new_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / ".anteroom" / "skills"
+            skills_dir.mkdir(parents=True)
+            (skills_dir / "first.yaml").write_text("name: first\ndescription: First\nprompt: First skill\n")
+            reg = SkillRegistry()
+            reg.load(tmpdir)
+            assert reg.has_skill("first")
+            assert not reg.has_skill("second")
+
+            (skills_dir / "second.yaml").write_text("name: second\ndescription: Second\nprompt: Second skill\n")
+            reg.reload(tmpdir)
+            assert reg.has_skill("first")
+            assert reg.has_skill("second")
+
+    def test_reload_clears_old_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / ".anteroom" / "skills"
+            skills_dir.mkdir(parents=True)
+            (skills_dir / "temp.yaml").write_text("name: temp\ndescription: Temp\nprompt: Temp skill\n")
+            reg = SkillRegistry()
+            reg.load(tmpdir)
+            assert reg.has_skill("temp")
+
+            (skills_dir / "temp.yaml").unlink()
+            reg.reload(tmpdir)
+            assert not reg.has_skill("temp")
+
+    def test_yaml_mapping_values_error_hint(self) -> None:
+        """YAML files with unquoted colons produce helpful error hints."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / ".anteroom" / "skills"
+            skills_dir.mkdir(parents=True)
+            # Unquoted colons in description + bad indentation on prompt triggers
+            # "mapping values are not allowed here"
+            (skills_dir / "broken.yaml").write_text(
+                "description: Start work on a story: read it\n prompt: |\n  Do something\n"
+            )
+            reg = SkillRegistry()
+            reg.load(tmpdir)
+            yaml_warnings = [w for w in reg.load_warnings if "broken.yaml" in w]
+            assert len(yaml_warnings) >= 1
+            assert "mapping values" in yaml_warnings[0].lower() or "line" in yaml_warnings[0].lower()
+            assert "hint" in yaml_warnings[0].lower()
 
     def test_get_skill_descriptions_returns_all(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             reg = self._make_registry(tmpdir)
             descs = reg.get_skill_descriptions()
             names = [name for name, _ in descs]
-            # Includes user skills and default skills
             assert "commit" in names
             assert "review" in names
-            # Each entry is (name, description)
             for name, desc in descs:
                 assert isinstance(name, str)
                 assert isinstance(desc, str)
@@ -183,3 +414,12 @@ class TestSkillRegistry:
     def test_get_invoke_skill_definition_empty_registry(self) -> None:
         reg = SkillRegistry()
         assert reg.get_invoke_skill_definition() is None
+
+    def test_invalid_format_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / ".anteroom" / "skills"
+            skills_dir.mkdir(parents=True)
+            (skills_dir / "scalar.yaml").write_text("just a string\n")
+            reg = SkillRegistry()
+            reg.load(tmpdir)
+            assert any("invalid format" in w for w in reg.load_warnings)

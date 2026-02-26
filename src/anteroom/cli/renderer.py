@@ -1312,7 +1312,7 @@ def render_update_available(current: str, latest: str) -> None:
 def render_help() -> None:
     console.print()
     console.print("  /new  /last  /list [N]  /resume <N|id>  /search <query>  /delete <N|id>  /rewind")
-    console.print("  /compact  /model <name>  /tools  /skills  /mcp  /verbose  /detail")
+    console.print("  /compact  /model <name>  /tools  /skills  /reload-skills  /mcp  /verbose  /detail")
     m = MUTED
     console.print(f"  @<path> [{m}]include file[/]  Alt+Enter [{m}]newline[/]  Esc [{m}]cancel[/]  /quit \u00b7 Ctrl+D")
     console.print()

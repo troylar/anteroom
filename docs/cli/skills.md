@@ -4,7 +4,7 @@ Skills are reusable prompt templates invoked with `/name` in the REPL. They let 
 
 ## Built-in Skills
 
-Four skills ship by default:
+Six skills ship by default:
 
 | Skill | What it does |
 |---|---|
@@ -12,6 +12,8 @@ Four skills ship by default:
 | `/review` | Reviews `git diff` for bugs, security issues, performance, error handling, missing tests |
 | `/explain` | Reads referenced code and explains architecture, data flow, components, design patterns |
 | `/a-help` | Look up Anteroom documentation — config layers, CLI, tools, skills, architecture |
+| `/create-eval` | Create a promptfoo eval, shell test script, or VHS demo recording |
+| `/new-skill` | Interactive guide to create a new custom skill with best practices |
 
 Built-in skills are bundled in the package at `cli/default_skills/`. They can be overridden by user-defined skills with the same name.
 
@@ -25,13 +27,15 @@ you> /review just the auth changes
 you> /explain @src/services/agent_loop.py focus on the event system
 ```
 
-Anything after the skill name is appended to the skill's prompt template as extra context. For example, `/review just the auth changes` sends the review skill's full prompt plus `Additional context: just the auth changes`.
+Anything after the skill name is passed as arguments. By default, arguments are appended to the skill's prompt as `Additional context: <args>`. If the skill prompt contains `{args}`, the arguments replace the placeholder inline instead (see [Template Variables](#template-variables)).
 
-Use `/skills` to list all available skills with their source:
+Use `/skills` to list all available skills with their source. This also reloads skill files from disk, so newly added skills appear immediately:
 
 ```
 you> /skills
 ```
+
+Use `/reload-skills` to explicitly reload skill files without listing them.
 
 ## Custom Skills
 
@@ -87,9 +91,41 @@ prompt: |
 
 | Field | Required | Description |
 |---|---|---|
-| `name` | Yes | Skill name (used as the `/command`). Defaults to the filename stem if omitted. |
-| `description` | Yes | Short description shown in `/skills` list |
+| `name` | No | Skill name (used as the `/command`). Defaults to the filename stem if omitted or empty. Must match `[a-z0-9][a-z0-9_-]*`. |
+| `description` | No | Short description shown in `/skills` list. Defaults to empty string. |
 | `prompt` | Yes | Prompt template sent to the AI. Use YAML `|` for multi-line. |
+
+### Skill Name Rules
+
+Skill names must:
+- Start with a lowercase letter or digit
+- Contain only lowercase letters, digits, hyphens, and underscores
+- Match the pattern `[a-z0-9][a-z0-9_-]*`
+
+Invalid names are rejected with a warning. If `name` is omitted or empty, the filename stem is used (e.g., `deploy.yaml` becomes `/deploy`).
+
+### Template Variables
+
+Use `{args}` in your prompt to control where user arguments are inserted:
+
+```yaml title="~/.anteroom/skills/start-work.yaml"
+name: start-work
+description: Start work on a Jira story
+prompt: |
+  You are working on Jira story {args}.
+  Fetch the story details, create a branch, and begin implementation.
+```
+
+When invoked as `/start-work ABC-123`, the prompt becomes:
+
+```
+You are working on Jira story ABC-123.
+Fetch the story details, create a branch, and begin implementation.
+```
+
+If `{args}` is not present in the prompt, arguments are appended as `Additional context: <args>` at the end.
+
+**Important:** Because YAML interprets `{args}` as a flow mapping, you **must** use the block scalar `|` syntax for prompts containing curly braces. Without it, you'll get a "mapping values not allowed here" parse error.
 
 ### More Examples
 
@@ -131,9 +167,26 @@ This means:
 - A global skill named `commit` also overrides the built-in
 - A project skill overrides a global skill of the same name
 
+When a user skill overrides a built-in, a warning is shown in the `/skills` output.
+
 ### Load Warnings
 
-If a skill file has errors (invalid YAML, missing `prompt` field, invalid format), Anteroom skips it and records a warning. Use `/skills` to see if any skills failed to load.
+If a skill file has errors (invalid YAML, missing `prompt` field, invalid name), Anteroom skips it and records a warning. Warnings are shown:
+
+- At REPL startup (printed in yellow)
+- In `/skills` and `/reload-skills` output (listed after the skill table)
+
+Common YAML mistakes and their fixes:
+
+| Error | Cause | Fix |
+|---|---|---|
+| "mapping values not allowed here" | Unquoted colons in values, or `{args}` in prompt | Use block scalar `prompt: \|` for multi-line prompts |
+| "expected ',' or '}'" | `{args}` parsed as YAML flow mapping | Use block scalar `prompt: \|` |
+| Skill silently missing | Invalid name (uppercase, special chars) | Use lowercase alphanumeric with hyphens/underscores |
+
+## Hot Reload
+
+Skills are reloaded from disk every time you run `/skills` or `/reload-skills`. You do not need to restart the REPL to pick up new or modified skill files.
 
 ## How Skills Work Internally
 
@@ -141,7 +194,7 @@ When you type `/commit fix the auth bug`:
 
 1. The REPL checks if `commit` is a registered skill name
 2. If found, the skill's `prompt` is used as the message
-3. The extra text (`fix the auth bug`) is appended as `Additional context: fix the auth bug`
+3. If the prompt contains `{args}`, `fix the auth bug` replaces it inline; otherwise it's appended as `Additional context: fix the auth bug`
 4. The expanded prompt is sent to the AI as a normal message
 5. The AI processes it like any other message — it can use tools, write files, run commands
 
