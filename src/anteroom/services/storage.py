@@ -137,6 +137,13 @@ def update_project(
     return get_project(db, project_id)
 
 
+def get_project_by_name(db: sqlite3.Connection, name: str) -> dict[str, Any] | None:
+    row = db.execute_fetchone("SELECT * FROM projects WHERE LOWER(name) = LOWER(?)", (name,))
+    if not row:
+        return None
+    return dict(row)
+
+
 def delete_project(db: sqlite3.Connection, project_id: str) -> bool:
     proj = get_project(db, project_id)
     if not proj:
@@ -144,6 +151,26 @@ def delete_project(db: sqlite3.Connection, project_id: str) -> bool:
     db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
     db.commit()
     return True
+
+
+def update_conversation_project(
+    db: sqlite3.Connection, conversation_id: str, project_id: str | None
+) -> dict[str, Any] | None:
+    now = _now()
+    db.execute(
+        "UPDATE conversations SET project_id = ?, updated_at = ? WHERE id = ?",
+        (project_id, now, conversation_id),
+    )
+    db.commit()
+    return get_conversation(db, conversation_id)
+
+
+def count_project_conversations(db: sqlite3.Connection, project_id: str) -> int:
+    row = db.execute_fetchone(
+        "SELECT COUNT(*) AS cnt FROM conversations WHERE project_id = ?",
+        (project_id,),
+    )
+    return row["cnt"] if row else 0
 
 
 # --- Folders ---
