@@ -892,16 +892,8 @@ async def _stream_chat_events(ctx: StreamContext):
                 storage.get_daily_token_total(ctx.db),
             )
 
-        # Construct DLP scanner if configured
-        _dlp_scanner = None
-        _app_config = getattr(getattr(ctx.request, "app", None), "state", None)
-        _app_config = getattr(_app_config, "config", None) if _app_config else None
-        if _app_config is not None:
-            _dlp_cfg = getattr(getattr(_app_config, "safety", None), "dlp", None)
-            if _dlp_cfg is not None and _dlp_cfg.enabled:
-                from ..services.dlp import DlpScanner
-
-                _dlp_scanner = DlpScanner(_dlp_cfg)
+        # Retrieve app-scoped DLP scanner (constructed once at startup)
+        _dlp_scanner = getattr(getattr(ctx.request.app, "state", None), "dlp_scanner", None)
 
         agent_gen = run_agent_loop(
             ai_service=ctx.ai_service,

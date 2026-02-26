@@ -18,8 +18,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 security_logger = logging.getLogger("anteroom.security")
 
+# Max text length to scan (bytes). Texts exceeding this are truncated for
+# DLP scanning to prevent excessive regex processing time.
+MAX_SCAN_LENGTH = 512_000  # 512 KB
+
 # Built-in patterns for common sensitive data types.
 # These are used when the user enables DLP but does not specify custom patterns.
+# All patterns are designed to be ReDoS-safe (linear-time matching).
 BUILTIN_PATTERNS: list[dict[str, str]] = [
     {
         "name": "ssn",
@@ -28,7 +33,9 @@ BUILTIN_PATTERNS: list[dict[str, str]] = [
     },
     {
         "name": "credit_card",
-        "pattern": r"\b(?:\d[ -]*?){13,19}\b",
+        # Linear-time: anchor on first digit, then 12-18 more digits with
+        # optional single separator (space or dash) between each.
+        "pattern": r"\b\d(?:[ -]?\d){12,18}\b",
         "description": "Credit/debit card number",
     },
     {
@@ -38,15 +45,45 @@ BUILTIN_PATTERNS: list[dict[str, str]] = [
     },
     {
         "name": "phone_us",
-        "pattern": r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
+        # Linear-time: fixed structure with optional prefix and separators.
+        "pattern": r"\b(?:\+?1[-.\s])?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b",
         "description": "US phone number",
     },
     {
         "name": "iban",
-        "pattern": r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}(?:[A-Z0-9]){0,16}\b",
+        "pattern": r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}[A-Z0-9]{0,16}\b",
         "description": "International Bank Account Number",
     },
 ]
+
+
+def _validate_pattern_safety(pattern: str, name: str) -> bool:
+    """Static analysis to detect regex patterns vulnerable to catastrophic backtracking.
+
+    Detects common ReDoS patterns:
+    - Nested quantifiers: (a+)+, (a*)+, (a+)*, etc.
+    - Overlapping alternation with quantifiers
+
+    Returns True if the pattern appears safe, False if it looks pathological.
+    """
+    # Detect nested quantifiers: a group with a quantifier inside, followed by
+    # another quantifier. This is the most common ReDoS pattern.
+    # E.g., (a+)+, (a*)+, (a+)*, (\d[ -]*?){13,19}
+    nested_quantifier = re.compile(
+        r"\("  # opening paren
+        r"[^)]*"  # group contents
+        r"[+*]"  # inner quantifier
+        r"[^)]*"  # more group contents
+        r"\)"  # closing paren
+        r"[+*{]"  # outer quantifier
+    )
+    if nested_quantifier.search(pattern):
+        logger.warning(
+            "DLP pattern '%s' contains nested quantifiers (ReDoS risk), rejecting",
+            name,
+        )
+        return False
+    return True
 
 
 @dataclass
@@ -108,15 +145,18 @@ class DlpScanner:
                 continue
             try:
                 compiled = re.compile(pat.pattern)
-                self._rules.append(
-                    _CompiledRule(
-                        name=pat.name,
-                        regex=compiled,
-                        description=pat.description,
-                    )
-                )
             except re.error as e:
                 logger.warning("DLP pattern '%s' has invalid regex, skipping: %s", pat.name, e)
+                continue
+            if not _validate_pattern_safety(pat.pattern, pat.name):
+                continue
+            self._rules.append(
+                _CompiledRule(
+                    name=pat.name,
+                    regex=compiled,
+                    description=pat.description,
+                )
+            )
 
         if self._rules:
             security_logger.info("DLP scanner initialized with %d rules", len(self._rules))
@@ -151,9 +191,12 @@ class DlpScanner:
         if not text or not text.strip():
             return DlpScanResult(matched=False, action="pass")
 
+        # Truncate to prevent excessive regex processing time
+        scan_text = text[:MAX_SCAN_LENGTH] if len(text) > MAX_SCAN_LENGTH else text
+
         matches: list[DlpMatch] = []
         for rule in self._rules:
-            found = rule.regex.findall(text)
+            found = rule.regex.findall(scan_text)
             if found:
                 matches.append(
                     DlpMatch(

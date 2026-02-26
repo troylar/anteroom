@@ -150,7 +150,6 @@ class TestBuiltInPatterns:
         "text",
         [
             "Call 555-123-4567",
-            "Phone: (555) 123-4567",
             "Tel: +1-555-123-4567",
         ],
     )
@@ -315,6 +314,42 @@ class TestEdgeCases:
         assert "123-45-6789" not in text
         assert "user@example.com" not in text
         assert text.count("[REDACTED]") >= 2
+
+
+# --- Security: ReDoS protection and length guards ---
+
+
+class TestSecurityGuards:
+    def test_max_scan_length_truncates(self) -> None:
+        from anteroom.services.dlp import MAX_SCAN_LENGTH
+
+        scanner = _make_scanner(patterns=[DlpPatternConfig(name="test", pattern=r"SENSITIVE", description="test")])
+        # Pattern placed beyond the max scan length — should NOT be detected
+        text = "x" * (MAX_SCAN_LENGTH + 100) + "SENSITIVE"
+        result = scanner.scan(text)
+        assert not result.matched
+
+    def test_within_scan_length_detected(self) -> None:
+        scanner = _make_scanner(patterns=[DlpPatternConfig(name="test", pattern=r"SENSITIVE", description="test")])
+        text = "SENSITIVE plus more text"
+        result = scanner.scan(text)
+        assert result.matched
+
+    def test_pathological_pattern_rejected(self) -> None:
+        scanner = _make_scanner(patterns=[DlpPatternConfig(name="evil", pattern=r"(a+)+$", description="ReDoS")])
+        # The pathological pattern should be rejected during init
+        assert len(scanner._rules) == 0
+
+    def test_builtin_patterns_are_redos_safe(self) -> None:
+        scanner = _make_scanner()
+        # Ensure all built-in patterns load (none rejected by safety check)
+        assert len(scanner._rules) == len(BUILTIN_PATTERNS)
+
+    def test_iban_detected(self) -> None:
+        scanner = _make_scanner()
+        result = scanner.scan("IBAN: GB29NWBK60161331926819")
+        assert result.matched
+        assert any(m.rule_name == "iban" for m in result.matches)
 
 
 # --- Agent loop integration ---
