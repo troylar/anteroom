@@ -332,6 +332,17 @@ prompt: |
   Rule operators: `must_be`, `must_not_be`, `must_match` (regex), `must_not_be_empty`, `must_contain`.
   Validate with: `aroom config validate`
 
+  #### Pack Sources (pack_sources top-level list)
+
+  Git-based pack source repositories. Each entry:
+  ```yaml
+  pack_sources:
+    - url: https://github.com/org/packs.git
+      branch: main          # default: main
+      refresh_interval: 30  # minutes; 0 = manual only
+  ```
+  Anteroom auto-clones into `~/.anteroom/cache/sources/`. URL scheme allowlist: https, http, git, ssh, git@host:path.
+
   #### Identity (identity section)
 
   | Field        | Type | Default      | Env Override         |
