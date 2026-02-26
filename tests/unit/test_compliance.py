@@ -309,6 +309,26 @@ class TestMustContain:
         v = _evaluate_rule(cfg, rule)
         assert v is not None
 
+    def test_dict_contains_key(self) -> None:
+        @dataclass
+        class _CfgWithDict:
+            data: dict = field(default_factory=lambda: {"enabled": True, "mode": "strict"})
+
+        cfg = _CfgWithDict()
+        rule = ComplianceRule(field="data", must_contain="enabled")
+        assert _evaluate_rule(cfg, rule) is None
+
+    def test_dict_missing_key(self) -> None:
+        @dataclass
+        class _CfgWithDict:
+            data: dict = field(default_factory=lambda: {"mode": "strict"})
+
+        cfg = _CfgWithDict()
+        rule = ComplianceRule(field="data", must_contain="enabled")
+        v = _evaluate_rule(cfg, rule)
+        assert v is not None
+        assert v.operator == "must_contain"
+
     def test_unsupported_type(self) -> None:
         cfg = _FakeConfig(app=_FakeApp(port=8080))
         rule = ComplianceRule(field="app.port", must_contain=80)
@@ -329,6 +349,11 @@ class TestMissingField:
         v = _evaluate_rule(cfg, rule)
         assert v is not None
         assert v.operator == "field_missing"
+
+    def test_non_compliance_rule_returns_none(self) -> None:
+        cfg = _FakeConfig()
+        assert _evaluate_rule(cfg, {"field": "safety.enabled", "must_be": True}) is None
+        assert _evaluate_rule(cfg, "not a rule") is None
 
 
 # ---------------------------------------------------------------------------
@@ -636,6 +661,31 @@ class TestFullIntegration:
         assert not result.is_compliant
         assert len(result.violations) == 2
 
+    def test_must_not_be_empty_with_none_value(self, tmp_path: Any) -> None:
+        """must_not_be_empty fails on None-valued fields."""
+        import yaml
+
+        from anteroom.config import load_config
+        from anteroom.services.compliance import validate_compliance
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump(
+                {
+                    "ai": {"base_url": "http://localhost:11434/v1", "api_key": "test"},
+                    "compliance": {
+                        "rules": [
+                            {"field": "ai.seed", "must_not_be_empty": True, "message": "Seed required"},
+                        ],
+                    },
+                }
+            )
+        )
+        config, _ = load_config(config_file)
+        result = validate_compliance(config)
+        assert not result.is_compliant
+        assert result.violations[0].message == "Seed required"
+
     def test_nested_path_four_segments(self, tmp_path: Any) -> None:
         """Dot-paths up to 4 segments resolve correctly."""
         import yaml
@@ -660,3 +710,57 @@ class TestFullIntegration:
         config, _ = load_config(config_file)
         result = validate_compliance(config)
         assert result.is_compliant
+
+
+# ---------------------------------------------------------------------------
+# Security hardening tests
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityHardening:
+    def test_unsafe_path_segments_rejected(self) -> None:
+        """Paths with dunder or non-identifier segments return _MISSING."""
+        from anteroom.services.compliance import _MISSING
+
+        cfg = _FakeConfig()
+        assert _resolve_config_path(cfg, "__class__") is _MISSING
+        assert _resolve_config_path(cfg, "safety.__dict__") is _MISSING
+        assert _resolve_config_path(cfg, "safety.0bad") is _MISSING
+        assert _resolve_config_path(cfg, "safety.has-hyphen") is _MISSING
+
+    def test_sensitive_field_redacted_in_report(self) -> None:
+        """Violation reports redact actual values for sensitive fields."""
+        r = ComplianceResult(
+            violations=[
+                ComplianceViolation(
+                    field_path="ai.api_key",
+                    message="API key must match pattern",
+                    operator="must_match",
+                    actual="sk-secret-12345",
+                ),
+            ]
+        )
+        report = r.format_report()
+        assert "<redacted>" in report
+        assert "sk-secret-12345" not in report
+
+    def test_non_sensitive_field_not_redacted(self) -> None:
+        """Non-sensitive fields still show actual values."""
+        r = ComplianceResult(
+            violations=[
+                ComplianceViolation(
+                    field_path="safety.approval_mode",
+                    message="Bad mode",
+                    operator="must_be",
+                    actual="auto",
+                ),
+            ]
+        )
+        report = r.format_report()
+        assert "'auto'" in report
+
+    def test_regex_subject_length_capped(self) -> None:
+        """Long config values are truncated before regex matching."""
+        cfg = _FakeConfig(ai=_FakeAI(base_url="x" * 20_000))
+        rule = ComplianceRule(field="ai.base_url", must_match=r"^x+$")
+        assert _evaluate_rule(cfg, rule) is None

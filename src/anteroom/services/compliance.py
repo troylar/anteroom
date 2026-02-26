@@ -15,6 +15,12 @@ logger = logging.getLogger(__name__)
 
 _MISSING = object()
 
+_SAFE_IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*$")
+
+_SENSITIVE_SEGMENTS = frozenset({"api_key", "password", "secret", "token", "credential", "private_key"})
+
+_MAX_REGEX_SUBJECT_LEN = 10_000
+
 
 @dataclass
 class ComplianceViolation:
@@ -44,7 +50,11 @@ class ComplianceResult:
         for v in self.violations:
             msg = v.message or f"{v.field_path}: {v.operator} check failed"
             if v.actual is not _MISSING:
-                lines.append(f"  - {msg} (actual: {v.actual!r})")
+                tail = v.field_path.rsplit(".", 1)[-1] if v.field_path else ""
+                if tail in _SENSITIVE_SEGMENTS:
+                    lines.append(f"  - {msg} (actual: <redacted>)")
+                else:
+                    lines.append(f"  - {msg} (actual: {v.actual!r})")
             else:
                 lines.append(f"  - {msg}")
         return "\n".join(lines)
@@ -57,6 +67,8 @@ def _resolve_config_path(config: object, dot_path: str) -> Any:
     """
     obj: Any = config
     for part in dot_path.split("."):
+        if not _SAFE_IDENTIFIER.match(part):
+            return _MISSING
         try:
             obj = getattr(obj, part)
         except AttributeError:
@@ -149,7 +161,8 @@ def _evaluate_rule(config: object, rule: Any) -> ComplianceViolation | None:
                 operator="must_match",
                 actual=actual,
             )
-        if not pattern.search(str(actual)):
+        subject = str(actual)[:_MAX_REGEX_SUBJECT_LEN]
+        if not pattern.search(subject):
             return ComplianceViolation(
                 field_path=rule.field,
                 message=rule.message or f"'{rule.field}' must match pattern '{rule.must_match}'",
