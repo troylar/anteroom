@@ -30,6 +30,14 @@ app:
   data_dir: "~/.anteroom"   # Where DB + attachments live
   tls: false              # Set true for HTTPS with self-signed cert
 
+storage:
+  retention_days: 0                    # Days to retain conversations; 0 = disabled (default: 0)
+  retention_check_interval: 3600       # Seconds between retention policy checks (default: 3600 = 1 hour, clamped 300–86400)
+  purge_attachments: true              # Delete attachment files when conversations are purged (default: true)
+  purge_embeddings: true               # Delete vector embeddings when conversations are purged (default: true)
+  encrypt_at_rest: false               # Enable database encryption via SQLCipher (default: false, requires sqlcipher3)
+  encryption_kdf: "hkdf-sha256"        # Key derivation function for encryption (default: hkdf-sha256)
+
 session:
   store: "memory"                      # "memory" or "sqlite" (default: memory)
   max_concurrent_sessions: 0           # 0 = unlimited (default: 0)
@@ -175,6 +183,51 @@ required:
 | `port` | integer | `8080` | Port for the web server; env: `AI_CHAT_PORT` |
 | `data_dir` | string | `~/.anteroom` | Directory for database, attachments, config |
 | `tls` | boolean | `false` | Enable HTTPS with self-signed certificate |
+
+### storage
+
+Controls data retention policies and encryption at rest for the SQLite database.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `retention_days` | integer | `0` | Number of days to retain conversations before automatic purge; `0` = disabled (retention disabled); env: `AI_CHAT_RETENTION_DAYS` |
+| `retention_check_interval` | integer | `3600` | Seconds between retention policy checks (clamped 300–86400); env: `AI_CHAT_RETENTION_CHECK_INTERVAL` |
+| `purge_attachments` | boolean | `true` | Delete attachment files from disk when conversations are purged (default: true); env: `AI_CHAT_PURGE_ATTACHMENTS` |
+| `purge_embeddings` | boolean | `true` | Delete vector embeddings from the database when conversations are purged (default: true); env: `AI_CHAT_PURGE_EMBEDDINGS` |
+| `encrypt_at_rest` | boolean | `false` | Enable database encryption via SQLCipher. Requires sqlcipher3: `pip install anteroom[sqlcipher]` (default: false); env: `AI_CHAT_ENCRYPT_AT_REST` |
+| `encryption_kdf` | string | `hkdf-sha256` | Key derivation function for encryption (default: `hkdf-sha256`); env: `AI_CHAT_ENCRYPTION_KDF` |
+
+#### Data Retention
+
+When `retention_days` is set to a positive value, the retention worker automatically purges conversations (and all associated messages, tool_calls, and embeddings) older than the configured period. The retention check runs at the interval specified by `retention_check_interval`.
+
+To manually purge conversations, use:
+
+```bash
+aroom db purge --older-than 30d      # purge conversations older than 30 days
+aroom db purge --before 2025-01-01   # purge conversations before a specific date
+aroom db purge --dry-run             # show what would be deleted
+```
+
+#### Encryption at Rest
+
+When `encrypt_at_rest` is enabled:
+
+- The database is encrypted using SQLCipher with a 256-bit key
+- The key is derived from your Ed25519 identity key via HKDF-SHA256
+- All database queries go through the encrypted connection transparently
+- Attachments are NOT encrypted (only the database is)
+- Requires `sqlcipher3` package: `pip install anteroom[sqlcipher]`
+
+To initialize encryption on an existing database:
+
+```bash
+aroom db encrypt            # interactive setup
+aroom db encrypt --key-from identity  # use identity key as encryption key
+```
+
+!!! note "One-way operation"
+    Encryption is not reversible. Once enabled on a database, it cannot be decrypted without the original identity key. Back up your config before enabling.
 
 ### session
 
