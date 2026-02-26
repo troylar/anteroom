@@ -87,6 +87,7 @@ _KNOWN_TOP_LEVEL = {
     "session",
     "audit",
     "compliance",
+    "pack_sources",
 }
 
 # Known keys per section

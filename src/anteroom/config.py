@@ -734,6 +734,26 @@ class ComplianceRule:
 
 
 @dataclass
+class PackSourceConfig:
+    """A single git-based pack source repository."""
+
+    url: str
+    branch: str = "main"
+    refresh_interval: int = 30  # minutes; 0 = manual only
+
+    _MIN_REFRESH: int = field(default=5, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.refresh_interval != 0 and self.refresh_interval < self._MIN_REFRESH:
+            logger.warning(
+                "refresh_interval=%d is below minimum (%d), clamping",
+                self.refresh_interval,
+                self._MIN_REFRESH,
+            )
+            self.refresh_interval = self._MIN_REFRESH
+
+
+@dataclass
 class ComplianceConfig:
     """Declarative rules engine for configuration governance."""
 
@@ -759,6 +779,7 @@ class AppConfig:
     session: SessionConfig = field(default_factory=SessionConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
     compliance: ComplianceConfig = field(default_factory=ComplianceConfig)
+    pack_sources: list[PackSourceConfig] = field(default_factory=list)
 
 
 def _resolve_data_dir() -> Path:
@@ -1865,6 +1886,28 @@ def load_config(
         )
     compliance_config = ComplianceConfig(rules=compliance_rules)
 
+    pack_sources_raw = raw.get("pack_sources", [])
+    if not isinstance(pack_sources_raw, list):
+        pack_sources_raw = []
+    pack_sources_list: list[PackSourceConfig] = []
+    for src in pack_sources_raw:
+        if not isinstance(src, dict):
+            continue
+        url = str(src.get("url", "")).strip()
+        if not url:
+            continue
+        try:
+            refresh = int(src.get("refresh_interval", 30))
+        except (ValueError, TypeError):
+            refresh = 30
+        pack_sources_list.append(
+            PackSourceConfig(
+                url=url,
+                branch=str(src.get("branch", "main")),
+                refresh_interval=refresh,
+            )
+        )
+
     return (
         AppConfig(
             ai=ai,
@@ -1884,6 +1927,7 @@ def load_config(
             session=session_config,
             audit=audit_config,
             compliance=compliance_config,
+            pack_sources=pack_sources_list,
         ),
         enforced_fields,
     )
