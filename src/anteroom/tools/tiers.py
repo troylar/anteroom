@@ -81,6 +81,21 @@ def parse_approval_mode(raw: str) -> ApprovalMode:
     return APPROVAL_MODE_NAMES.get(raw.lower().strip(), ApprovalMode.ASK_FOR_WRITES)
 
 
+def filter_read_only_tools(
+    tools_openai: list[dict],
+    tier_overrides: dict[str, str] | None = None,
+) -> list[dict]:
+    """Return only READ-tier tools from an OpenAI tools list.
+
+    Used when ``safety.read_only`` is enabled to strip all
+    WRITE / EXECUTE / DESTRUCTIVE tools (including MCP tools which
+    default to EXECUTE) from the tool list sent to the model.
+    """
+    return [
+        t for t in tools_openai if get_tool_tier(t.get("function", {}).get("name", ""), tier_overrides) == ToolTier.READ
+    ]
+
+
 def should_require_approval(
     tool_name: str,
     tool_tier: ToolTier,

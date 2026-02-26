@@ -2097,6 +2097,15 @@ body {
    OFFLINE BANNER
    ============================================================ */
 
+.read-only-banner {
+    padding: 8px 16px;
+    background: rgba(234, 179, 8, 0.15);
+    border-bottom: 1px solid var(--warning);
+    color: var(--warning);
+    font-size: 13px;
+    text-align: center;
+}
+
 .offline-banner {
     padding: 8px 16px;
     background: rgba(239, 68, 68, 0.15);

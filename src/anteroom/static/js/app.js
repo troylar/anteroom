@@ -8,6 +8,7 @@ const App = (() => {
         currentDatabase: null,
         isStreaming: false,
         isPlanMode: false,
+        isReadOnly: false,
         availableModels: [],
         databases: [],
         clientId: crypto.randomUUID(),
@@ -228,6 +229,11 @@ const App = (() => {
             }
             if (config.identity && config.identity.user_id) {
                 App.state.localUserId = config.identity.user_id;
+            }
+            if (config.read_only) {
+                App.state.isReadOnly = true;
+                const banner = document.getElementById('read-only-banner');
+                if (banner) banner.style.display = '';
             }
         } catch {
             // Config endpoint may not exist yet

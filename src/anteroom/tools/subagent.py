@@ -221,6 +221,14 @@ async def _run_subagent(
     from . import cap_tools
 
     child_tools = cap_tools(child_tools, set(_tool_registry.list_tools()), limit=child_config.max_tools)
+    _safety_cfg = getattr(_tool_registry, "_safety_config", None)
+    if _safety_cfg and getattr(_safety_cfg, "read_only", False) is True:
+        from .tiers import filter_read_only_tools
+
+        tier_overrides = getattr(_safety_cfg, "tool_tiers", None)
+        if not isinstance(tier_overrides, dict):
+            tier_overrides = None
+        child_tools = filter_read_only_tools(child_tools, tier_overrides)
 
     # Child tool executor wraps the registry, injecting depth and limiter for nested sub-agents
     _child_counter = 0
