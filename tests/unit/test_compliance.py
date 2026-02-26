@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from anteroom.config import ComplianceConfig, ComplianceRule
+from anteroom.config import _UNSET, ComplianceConfig, ComplianceRule
 from anteroom.services.compliance import (
     ComplianceResult,
     ComplianceViolation,
@@ -230,8 +230,10 @@ class TestIsEmpty:
         assert _is_empty(0.0) is False
 
     def test_tuple_empty(self) -> None:
-        # tuples are not lists/dicts, so they fall through to False
-        assert _is_empty(()) is False
+        assert _is_empty(()) is True
+
+    def test_tuple_nonempty_is_not_empty(self) -> None:
+        assert _is_empty((1, 2)) is False
 
     def test_object_is_not_empty(self) -> None:
         assert _is_empty(object()) is False
@@ -386,6 +388,33 @@ class TestMustBe:
         assert v.expected is True
         assert v.actual is False
 
+    def test_must_be_zero_enforced(self) -> None:
+        """must_be: 0 must not silently skip — it should enforce the value."""
+        cfg = _FakeConfig(app=_FakeApp(port=8080))
+        rule = ComplianceRule(field="app.port", must_be=0)
+        v = _evaluate_rule(cfg, rule)
+        assert v is not None
+        assert v.actual == 8080
+
+    def test_must_be_zero_passes(self) -> None:
+        cfg = _FakeConfig(app=_FakeApp(port=0))
+        rule = ComplianceRule(field="app.port", must_be=0)
+        assert _evaluate_rule(cfg, rule) is None
+
+    def test_must_be_none_enforced(self) -> None:
+        """must_be: null in YAML (None) should enforce the value, not skip."""
+        cfg = _FakeConfig(ai=_FakeAI(api_key="secret"))
+        rule = ComplianceRule(field="ai.api_key", must_be=None)
+        v = _evaluate_rule(cfg, rule)
+        assert v is not None
+
+    def test_must_be_empty_string_enforced(self) -> None:
+        """must_be: '' should enforce empty string."""
+        cfg = _FakeConfig(ai=_FakeAI(base_url="http://localhost"))
+        rule = ComplianceRule(field="ai.base_url", must_be="")
+        v = _evaluate_rule(cfg, rule)
+        assert v is not None
+
 
 # ---------------------------------------------------------------------------
 # _evaluate_rule — must_not_be
@@ -453,6 +482,33 @@ class TestMustNotBe:
         assert v.field_path == "safety.approval_mode"
         assert v.expected == "auto"
         assert v.actual == "auto"
+
+    def test_must_not_be_none_enforced(self) -> None:
+        """must_not_be: null should enforce — reject actual=None."""
+
+        @dataclass
+        class _CfgNullable:
+            value: Any = None
+
+        cfg = _CfgNullable()
+        rule = ComplianceRule(field="value", must_not_be=None)
+        v = _evaluate_rule(cfg, rule)
+        assert v is not None
+        assert v.operator == "must_not_be"
+
+    def test_must_not_be_false_enforced(self) -> None:
+        """must_not_be: false should fire when actual is False."""
+        cfg = _FakeConfig(safety=_FakeSafety(read_only=False))
+        rule = ComplianceRule(field="safety.read_only", must_not_be=False)
+        v = _evaluate_rule(cfg, rule)
+        assert v is not None
+
+    def test_must_not_be_zero_enforced(self) -> None:
+        """must_not_be: 0 should fire when actual is 0."""
+        cfg = _FakeConfig(app=_FakeApp(port=0))
+        rule = ComplianceRule(field="app.port", must_not_be=0)
+        v = _evaluate_rule(cfg, rule)
+        assert v is not None
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +596,23 @@ class TestMustMatch:
         rule = ComplianceRule(field="safety.approval_mode", must_match="")
         assert _evaluate_rule(cfg, rule) is None
 
+    def test_precompiled_pattern_used(self) -> None:
+        """Pre-compiled pattern from config parsing avoids re-compile on each eval."""
+        import re as re_mod
+
+        compiled = re_mod.compile(r"^ask")
+        cfg = _FakeConfig()
+        rule = ComplianceRule(field="safety.approval_mode", must_match=r"^ask", _compiled_pattern=compiled)
+        assert _evaluate_rule(cfg, rule) is None
+
+    def test_invalid_precompiled_falls_back(self) -> None:
+        """When _compiled_pattern is None (invalid regex), falls back to runtime compile."""
+        cfg = _FakeConfig()
+        rule = ComplianceRule(field="safety.approval_mode", must_match=r"(unclosed", _compiled_pattern=None)
+        v = _evaluate_rule(cfg, rule)
+        assert v is not None
+        assert v.operator == "must_match"
+
 
 # ---------------------------------------------------------------------------
 # _evaluate_rule — must_not_be_empty
@@ -617,6 +690,19 @@ class TestMustNotBeEmpty:
         cfg = _FakeConfig(safety=_FakeSafety(read_only=False))
         rule = ComplianceRule(field="safety.read_only", must_not_be_empty=True)
         assert _evaluate_rule(cfg, rule) is None
+
+    def test_empty_tuple_is_empty(self) -> None:
+        """Empty tuples should now be caught by must_not_be_empty."""
+
+        @dataclass
+        class _CfgTuple:
+            items: tuple = ()
+
+        cfg = _CfgTuple()
+        rule = ComplianceRule(field="items", must_not_be_empty=True)
+        v = _evaluate_rule(cfg, rule)
+        assert v is not None
+        assert v.operator == "must_not_be_empty"
 
 
 # ---------------------------------------------------------------------------
@@ -750,6 +836,20 @@ class TestMustContain:
         v = _evaluate_rule(cfg, rule)
         assert v is not None
         assert "does not support" in v.message
+
+    def test_must_contain_none_enforced(self) -> None:
+        """must_contain: null should check containment of None, not skip."""
+        cfg = _FakeConfig(safety=_FakeSafety(denied_tools=["bash"]))
+        rule = ComplianceRule(field="safety.denied_tools", must_contain=None)
+        v = _evaluate_rule(cfg, rule)
+        assert v is not None
+
+    def test_must_contain_false_enforced(self) -> None:
+        """must_contain: false should check containment of False."""
+        cfg = _FakeConfig(safety=_FakeSafety(denied_tools=["bash"]))
+        rule = ComplianceRule(field="safety.denied_tools", must_contain=False)
+        v = _evaluate_rule(cfg, rule)
+        assert v is not None
 
 
 # ---------------------------------------------------------------------------
@@ -905,6 +1005,19 @@ class TestValidateCompliance:
         # with a .compliance attribute. For integration tests we use _FakeConfig.
         result = validate_compliance(cfg)
         # _FakeConfig is not an AppConfig, so it returns early as compliant
+        assert result.is_compliant
+
+    def test_non_appconfig_logs_debug(self) -> None:
+        """Non-AppConfig types should log a DEBUG message and return compliant."""
+        result = validate_compliance("not a config")
+        assert result.is_compliant
+
+    def test_non_appconfig_int(self) -> None:
+        result = validate_compliance(42)
+        assert result.is_compliant
+
+    def test_non_appconfig_none(self) -> None:
+        result = validate_compliance(None)
         assert result.is_compliant
 
     def test_all_rules_pass(self) -> None:
@@ -1109,11 +1222,11 @@ class TestComplianceRuleDefaults:
     def test_defaults(self) -> None:
         rule = ComplianceRule(field="safety.enabled")
         assert rule.message == ""
-        assert rule.must_be is None
-        assert rule.must_not_be is None
+        assert rule.must_be is _UNSET
+        assert rule.must_not_be is _UNSET
         assert rule.must_match == ""
         assert rule.must_not_be_empty is False
-        assert rule.must_contain is None
+        assert rule.must_contain is _UNSET
 
 
 # ---------------------------------------------------------------------------

@@ -88,7 +88,7 @@ def _is_empty(value: Any) -> bool:
         return True
     if isinstance(value, str) and not value.strip():
         return True
-    if isinstance(value, (list, dict)) and len(value) == 0:
+    if isinstance(value, (list, dict, tuple)) and len(value) == 0:
         return True
     return False
 
@@ -111,7 +111,10 @@ def _values_equal(actual: Any, expected: Any) -> bool:
 
 def _evaluate_rule(config: object, rule: Any) -> ComplianceViolation | None:
     """Evaluate a single compliance rule. Returns a violation or None."""
-    from ..config import ComplianceRule
+    # Deferred import to avoid circular dependency: compliance.py is imported by
+    # __main__.py which also imports config.py; config.py imports dataclass types
+    # at module level. Importing ComplianceRule here breaks the cycle.
+    from ..config import _UNSET, ComplianceRule
 
     if not isinstance(rule, ComplianceRule):
         return None
@@ -133,7 +136,7 @@ def _evaluate_rule(config: object, rule: Any) -> ComplianceViolation | None:
         )
 
     # must_be
-    if rule.must_be is not None:
+    if rule.must_be is not _UNSET:
         if not _values_equal(actual, rule.must_be):
             return ComplianceViolation(
                 field_path=rule.field,
@@ -144,7 +147,7 @@ def _evaluate_rule(config: object, rule: Any) -> ComplianceViolation | None:
             )
 
     # must_not_be
-    if rule.must_not_be is not None:
+    if rule.must_not_be is not _UNSET:
         if _values_equal(actual, rule.must_not_be):
             return ComplianceViolation(
                 field_path=rule.field,
@@ -154,17 +157,20 @@ def _evaluate_rule(config: object, rule: Any) -> ComplianceViolation | None:
                 actual=actual,
             )
 
-    # must_match (regex)
+    # must_match (regex) — uses pre-compiled pattern from config parsing when available
     if rule.must_match:
-        try:
-            pattern = re.compile(rule.must_match)
-        except re.error as e:
-            return ComplianceViolation(
-                field_path=rule.field,
-                message=rule.message or f"Invalid regex pattern for '{rule.field}': {e}",
-                operator="must_match",
-                actual=actual,
-            )
+        pattern = rule._compiled_pattern
+        if pattern is None:
+            try:
+                pattern = re.compile(rule.must_match)
+            except re.error as e:
+                logger.warning("Invalid regex pattern in compliance rule for '%s': %s", rule.field, e)
+                return ComplianceViolation(
+                    field_path=rule.field,
+                    message=rule.message or f"Invalid regex pattern for '{rule.field}': {e}",
+                    operator="must_match",
+                    actual=actual,
+                )
         subject = str(actual)[:_MAX_REGEX_SUBJECT_LEN]
         if not pattern.search(subject):
             return ComplianceViolation(
@@ -186,7 +192,7 @@ def _evaluate_rule(config: object, rule: Any) -> ComplianceViolation | None:
             )
 
     # must_contain
-    if rule.must_contain is not None:
+    if rule.must_contain is not _UNSET:
         if isinstance(actual, (list, tuple)):
             if rule.must_contain not in actual:
                 return ComplianceViolation(
@@ -240,6 +246,7 @@ def validate_compliance(config: object) -> ComplianceResult:
     result = ComplianceResult()
 
     if not isinstance(config, AppConfig):
+        logger.debug("validate_compliance called with non-AppConfig type: %s", type(config).__name__)
         return result
 
     compliance: ComplianceConfig = config.compliance

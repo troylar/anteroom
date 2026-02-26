@@ -66,25 +66,20 @@ def _load_config_or_exit(
 
 def _run_config_validate(team_config_path: Path | None = None) -> None:
     """Run compliance validation and report results."""
-    config_path = _get_config_path()
-    if not config_path.exists():
-        print(f"No configuration file found at {config_path}", file=sys.stderr)
-        sys.exit(1)
-    try:
-        config, _enforced = load_config(
-            team_config_path=team_config_path,
-            interactive=False,
-        )
-    except ValueError as e:
-        print(f"Configuration error: {e}", file=sys.stderr)
-        sys.exit(1)
+    _config_path, config, _enforced = _load_config_or_exit(
+        team_config_path,
+        interactive=False,
+    )
 
     from .services.compliance import validate_compliance
 
     result = validate_compliance(config)
+    rule_count = len(config.compliance.rules)
     if result.is_compliant:
-        rule_count = len(config.compliance.rules)
-        print(f"Compliance: OK ({rule_count} rule(s) passed)")
+        if rule_count == 0:
+            print("Compliance: no rules defined. Add rules to compliance.rules in config.")
+        else:
+            print(f"Compliance: OK ({rule_count} rule(s) passed)")
         sys.exit(0)
     else:
         print(result.format_report(), file=sys.stderr)

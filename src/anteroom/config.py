@@ -14,6 +14,8 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+_UNSET = object()  # sentinel distinguishing "not set" from None/False/0
+
 _BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "read_file": "Read file contents with line numbers. Use this instead of bash cat/head/tail.",
     "write_file": "Create or overwrite a file. Only use for new files or full rewrites; prefer edit_file for changes.",
@@ -721,11 +723,12 @@ class ComplianceRule:
 
     field: str  # dot-path, e.g. "safety.approval_mode"
     message: str = ""  # human-readable violation message
-    must_be: Any = None
-    must_not_be: Any = None
+    must_be: Any = _UNSET
+    must_not_be: Any = _UNSET
     must_match: str = ""  # regex pattern
     must_not_be_empty: bool = False
-    must_contain: Any = None
+    must_contain: Any = _UNSET
+    _compiled_pattern: Any = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -1826,15 +1829,23 @@ def load_config(
         rule_field = str(rule_raw.get("field", ""))
         if not rule_field:
             continue
+        must_match_str = str(rule_raw.get("must_match", ""))
+        compiled = None
+        if must_match_str:
+            try:
+                compiled = re.compile(must_match_str)
+            except re.error:
+                compiled = None  # invalid pattern handled at evaluation time
         compliance_rules.append(
             ComplianceRule(
                 field=rule_field,
                 message=str(rule_raw.get("message", "")),
-                must_be=rule_raw.get("must_be"),
-                must_not_be=rule_raw.get("must_not_be"),
-                must_match=str(rule_raw.get("must_match", "")),
+                must_be=rule_raw.get("must_be", _UNSET),
+                must_not_be=rule_raw.get("must_not_be", _UNSET),
+                must_match=must_match_str,
                 must_not_be_empty=bool(rule_raw.get("must_not_be_empty", False)),
-                must_contain=rule_raw.get("must_contain"),
+                must_contain=rule_raw.get("must_contain", _UNSET),
+                _compiled_pattern=compiled,
             )
         )
     compliance_config = ComplianceConfig(rules=compliance_rules)
