@@ -12,7 +12,6 @@ object per line, no framing.
 from __future__ import annotations
 
 import base64
-import fcntl
 import hashlib
 import hmac as _hmac
 import json
@@ -20,6 +19,11 @@ import logging
 import os
 import stat
 import time
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -107,8 +111,14 @@ def _redact_entry(entry_dict: dict[str, Any]) -> dict[str, Any]:
 class AuditWriter:
     """Append-only JSONL audit log writer with optional HMAC chain.
 
-    Thread-safe via fcntl file locking. Entries are flushed and fsynced
-    on every write for crash safety.
+    File locking via fcntl (Unix) with graceful degradation on platforms
+    without fcntl (Windows). Entries are flushed and fsynced on every
+    write for crash safety.
+
+    Note: The HMAC chain state is maintained in-process. Multiple
+    concurrent processes writing to the same log file will produce
+    independent chains that cannot be verified together. Use a single
+    writer process per log file for chain integrity.
     """
 
     def __init__(
@@ -209,13 +219,15 @@ class AuditWriter:
         log_path = self._log_path()
         try:
             with open(log_path, "ab") as f:
-                fcntl.flock(f, fcntl.LOCK_EX)
+                if fcntl is not None:
+                    fcntl.flock(f, fcntl.LOCK_EX)
                 try:
                     f.write(entry_json + b"\n")
                     f.flush()
                     os.fsync(f.fileno())
                 finally:
-                    fcntl.flock(f, fcntl.LOCK_UN)
+                    if fcntl is not None:
+                        fcntl.flock(f, fcntl.LOCK_UN)
             try:
                 log_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
             except OSError:

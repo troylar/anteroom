@@ -249,6 +249,18 @@ class TestAuditWriterDisabled:
 # ---------------------------------------------------------------------------
 
 
+class TestAuditWriterNoFcntl:
+    def test_emit_works_without_fcntl(self, audit_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import anteroom.services.audit as audit_mod
+
+        monkeypatch.setattr(audit_mod, "fcntl", None)
+        w = AuditWriter(audit_dir, enabled=True, tamper_protection="none")
+        w.emit(AuditEntry.create("test.nofcntl", "info"))
+        log_file = list(audit_dir.glob("audit-*.jsonl"))[0]
+        parsed = json.loads(log_file.read_text().strip())
+        assert parsed["event_type"] == "test.nofcntl"
+
+
 class TestAuditWriterNoHmac:
     def test_emit_without_hmac(self, writer_no_hmac: AuditWriter, audit_dir: Path) -> None:
         writer_no_hmac.emit(AuditEntry.create("test.event", "info"))

@@ -481,9 +481,6 @@ class AuditConfig:
         default_factory=lambda: {
             "auth": True,
             "tool_calls": True,
-            "tool_approvals": True,
-            "data_access": True,
-            "config_changes": True,
         }
     )
 
@@ -1244,7 +1241,7 @@ def load_config(
     if not isinstance(audit_events_raw, dict):
         audit_events_raw = {}
     audit_events: dict[str, bool] = {}
-    for evt_key in ("auth", "tool_calls", "tool_approvals", "data_access", "config_changes"):
+    for evt_key in ("auth", "tool_calls"):
         audit_events[evt_key] = str(audit_events_raw.get(evt_key, "true")).lower() not in ("false", "0", "no")
     audit_config = AuditConfig(
         enabled=audit_enabled,

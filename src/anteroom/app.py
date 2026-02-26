@@ -328,6 +328,7 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
         auth = request.headers.get("authorization", "")
         if auth.startswith("Bearer ") and self._check_token(auth[7:]):
             self._last_activity = time.time()
+            _emit_auth_audit(request, "auth.success", "info", client_ip, path)
             return await call_next(request)
 
         # Check HttpOnly session cookie
@@ -350,6 +351,7 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
                         _emit_auth_audit(request, "auth.origin_mismatch", "warning", client_ip, path)
                         return JSONResponse(status_code=403, content={"detail": "Origin not allowed"})
             self._last_activity = time.time()
+            _emit_auth_audit(request, "auth.success", "info", client_ip, path)
             return await call_next(request)
 
         security_logger.warning("Authentication failed from %s: %s %s", client_ip, request.method, path)
