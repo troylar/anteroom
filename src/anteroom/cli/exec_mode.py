@@ -338,6 +338,7 @@ async def run_exec_mode(
     conv = storage.create_conversation(
         db,
         title=f"exec: {prompt[:80]}" if persist_messages else f"exec-audit: {prompt[:40]}",
+        working_dir=working_dir,
         **id_kw,
     )
     if persist_messages:

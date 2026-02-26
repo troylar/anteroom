@@ -90,6 +90,7 @@ class TestInitDb:
             "type",
             "model",
             "project_id",
+            "working_dir",
             "folder_id",
             "user_id",
             "user_display_name",
@@ -272,6 +273,28 @@ class TestMigrations:
         _run_migrations(conn)
         row = conn.execute("SELECT type FROM conversations WHERE id = 'test-1'").fetchone()
         assert row[0] == "chat"
+
+    def test_migration_adds_working_dir_column(self) -> None:
+        from anteroom.db import _run_migrations
+
+        conn = self._init_legacy_db()
+        _run_migrations(conn)
+        info = conn.execute("PRAGMA table_info(conversations)").fetchall()
+        col_names = {r[1] for r in info}
+        assert "working_dir" in col_names
+
+    def test_migration_working_dir_defaults_to_null(self) -> None:
+        from anteroom.db import _run_migrations
+
+        conn = self._init_legacy_db()
+        conn.execute(
+            "INSERT INTO conversations (id, title, created_at, updated_at)"
+            " VALUES ('wd-1', 'Test', '2024-01-01', '2024-01-01')"
+        )
+        conn.commit()
+        _run_migrations(conn)
+        row = conn.execute("SELECT working_dir FROM conversations WHERE id = 'wd-1'").fetchone()
+        assert row[0] is None
 
     def test_migration_creates_message_embeddings_table(self) -> None:
         from anteroom.db import _run_migrations

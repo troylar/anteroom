@@ -377,6 +377,7 @@ def create_conversation(
     user_id: str | None = None,
     user_display_name: str | None = None,
     conversation_type: str = "chat",
+    working_dir: str | None = None,
 ) -> dict[str, Any]:
     if conversation_type not in VALID_CONVERSATION_TYPES:
         raise ValueError(f"Invalid conversation type: {conversation_type!r}")
@@ -385,9 +386,9 @@ def create_conversation(
     slug = generate_slug(db)
     db.execute(
         "INSERT INTO conversations"
-        " (id, title, slug, type, project_id, user_id, user_display_name, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (cid, title, slug, conversation_type, project_id, user_id, user_display_name, now, now),
+        " (id, title, slug, type, project_id, user_id, user_display_name, working_dir, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (cid, title, slug, conversation_type, project_id, user_id, user_display_name, working_dir, now, now),
     )
     db.commit()
     return {
@@ -399,6 +400,7 @@ def create_conversation(
         "project_id": project_id,
         "user_id": user_id,
         "user_display_name": user_display_name,
+        "working_dir": working_dir,
         "created_at": now,
         "updated_at": now,
     }

@@ -122,7 +122,13 @@ async def create_conversation(request: Request):
         raise HTTPException(status_code=400, detail="Title must be 200 characters or fewer")
     uid, uname = _get_identity(request)
     conv = storage.create_conversation(
-        db, title=title, project_id=project_id, user_id=uid, user_display_name=uname, conversation_type=conv_type
+        db,
+        title=title,
+        project_id=project_id,
+        user_id=uid,
+        user_display_name=uname,
+        conversation_type=conv_type,
+        working_dir=None,
     )
 
     event_bus = _get_event_bus(request)

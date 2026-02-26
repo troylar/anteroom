@@ -375,6 +375,41 @@ def _resolve_conversation(db: Any, target: str) -> dict[str, Any] | None:
     return storage.get_conversation(db, target)
 
 
+def _restore_working_dir(
+    conv: dict[str, Any],
+    tool_registry: Any,
+    current_working_dir: str,
+) -> str:
+    """Restore working directory from a resumed conversation.
+
+    Returns the effective working directory (stored or current fallback).
+    """
+    stored_dir = conv.get("working_dir")
+    if not stored_dir:
+        return current_working_dir
+    # Resolve symlinks for consistent validation
+    stored_dir = os.path.realpath(stored_dir)
+    if not os.path.isdir(stored_dir):
+        logger.warning("Stored working_dir %s no longer exists, using current", stored_dir)
+        renderer.console.print(
+            f"[{MUTED}]Note: original directory {stored_dir} no longer exists, using current[/{MUTED}]"
+        )
+        return current_working_dir
+    # Block sensitive system directories
+    _blocked_prefixes = ("/proc/", "/sys/", "/dev/")
+    if any(stored_dir.startswith(p) or stored_dir == p.rstrip("/") for p in _blocked_prefixes):
+        logger.warning("Blocked unsafe stored working_dir: %s", stored_dir)
+        return current_working_dir
+    # Re-scope tools to the stored directory
+    from ..tools import bash, edit, glob_tool, grep, read, write
+
+    for module in [read, write, edit, bash, glob_tool, grep]:
+        if hasattr(module, "set_working_dir"):
+            module.set_working_dir(stored_dir)
+    tool_registry._working_dir = stored_dir
+    return stored_dir
+
+
 def _show_resume_info(db: Any, conv: dict[str, Any], ai_messages: list[dict[str, Any]]) -> None:
     """Display resume header with last exchange context."""
     stored = storage.list_messages(db, conv["id"])
@@ -1226,6 +1261,7 @@ async def run_cli(
                 extra_system_prompt=extra_system_prompt,
                 prompt=prompt,
                 working_dir=working_dir,
+                tool_registry=tool_registry,
                 resume_conversation_id=resume_conversation_id,
                 cancel_event_ref=_active_cancel_event,
                 dlp_scanner=_dlp_scanner,
@@ -1315,6 +1351,7 @@ async def _run_one_shot(
     extra_system_prompt: str,
     prompt: str,
     working_dir: str,
+    tool_registry: Any = None,
     resume_conversation_id: str | None = None,
     cancel_event_ref: list[asyncio.Event | None] | None = None,
     dlp_scanner: Any | None = None,
@@ -1330,9 +1367,10 @@ async def _run_one_shot(
         if not conv:
             renderer.render_error(f"Conversation {resume_conversation_id} not found")
             return
+        working_dir = _restore_working_dir(conv, tool_registry, working_dir)
         messages = _load_conversation_messages(db, resume_conversation_id)
     else:
-        conv = storage.create_conversation(db, **id_kw)
+        conv = storage.create_conversation(db, working_dir=working_dir, **id_kw)
         messages = []
 
     storage.create_message(db, conv["id"], "user", expanded, **id_kw)
@@ -1821,14 +1859,15 @@ async def _run_repl(
             conv = conv_data
             ai_messages = _load_conversation_messages(db, resume_conversation_id)
             is_first_message = False
+            working_dir = _restore_working_dir(conv, tool_registry, working_dir)
             _show_resume_info(db, conv, ai_messages)
         else:
             renderer.render_error(f"Conversation {resume_conversation_id} not found, starting new")
-            conv = storage.create_conversation(db, **id_kw)
+            conv = storage.create_conversation(db, working_dir=working_dir, **id_kw)
             ai_messages = []
             is_first_message = True
     else:
-        conv = storage.create_conversation(db, **id_kw)
+        conv = storage.create_conversation(db, working_dir=working_dir, **id_kw)
         ai_messages: list[dict[str, Any]] = []
         is_first_message = True
 
@@ -2112,7 +2151,7 @@ async def _run_repl(
     async def _agent_runner() -> None:
         """Process messages from input_queue, run commands and agent loop."""
         nonlocal conv, ai_messages, is_first_message, tools_openai, all_tool_names
-        nonlocal current_model, ai_service, extra_system_prompt
+        nonlocal current_model, ai_service, extra_system_prompt, working_dir
 
         # -- Plan mode state --
         from .plan import (
@@ -2225,7 +2264,13 @@ async def _run_repl(
                     if len(parts) >= 2 and parts[1] in ("note", "doc", "document"):
                         conv_type = "document" if parts[1] in ("doc", "document") else "note"
                         conv_title = parts[2].strip() if len(parts) >= 3 else f"New {conv_type.title()}"
-                    conv = storage.create_conversation(db, title=conv_title, conversation_type=conv_type, **id_kw)
+                    conv = storage.create_conversation(
+                        db,
+                        title=conv_title,
+                        conversation_type=conv_type,
+                        working_dir=working_dir,
+                        **id_kw,
+                    )
                     ai_messages = []
                     is_first_message = conv_type == "chat"
                     if _plan_active[0]:
@@ -2392,7 +2437,7 @@ async def _run_repl(
                     storage.delete_conversation(db, to_delete["id"], config.app.data_dir)
                     renderer.console.print(f"[{CHROME}]Deleted: {title}[/{CHROME}]\n")
                     if conv.get("id") == to_delete["id"]:
-                        conv = storage.create_conversation(db, **id_kw)
+                        conv = storage.create_conversation(db, working_dir=working_dir, **id_kw)
                         ai_messages = []
                         is_first_message = True
                     continue
@@ -2773,6 +2818,7 @@ async def _run_repl(
                         renderer.render_error("Conversation not found. Use /list to see conversations.")
                         continue
                     conv = loaded
+                    working_dir = _restore_working_dir(conv, tool_registry, working_dir)
                     ai_messages = _load_conversation_messages(db, conv["id"])
                     is_first_message = False
                     _show_resume_info(db, conv, ai_messages)

@@ -192,6 +192,20 @@ class TestConversationSlugs:
         assert fetched is not None
         assert fetched["id"] == conv["id"]
 
+    def test_create_conversation_with_working_dir(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="With Dir", working_dir="/tmp/my-project")
+        assert conv["working_dir"] == "/tmp/my-project"
+        fetched = get_conversation(db, conv["id"])
+        assert fetched is not None
+        assert fetched["working_dir"] == "/tmp/my-project"
+
+    def test_create_conversation_working_dir_default_none(self, db: sqlite3.Connection) -> None:
+        conv = create_conversation(db, title="No Dir")
+        assert conv["working_dir"] is None
+        fetched = get_conversation(db, conv["id"])
+        assert fetched is not None
+        assert fetched["working_dir"] is None
+
     def test_list_conversations_includes_slug(self, db: sqlite3.Connection) -> None:
         create_conversation(db, title="Listed")
         result = list_conversations(db)
