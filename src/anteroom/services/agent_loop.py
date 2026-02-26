@@ -486,11 +486,11 @@ async def run_agent_loop(
                 if isinstance(result, dict):
                     # Scan untrusted tool output for prompt injection
                     if injection_detector is not None and injection_detector.enabled:
-                        _tool_text = ""
-                        for _tk in ("content", "result"):
-                            if _tk in result and isinstance(result[_tk], str):
-                                _tool_text = result[_tk]
-                                break
+                        # Collect all string values from the result (covers content,
+                        # result, stdout, stderr, text — any tool output shape)
+                        _tool_text = "\n".join(
+                            v for k, v in result.items() if isinstance(v, str) and not k.startswith("_")
+                        )
                         if _tool_text:
                             _inj_verdict = injection_detector.scan_tool_output(tc["function_name"], _tool_text)
                             if _inj_verdict.detected:

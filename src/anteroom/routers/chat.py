@@ -364,6 +364,7 @@ async def _build_chat_system_prompt(
     source_group_id: str | None,
     vec_enabled: bool = False,
     embedding_service: Any = None,
+    injection_detector: Any = None,
 ) -> str:
     """Assemble the extra system prompt from all context sources."""
     # Runtime context for self-awareness
@@ -384,6 +385,12 @@ async def _build_chat_system_prompt(
     # Plan mode prompt
     if plan_prompt:
         extra += plan_prompt
+
+    # Inject canary token into trusted section (before untrusted marker)
+    if injection_detector is not None and injection_detector.enabled:
+        _canary_seg = injection_detector.canary_prompt_segment()
+        if _canary_seg:
+            extra += _canary_seg
 
     # Structural separation: everything below this marker is external/untrusted data
     extra += untrusted_section_marker()
@@ -898,22 +905,13 @@ async def _stream_chat_events(ctx: StreamContext):
         # Retrieve app-scoped injection detector
         _injection_detector = getattr(getattr(ctx.request.app, "state", None), "injection_detector", None)
 
-        # Inject canary token into the trusted section of the system prompt
-        _extra_prompt = ctx.extra_system_prompt
-        if _injection_detector is not None and _injection_detector.enabled:
-            _canary_segment = _injection_detector.canary_prompt_segment()
-            if _canary_segment and _extra_prompt:
-                _extra_prompt = _extra_prompt + _canary_segment
-            elif _canary_segment:
-                _extra_prompt = _canary_segment
-
         agent_gen = run_agent_loop(
             ai_service=ctx.ai_service,
             messages=ctx.ai_messages,
             tool_executor=ctx.tool_executor,
             tools_openai=ctx.tools,
             cancel_event=ctx.cancel_event,
-            extra_system_prompt=_extra_prompt,
+            extra_system_prompt=ctx.extra_system_prompt,
             message_queue=_message_queues.get(ctx.conversation_id),
             narration_cadence=ctx.ai_service.config.narration_cadence,
             auto_plan_threshold=(
@@ -1218,6 +1216,31 @@ async def _stream_chat_events(ctx: StreamContext):
                         }
                     ),
                 }
+
+            elif kind == "injection_detected":
+                action = data.get("action", "warn")
+                if action == "block":
+                    yield {
+                        "event": "error",
+                        "data": json.dumps(
+                            {
+                                "message": "Tool output blocked: prompt injection detected",
+                                "code": "injection_blocked",
+                                "technique": data.get("technique", ""),
+                            }
+                        ),
+                    }
+                else:
+                    yield {
+                        "event": "injection_warning",
+                        "data": json.dumps(
+                            {
+                                "message": data.get("detail", "Prompt injection detected"),
+                                "technique": data.get("technique", ""),
+                                "confidence": data.get("confidence", 0),
+                            }
+                        ),
+                    }
 
             elif kind == "queued_message":
                 current_assistant_msg = None
@@ -1630,6 +1653,7 @@ async def chat(conversation_id: str, request: Request):
         source_group_id=source_group_id,
         vec_enabled=getattr(request.app.state, "vec_enabled", False),
         embedding_service=getattr(request.app.state, "embedding_service", None),
+        injection_detector=getattr(request.app.state, "injection_detector", None),
     )
 
     # Build per-request safety approval context

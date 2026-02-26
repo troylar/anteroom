@@ -1,14 +1,15 @@
 """Prompt injection detection with canary tokens.
 
-Detects when untrusted content (tool outputs, RAG results) attempts to
-override system instructions through canary token leakage, encoding
-attacks, and heuristic pattern matching.
+Detects when untrusted content (tool outputs) attempts to override
+system instructions through canary token leakage, encoding attacks,
+and heuristic pattern matching.
 
 All detection functions are pure — no I/O, no side effects.
 """
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import re
@@ -223,8 +224,6 @@ class InjectionDetector:
         b64_matches = _BASE64_BLOCK_RE.findall(text)
         for b64 in b64_matches[:5]:  # check at most 5 blocks
             try:
-                import base64
-
                 decoded = base64.b64decode(b64 + "==", validate=False).decode("utf-8", errors="ignore").lower()
                 if any(kw in decoded for kw in ("ignore", "system", "instruction", "override", "prompt")):
                     findings.append("base64-encoded injection keywords")

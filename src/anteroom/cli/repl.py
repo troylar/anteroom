@@ -1342,13 +1342,6 @@ async def _run_one_shot(
 
     _budget_cfg = config.cli.usage.budgets
 
-    # Inject canary token into the trusted section of the system prompt
-    _effective_prompt = extra_system_prompt
-    if injection_detector is not None and injection_detector.enabled:
-        _canary_seg = injection_detector.canary_prompt_segment()
-        if _canary_seg:
-            _effective_prompt = _effective_prompt + _canary_seg
-
     async def _get_token_totals() -> tuple[int, int]:
         return (
             storage.get_conversation_token_total(db, conv["id"]),
@@ -1366,7 +1359,7 @@ async def _run_one_shot(
                 tool_executor=tool_executor,
                 tools_openai=tools_openai,
                 cancel_event=cancel_event,
-                extra_system_prompt=_effective_prompt,
+                extra_system_prompt=extra_system_prompt,
                 max_iterations=config.cli.max_tool_iterations,
                 narration_cadence=ai_service.config.narration_cadence,
                 tool_output_max_chars=config.cli.tool_output_max_chars,
@@ -1410,6 +1403,13 @@ async def _run_one_shot(
                 elif event.kind == "dlp_warning":
                     rules = ", ".join(event.data.get("matches", []))
                     renderer.render_error(f"DLP warning: sensitive data detected [{rules}]")
+                elif event.kind == "injection_detected":
+                    action = event.data.get("action", "warn")
+                    detail = event.data.get("detail", "prompt injection detected")
+                    if action == "block":
+                        renderer.render_error(f"Tool output blocked: {detail}")
+                    else:
+                        renderer.render_error(f"Injection warning: {detail}")
                 elif event.kind == "error":
                     error_msg = event.data.get("message", "Unknown error")
                     retryable = event.data.get("retryable", False)
@@ -3090,6 +3090,13 @@ async def _run_repl(
                         elif event.kind == "dlp_warning":
                             rules = ", ".join(event.data.get("matches", []))
                             renderer.render_error(f"DLP warning: sensitive data detected [{rules}]")
+                        elif event.kind == "injection_detected":
+                            action = event.data.get("action", "warn")
+                            detail = event.data.get("detail", "prompt injection detected")
+                            if action == "block":
+                                renderer.render_error(f"Tool output blocked: {detail}")
+                            else:
+                                renderer.render_error(f"Injection warning: {detail}")
                         elif event.kind == "queued_message":
                             if thinking:
                                 total_elapsed += await renderer.stop_thinking()
