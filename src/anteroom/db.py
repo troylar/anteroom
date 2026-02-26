@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     folder_id TEXT DEFAULT NULL,
     user_id TEXT DEFAULT NULL,
     user_display_name TEXT DEFAULT NULL,
+    working_dir TEXT DEFAULT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
@@ -516,6 +517,9 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
     if "slug" not in cols:
         conn.execute("ALTER TABLE conversations ADD COLUMN slug TEXT DEFAULT NULL")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_slug ON conversations(slug)")
+
+    if "working_dir" not in cols:
+        conn.execute("ALTER TABLE conversations ADD COLUMN working_dir TEXT DEFAULT NULL")
 
     # Ensure folders table exists for existing databases
     conn.execute(

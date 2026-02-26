@@ -90,6 +90,7 @@ class TestInitDb:
             "type",
             "model",
             "project_id",
+            "working_dir",
             "folder_id",
             "user_id",
             "user_display_name",
