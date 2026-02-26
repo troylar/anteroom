@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncGenerator
 
 from .ai_service import AIService
+from .token_budget import BudgetCheckResult, check_all_budgets
 
 logger = logging.getLogger(__name__)
 
@@ -209,22 +210,91 @@ async def run_agent_loop(
     narration_cadence: int = 0,
     tool_output_max_chars: int = _DEFAULT_TOOL_OUTPUT_MAX_CHARS,
     auto_plan_threshold: int = 0,
+    budget_config: Any | None = None,
+    get_token_totals: Any | None = None,
 ) -> AsyncGenerator[AgentEvent, None]:
     """Run the agentic tool-call loop, yielding events.
 
     tool_executor must be an async callable: (tool_name, arguments) -> dict
+    budget_config: BudgetConfig dataclass (or None to disable).
+    get_token_totals: async callable() -> (conversation_total, daily_total)
     """
     iteration = 0
     context_recovery_attempts = 0
     max_context_recoveries = 2  # truncate once, compact once
     total_tool_calls = 0
     auto_plan_suggested = False
+    request_tokens = 0  # tokens accumulated in this run_agent_loop invocation
 
     while iteration < max_iterations:
         iteration += 1
         tool_calls_pending: list[dict[str, Any]] = []
         assistant_content = ""
         got_context_error = False
+
+        # Budget enforcement: check before each API call
+        if budget_config and budget_config.enabled and get_token_totals:
+            try:
+                conv_total, daily_total = await get_token_totals()
+            except Exception:
+                logger.warning("Failed to fetch token totals for budget check", exc_info=True)
+                conv_total, daily_total = 0, 0
+
+            status = check_all_budgets(
+                request_tokens=request_tokens,
+                conversation_tokens=conv_total,
+                daily_tokens=daily_total,
+                max_per_request=budget_config.max_tokens_per_request,
+                max_per_conversation=budget_config.max_tokens_per_conversation,
+                max_per_day=budget_config.max_tokens_per_day,
+                warn_threshold_percent=budget_config.warn_threshold_percent,
+            )
+            if status is not None:
+                if status.result == BudgetCheckResult.EXCEEDED:
+                    if budget_config.action_on_exceed == "block":
+                        yield AgentEvent(
+                            kind="error",
+                            data={
+                                "message": (
+                                    f"Token budget exceeded ({status.label}): {status.used:,} / {status.limit:,} tokens"
+                                ),
+                                "code": "budget_exceeded",
+                                "retryable": False,
+                                "budget_label": status.label,
+                                "budget_used": status.used,
+                                "budget_limit": status.limit,
+                            },
+                        )
+                        return
+                    else:
+                        yield AgentEvent(
+                            kind="budget_warning",
+                            data={
+                                "message": (
+                                    f"Token budget exceeded ({status.label}): "
+                                    f"{status.used:,} / {status.limit:,} tokens (warn mode)"
+                                ),
+                                "label": status.label,
+                                "used": status.used,
+                                "limit": status.limit,
+                                "percent": status.percent,
+                            },
+                        )
+                elif status.result == BudgetCheckResult.WARNING:
+                    yield AgentEvent(
+                        kind="budget_warning",
+                        data={
+                            "message": (
+                                f"Approaching {status.label} token budget: "
+                                f"{status.used:,} / {status.limit:,} tokens "
+                                f"({status.percent:.0f}%)"
+                            ),
+                            "label": status.label,
+                            "used": status.used,
+                            "limit": status.limit,
+                            "percent": status.percent,
+                        },
+                    )
 
         yield AgentEvent(kind="thinking", data={})
 
@@ -255,6 +325,7 @@ async def run_agent_loop(
             elif etype == "retrying":
                 yield AgentEvent(kind="retrying", data=event["data"])
             elif etype == "usage":
+                request_tokens += event["data"].get("total_tokens", 0)
                 yield AgentEvent(kind="usage", data=event["data"])
             elif etype == "error":
                 if (

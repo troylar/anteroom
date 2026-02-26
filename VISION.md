@@ -32,8 +32,8 @@ These principles guide every feature decision. New features must align with at l
 ### 2. Security is structural, not optional
 OWASP ASVS Level 2. HttpOnly cookies, CSRF protection, parameterized queries, path traversal prevention — these aren't add-ons, they're the foundation. Every feature ships secure by default. Enterprise security teams should be able to audit the codebase and find nothing to object to.
 
-### 3. Lean over sprawling
-Do fewer things well. Every feature must earn its place. Anteroom is maximally configurable — every timeout, threshold, limit, and behavioral knob should be a config field with a sensible default. Zero configuration must always work; power users who want to tune behavior should never hit a hardcoded value they can't change. Shareable configs, per-project settings, global defaults. Complexity in the codebase is a bug; configurability for the user is a feature. The distinction: internal complexity bad, user control good.
+### 3. Lean over sprawling, but maximally configurable
+Do fewer things well. Every feature must earn its place. But every behavior that can vary — timeouts, thresholds, limits, safety gates, approval modes, token budgets, retry policies, tool permissions — must be exposed as a configuration knob with a sensible default. Enterprise security teams need to lock down, tune, and audit every aspect of the system without touching code. Zero configuration must always work out of the box; but a team that needs to enforce token budgets, restrict tool access, cap sub-agent depth, or allowlist egress domains should be able to do all of that through config alone. Shareable configs, per-project settings, team-enforced fields, global defaults. Internal complexity is a bug; user-facing configurability is a feature.
 
 ### 4. Two interfaces, one engine
 The web UI and CLI share the same agent loop, storage, and tools. Features work in both interfaces or have a clear reason why they don't. The CLI is not a second-class citizen — for many users, it's the primary interface.
@@ -67,8 +67,8 @@ Anteroom is extensible through MCP and standard protocols — but extensibility 
 ### Not a ChatGPT clone
 Anteroom happens to have a chat interface, but the goal isn't to replicate ChatGPT. The chat is the interaction layer — the value is in the agentic tools, knowledge management, and developer workflow underneath. A feature that makes Anteroom "more like ChatGPT" without serving the core use cases is not a feature.
 
-### Not a configuration burden
-Anteroom should be highly configurable for those who want it — shareable configs, per-project settings, global defaults — but zero configuration should always work. Every option needs a sensible default. A fresh install with no config file should be fully functional. Configuration is power for the user, not a requirement to get started. If a feature doesn't work without configuration, the defaults are wrong.
+### Not a configuration burden — but a configuration powerhouse
+Anteroom must offer a plethora of configuration knobs and levers for enterprise security and operational flexibility. Every behavioral parameter — safety gates, token limits, tool permissions, retry policies, approval workflows, egress controls — should be configurable. But zero configuration must always work. Every knob needs a sensible default. A fresh install with no config file should be fully functional and secure. The bar: enterprise teams can enforce any policy through config alone, while a solo developer never has to touch a config file. If a feature doesn't work without configuration, the defaults are wrong.
 
 ### Not an enterprise product
 Anteroom serves enterprise users, but it's not enterprise software. No license keys, no seat management, no SSO integration (unless trivially simple), no compliance dashboards. Enterprise teams use it because it's secure and self-hosted, not because it has enterprise features.

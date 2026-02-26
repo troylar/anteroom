@@ -125,7 +125,15 @@ _KNOWN_KEYS: dict[str, set[str]] = {
         "usage",
     },
     "cli.planning": {"enabled", "auto_threshold_tools", "auto_mode"},
-    "cli.usage": {"week_days", "month_days", "model_costs"},
+    "cli.usage": {"week_days", "month_days", "model_costs", "budgets"},
+    "cli.usage.budgets": {
+        "enabled",
+        "max_tokens_per_request",
+        "max_tokens_per_conversation",
+        "max_tokens_per_day",
+        "warn_threshold_percent",
+        "action_on_exceed",
+    },
     "embeddings": {
         "enabled",
         "provider",
@@ -185,6 +193,10 @@ _INT_FIELDS: list[tuple[str, str, int, int, int]] = [
     ("cli.planning", "auto_threshold_tools", 0, 200, 15),
     ("cli.usage", "week_days", 1, 365, 7),
     ("cli.usage", "month_days", 1, 365, 30),
+    ("cli.usage.budgets", "max_tokens_per_request", 0, 100_000_000, 0),
+    ("cli.usage.budgets", "max_tokens_per_conversation", 0, 100_000_000, 0),
+    ("cli.usage.budgets", "max_tokens_per_day", 0, 100_000_000, 0),
+    ("cli.usage.budgets", "warn_threshold_percent", 0, 100, 80),
     ("safety", "approval_timeout", 10, 600, 120),
     ("safety.subagent", "max_concurrent", 1, 20, 5),
     ("safety.subagent", "max_total", 1, 50, 10),
@@ -210,6 +222,7 @@ _FLOAT_FIELDS: list[tuple[str, str, float, float, float]] = [
 _ENUM_FIELDS: list[tuple[str, str, set[str]]] = [
     ("safety", "approval_mode", {"auto", "ask_for_dangerous", "ask_for_writes", "ask"}),
     ("cli.planning", "auto_mode", {"off", "suggest", "auto"}),
+    ("cli.usage.budgets", "action_on_exceed", {"block", "warn"}),
     ("embeddings", "provider", {"local", "api"}),
 ]
 
