@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 26, 2026
 
+### v1.55.1
+
+**Fixed:**
+
+- File uploads (PDF, DOCX, text) now have their contents sent to the AI in web UI chat (#464)
+- Source references preserved when files are attached via the upload button (#464)
+- Extracted document text truncated at 50K chars to prevent oversized token consumption (#464)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.55.1)
+
 ### v1.55.0
 
 **New:**
