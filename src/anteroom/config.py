@@ -384,6 +384,40 @@ class SafetyToolConfig:
 
 
 @dataclass
+class BashSandboxConfig:
+    """Bash tool sandboxing controls. All fields have safe defaults."""
+
+    enabled: bool = True
+    timeout: int = 120  # per-command timeout in seconds
+    max_output_chars: int = 100_000
+    blocked_paths: list[str] = field(default_factory=list)
+    allowed_paths: list[str] = field(default_factory=list)
+    blocked_commands: list[str] = field(default_factory=list)
+    allow_network: bool = True
+    allow_package_install: bool = True
+    log_all_commands: bool = False
+
+    _MIN_TIMEOUT: int = field(default=1, init=False, repr=False)
+    _MAX_TIMEOUT: int = field(default=600, init=False, repr=False)
+    _MIN_OUTPUT: int = field(default=1000, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.timeout < self._MIN_TIMEOUT:
+            logger.warning("bash timeout=%d below minimum (%d), clamping", self.timeout, self._MIN_TIMEOUT)
+            object.__setattr__(self, "timeout", self._MIN_TIMEOUT)
+        if self.timeout > self._MAX_TIMEOUT:
+            logger.warning("bash timeout=%d above maximum (%d), clamping", self.timeout, self._MAX_TIMEOUT)
+            object.__setattr__(self, "timeout", self._MAX_TIMEOUT)
+        if self.max_output_chars < self._MIN_OUTPUT:
+            logger.warning(
+                "bash max_output_chars=%d below minimum (%d), clamping",
+                self.max_output_chars,
+                self._MIN_OUTPUT,
+            )
+            object.__setattr__(self, "max_output_chars", self._MIN_OUTPUT)
+
+
+@dataclass
 class SubagentConfig:
     max_concurrent: int = 5
     max_total: int = 10
@@ -407,7 +441,7 @@ class SafetyConfig:
     enabled: bool = True
     approval_mode: str = "ask_for_writes"
     approval_timeout: int = 120
-    bash: SafetyToolConfig = field(default_factory=SafetyToolConfig)
+    bash: BashSandboxConfig = field(default_factory=BashSandboxConfig)
     write_file: SafetyToolConfig = field(default_factory=SafetyToolConfig)
     custom_patterns: list[str] = field(default_factory=list)
     sensitive_paths: list[str] = field(default_factory=list)
@@ -1121,7 +1155,39 @@ def load_config(
     safety_timeout = int(safety_raw.get("approval_timeout", 120))
     safety_timeout = max(10, min(safety_timeout, 600))
     bash_raw = safety_raw.get("bash", {})
+    if not isinstance(bash_raw, dict):
+        bash_raw = {}
     bash_safety_enabled = str(bash_raw.get("enabled", "true")).lower() not in ("false", "0", "no")
+
+    def _bash_bool(key: str, env_key: str, default: bool) -> bool:
+        return str(bash_raw.get(key, os.environ.get(env_key, str(default)))).lower() in ("true", "1", "yes")
+
+    def _bash_int(key: str, env_key: str, default: int) -> int:
+        try:
+            return int(bash_raw.get(key, os.environ.get(env_key, default)))
+        except (ValueError, TypeError):
+            return default
+
+    def _bash_list(key: str, env_key: str) -> list[str]:
+        val = bash_raw.get(key)
+        if val is None:
+            env_val = os.environ.get(env_key, "")
+            return [s.strip() for s in env_val.split(",") if s.strip()] if env_val else []
+        if isinstance(val, list):
+            return [str(v) for v in val]
+        return []
+
+    bash_sandbox = BashSandboxConfig(
+        enabled=bash_safety_enabled,
+        timeout=_bash_int("timeout", "AI_CHAT_BASH_TIMEOUT", 120),
+        max_output_chars=_bash_int("max_output_chars", "AI_CHAT_BASH_MAX_OUTPUT", 100_000),
+        blocked_paths=_bash_list("blocked_paths", "AI_CHAT_BASH_BLOCKED_PATHS"),
+        allowed_paths=_bash_list("allowed_paths", "AI_CHAT_BASH_ALLOWED_PATHS"),
+        blocked_commands=_bash_list("blocked_commands", "AI_CHAT_BASH_BLOCKED_COMMANDS"),
+        allow_network=_bash_bool("allow_network", "AI_CHAT_BASH_ALLOW_NETWORK", True),
+        allow_package_install=_bash_bool("allow_package_install", "AI_CHAT_BASH_ALLOW_PACKAGE_INSTALL", True),
+        log_all_commands=_bash_bool("log_all_commands", "AI_CHAT_BASH_LOG_ALL_COMMANDS", False),
+    )
     wf_raw = safety_raw.get("write_file", {})
     wf_safety_enabled = str(wf_raw.get("enabled", "true")).lower() not in ("false", "0", "no")
     safety_approval_mode = str(
@@ -1195,7 +1261,7 @@ def load_config(
         enabled=safety_enabled,
         approval_mode=safety_approval_mode,
         approval_timeout=safety_timeout,
-        bash=SafetyToolConfig(enabled=bash_safety_enabled),
+        bash=bash_sandbox,
         write_file=SafetyToolConfig(enabled=wf_safety_enabled),
         custom_patterns=[str(p) for p in safety_custom_patterns],
         sensitive_paths=[str(p) for p in safety_sensitive_paths],

@@ -245,6 +245,8 @@ class ToolRegistry:
         extra_kwargs: dict[str, Any] = {}
         if user_approved_hard_block:
             extra_kwargs["_bypass_hard_block"] = True
+        if name == "bash" and self._safety_config is not None:
+            extra_kwargs["_sandbox_config"] = self._safety_config.bash
         result = await handler(**arguments, **extra_kwargs)
         result["_approval_decision"] = approval_decision
 

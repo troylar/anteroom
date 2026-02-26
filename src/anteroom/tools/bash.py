@@ -3,10 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .security import sanitize_command
+from .security import (
+    check_blocked_path,
+    check_custom_patterns,
+    check_network_command,
+    check_package_install,
+    sanitize_command,
+)
+
+if TYPE_CHECKING:
+    from ..config import BashSandboxConfig
+
+logger = logging.getLogger(__name__)
+security_logger = logging.getLogger("anteroom.security")
 
 _MAX_OUTPUT = 100_000
 _DEFAULT_TIMEOUT = 120
@@ -39,8 +52,37 @@ def set_working_dir(d: str) -> None:
     _working_dir = d
 
 
+def _check_sandbox(command: str, config: BashSandboxConfig) -> str | None:
+    """Run all sandbox checks. Returns error message if blocked, None if allowed."""
+    if not config.allow_network:
+        desc = check_network_command(command)
+        if desc:
+            return f"Network commands are blocked ({desc})"
+
+    if not config.allow_package_install:
+        desc = check_package_install(command)
+        if desc:
+            return f"Package installation is blocked ({desc})"
+
+    if config.blocked_paths:
+        desc = check_blocked_path(command, config.blocked_paths)
+        if desc:
+            return f"Blocked: {desc}"
+
+    if config.blocked_commands:
+        desc = check_custom_patterns(command, config.blocked_commands)
+        if desc:
+            return f"Blocked: {desc}"
+
+    return None
+
+
 async def handle(
-    command: str, timeout: int = _DEFAULT_TIMEOUT, _bypass_hard_block: bool = False, **_: Any
+    command: str,
+    timeout: int = _DEFAULT_TIMEOUT,
+    _bypass_hard_block: bool = False,
+    _sandbox_config: BashSandboxConfig | None = None,
+    **_: Any,
 ) -> dict[str, Any]:
     # Null byte check runs unconditionally — never bypassable.
     if "\x00" in command:
@@ -50,7 +92,24 @@ async def handle(
         if error:
             return {"error": error, "exit_code": -1}
 
-    timeout = min(max(1, timeout), 600)
+    # Apply sandbox restrictions (runs even when hard-block is bypassed)
+    if _sandbox_config is not None:
+        sandbox_error = _check_sandbox(command, _sandbox_config)
+        if sandbox_error:
+            security_logger.warning("Sandbox blocked: %s — %s", sandbox_error, command[:100])
+            return {"error": sandbox_error, "exit_code": -1}
+        max_timeout = _sandbox_config.timeout
+        max_output = _sandbox_config.max_output_chars
+    else:
+        max_timeout = 600
+        max_output = _MAX_OUTPUT
+
+    timeout = min(max(1, timeout), max_timeout)
+
+    # Log command if configured
+    if _sandbox_config is not None and _sandbox_config.log_all_commands:
+        security_logger.info("bash command: %s", command[:500])
+
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
@@ -68,10 +127,10 @@ async def handle(
         stdout_str = stdout.decode("utf-8", errors="replace")
         stderr_str = stderr.decode("utf-8", errors="replace")
 
-        if len(stdout_str) > _MAX_OUTPUT:
-            stdout_str = stdout_str[:_MAX_OUTPUT] + "\n... (truncated)"
-        if len(stderr_str) > _MAX_OUTPUT:
-            stderr_str = stderr_str[:_MAX_OUTPUT] + "\n... (truncated)"
+        if len(stdout_str) > max_output:
+            stdout_str = stdout_str[:max_output] + "\n... (truncated)"
+        if len(stderr_str) > max_output:
+            stderr_str = stderr_str[:max_output] + "\n... (truncated)"
 
         return {
             "stdout": stdout_str,
