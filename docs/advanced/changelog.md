@@ -7,6 +7,20 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 26, 2026
 
+### v1.65.0
+
+**New:**
+
+- CLI project management: `/project create`, `select`, `edit`, `delete`, `sources` commands with active project state (#344)
+- Project instructions injected into system prompts with model override support (#344)
+
+**Improved:**
+
+- Introspect tool now triggers on context window and token budget questions (#344)
+- Project name/instructions sanitized via `sanitize_trust_tags()` before system prompt injection (#344)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.65.0)
+
 ### v1.64.0
 
 **New:**
