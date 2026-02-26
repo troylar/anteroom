@@ -249,6 +249,7 @@ class ToolRegistry:
             extra_kwargs["_sandbox_config"] = self._safety_config.bash
         result = await handler(**arguments, **extra_kwargs)
         result["_approval_decision"] = approval_decision
+        result["_context_trust"] = "trusted"
 
         # Record the call for rate limiting
         if self._rate_limiter:

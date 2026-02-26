@@ -249,6 +249,7 @@ _MCP_SERVER_KEYS = {
     "timeout",
     "tools_include",
     "tools_exclude",
+    "trust_level",
     "enabled",
 }
 
@@ -514,6 +515,15 @@ def validate_config(raw: dict[str, Any]) -> ValidationResult:
                         path=f"{prefix}",
                         message="cannot set both 'tools_include' and 'tools_exclude'; include takes precedence",
                         severity="warning",
+                    )
+                )
+            trust = srv.get("trust_level")
+            if trust is not None and trust not in ("trusted", "untrusted"):
+                result.errors.append(
+                    ConfigError(
+                        path=f"{prefix}.trust_level",
+                        message=f"invalid trust_level '{trust}'; must be 'trusted' or 'untrusted'",
+                        severity="error",
                     )
                 )
 

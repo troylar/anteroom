@@ -267,7 +267,7 @@ class TestFormatRagContext:
         ]
         result = format_rag_context(chunks)
         assert "## Retrieved Context (RAG)" in result
-        assert 'from conversation "My Conversation"' in result
+        assert "My Conversation" in result
         assert "hello world" in result
 
     def test_formats_source_chunks(self) -> None:
@@ -282,7 +282,7 @@ class TestFormatRagContext:
             ),
         ]
         result = format_rag_context(chunks)
-        assert 'from source "README.md"' in result
+        assert "README.md" in result
         assert "source content" in result
 
     def test_formats_mixed_sources(self) -> None:
@@ -295,8 +295,8 @@ class TestFormatRagContext:
             ),
         ]
         result = format_rag_context(chunks)
-        assert 'from conversation "Conv"' in result
-        assert 'from source "Doc"' in result
+        assert "Conv" in result
+        assert "Doc" in result
         assert "automatically retrieved" in result
 
 

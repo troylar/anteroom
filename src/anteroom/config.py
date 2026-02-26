@@ -273,6 +273,7 @@ class McpServerConfig:
     timeout: float = 30.0  # seconds; connection timeout per server
     tools_include: list[str] = field(default_factory=list)  # allowlist; fnmatch patterns
     tools_exclude: list[str] = field(default_factory=list)  # blocklist; fnmatch patterns
+    trust_level: str = "untrusted"  # "trusted" or "untrusted"; controls defensive prompt envelopes on tool results
 
 
 @dataclass
@@ -900,6 +901,7 @@ def load_config(
                 timeout=float(srv.get("timeout", 30.0)),
                 tools_include=tools_include,
                 tools_exclude=tools_exclude,
+                trust_level=srv.get("trust_level", "untrusted"),
             )
         )
 

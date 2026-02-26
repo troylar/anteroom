@@ -582,6 +582,8 @@ def _build_system_prompt(
     builtin_tools: list[str] | None = None,
     mcp_servers: dict[str, Any] | None = None,
 ) -> str:
+    from ..services.context_trust import trusted_section_marker
+
     runtime_ctx = build_runtime_context(
         model=config.ai.model,
         builtin_tools=builtin_tools,
@@ -589,7 +591,7 @@ def _build_system_prompt(
         interface="cli",
         working_dir=working_dir,
     )
-    parts = [runtime_ctx]
+    parts = [trusted_section_marker() + runtime_ctx]
 
     # Project context
     project_ctx = _detect_project_context(working_dir)
@@ -1093,6 +1095,11 @@ async def run_cli(
         builtin_tools=tool_registry.list_tools(),
         mcp_servers=mcp_statuses,
     )
+
+    # Structural separation: everything below is external/auto-generated context
+    from ..services.context_trust import untrusted_section_marker
+
+    extra_system_prompt += untrusted_section_marker()
 
     # Inject codebase index (tree-sitter symbol map) if enabled
     try:

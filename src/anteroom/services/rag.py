@@ -129,15 +129,13 @@ def format_rag_context(chunks: list[RetrievedChunk]) -> str:
     parts: list[str] = []
     for chunk in chunks:
         label = chunk.source_label
-        if chunk.source_type == "message":
-            attribution = f'from conversation "{label}"'
-        else:
-            attribution = f'from source "{label}"'
         # SECURITY-REVIEW: chunk.content is user-controlled (past messages / uploaded sources).
-        # Prompt injection is an accepted architectural trade-off for RAG pipelines.
-        # Sanitize closing tags to prevent content from breaking out of the XML block.
+        # Wrapped in a defensive prompt envelope to mitigate indirect prompt injection.
+        # Closing tags sanitized to prevent content from breaking out of XML blocks.
+        from .context_trust import wrap_untrusted
+
         safe_content = chunk.content.replace("</retrieved-context>", "[/retrieved-context]")
-        parts.append(f"<retrieved-context {attribution}>\n{safe_content}\n</retrieved-context>")
+        parts.append(wrap_untrusted(safe_content, f"rag:{label}", "retrieved"))
 
     return (
         "\n\n## Retrieved Context (RAG)\n"

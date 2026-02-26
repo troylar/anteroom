@@ -437,8 +437,25 @@ async def run_agent_loop(
                 # Strip internal metadata before sending to the LLM
                 # _approval_decision: safety gate audit field
                 # _old_content/_new_content: large strings for diff rendering only
-                internal_keys = {"_approval_decision", "_old_content", "_new_content"}
+                # _context_trust/_context_origin: trust classification metadata
+                internal_keys = {
+                    "_approval_decision",
+                    "_old_content",
+                    "_new_content",
+                    "_context_trust",
+                    "_context_origin",
+                }
                 if isinstance(result, dict):
+                    # Wrap untrusted tool results in a defensive envelope
+                    context_trust = result.get("_context_trust")
+                    if context_trust == "untrusted":
+                        from .context_trust import wrap_untrusted
+
+                        origin = result.get("_context_origin", "unknown")
+                        for key in ("content", "result"):
+                            if key in result and isinstance(result[key], str):
+                                result[key] = wrap_untrusted(result[key], origin, "tool-result")
+                                break
                     llm_result = {k: v for k, v in result.items() if k not in internal_keys}
                 else:
                     llm_result = result
