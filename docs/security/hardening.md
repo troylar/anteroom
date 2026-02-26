@@ -56,3 +56,15 @@ All vendor scripts (marked.js, highlight.js, KaTeX, DOMPurify) include SHA-384 h
 - Database files created with `0600` permissions (owner-only)
 - Data directory created with `0700` permissions
 - UUID validation on all ID parameters
+
+## Token Budget Enforcement (Denial-of-Wallet Prevention)
+
+Enterprise teams can enforce token consumption limits to control API costs and prevent runaway spending:
+
+- **Per-request limit** — Blocks individual requests exceeding the limit
+- **Per-conversation limit** — Caps total token consumption within a conversation thread
+- **Per-day limit** — Caps total daily consumption across all conversations
+- **Warning threshold** — Emits warnings when approaching limits (configurable percentage)
+- **Exceeding actions** — Administrators choose: `block` (reject requests) or `warn` (allow but notify)
+
+See [Configuration: Token Budgets](../configuration/config-file.md#usagebudgets) for setup details.

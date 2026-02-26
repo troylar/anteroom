@@ -47,6 +47,13 @@ cli:
     week_days: 7                   # Days for "this week" rolling window (default: 7)
     month_days: 30                 # Days for "this month" rolling window (default: 30)
     model_costs: {}                # Per-model costs: {model: {input: rate, output: rate}} (default: empty)
+    budgets:
+      enabled: false               # Enable token budget enforcement (default: false)
+      max_tokens_per_request: 0    # Single request limit; 0 = unlimited (default: 0)
+      max_tokens_per_conversation: 0  # Conversation limit; 0 = unlimited (default: 0)
+      max_tokens_per_day: 0        # Daily limit; 0 = unlimited (default: 0)
+      warn_threshold_percent: 80   # Warn at this % of limit (default: 80)
+      action_on_exceed: block      # "block" to deny or "warn" to allow (default: "block")
 
 identity:
   user_id: "auto-generated-uuid"
@@ -290,6 +297,37 @@ cli:
 ```
 
 The `/usage` command displays token counts and estimated costs across multiple time periods. Without `model_costs` configured, only token counts are shown.
+
+#### usage.budgets
+
+Nested under `usage` — controls token budget enforcement for denial-of-wallet prevention.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Enable token budget enforcement |
+| `max_tokens_per_request` | integer | `0` | Maximum tokens for a single request (0 = unlimited) |
+| `max_tokens_per_conversation` | integer | `0` | Maximum tokens accumulated in one conversation (0 = unlimited) |
+| `max_tokens_per_day` | integer | `0` | Maximum tokens consumed in a calendar day (0 = unlimited) |
+| `warn_threshold_percent` | integer | `80` | Warn when usage exceeds this percentage of any limit (0-100) |
+| `action_on_exceed` | string | `block` | What to do when a limit is exceeded: `block` (deny request) or `warn` (allow but notify) |
+
+Example:
+
+```yaml
+cli:
+  usage:
+    model_costs:
+      gpt-4o: { input: 0.003, output: 0.006 }
+    budgets:
+      enabled: true
+      max_tokens_per_request: 100000     # single request cap
+      max_tokens_per_conversation: 500000 # conversation cap
+      max_tokens_per_day: 2000000         # daily cap
+      warn_threshold_percent: 80          # warn at 80%
+      action_on_exceed: block             # hard block when exceeded
+```
+
+Budgets are checked at the start of each request. When a limit is exceeded with `action_on_exceed: block`, the request is rejected with a `budget_exceeded` error. With `action_on_exceed: warn`, the request proceeds but a `budget_warning` event is emitted.
 
 ### references
 
