@@ -214,6 +214,7 @@ async def run_agent_loop(
     budget_config: Any | None = None,
     get_token_totals: Any | None = None,
     dlp_scanner: Any | None = None,
+    injection_detector: Any | None = None,
 ) -> AsyncGenerator[AgentEvent, None]:
     """Run the agentic tool-call loop, yielding events.
 
@@ -483,6 +484,32 @@ async def run_agent_loop(
                     "_context_origin",
                 }
                 if isinstance(result, dict):
+                    # Scan untrusted tool output for prompt injection
+                    if injection_detector is not None and injection_detector.enabled:
+                        # Collect all string values from the result (covers content,
+                        # result, stdout, stderr, text — any tool output shape)
+                        _tool_text = "\n".join(
+                            v for k, v in result.items() if isinstance(v, str) and not k.startswith("_")
+                        )
+                        if _tool_text:
+                            _inj_verdict = injection_detector.scan_tool_output(tc["function_name"], _tool_text)
+                            if _inj_verdict.detected:
+                                yield AgentEvent(
+                                    kind="injection_detected",
+                                    data={
+                                        "tool_name": tc["function_name"],
+                                        "technique": _inj_verdict.technique,
+                                        "confidence": _inj_verdict.confidence,
+                                        "detail": _inj_verdict.detail,
+                                        "action": injection_detector.action,
+                                    },
+                                )
+                                if injection_detector.action == "block":
+                                    result = {
+                                        "error": "Tool output blocked: prompt injection detected",
+                                        "safety_blocked": True,
+                                        "_approval_decision": "injection_blocked",
+                                    }
                     # Wrap untrusted tool results in a defensive envelope
                     context_trust = result.get("_context_trust")
                     if context_trust == "untrusted":
