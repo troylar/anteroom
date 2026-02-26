@@ -52,14 +52,14 @@ CLI (cli/)         ──┘         │
 ### Key Modules
 
 #### Entry Points & Core
-- **`__main__.py`** — Argparse dispatch: `init`, `config`, `chat`, `exec`, `db`, `usage` subcommands. Global flags: `--version`, `--test`, `--allowed-tools`, `--approval-mode`, `--port`, `--debug`, `--team-config`. Chat flags: `--trust-project`, `--no-project-context`, `--plan`
+- **`__main__.py`** — Argparse dispatch: `init`, `config`, `chat`, `exec`, `db`, `usage`, `audit` subcommands. Global flags: `--version`, `--test`, `--allowed-tools`, `--approval-mode`, `--port`, `--debug`, `--team-config`. Chat flags: `--trust-project`, `--no-project-context`, `--plan`. Audit flags: `audit {verify,purge}`
 - **`app.py`** — FastAPI app factory, middleware stack (auth, rate limiting, CSRF, security headers, body size limit). Auth token derived from Ed25519 identity key via HMAC-SHA256
 - **`config.py`** — YAML config loader with layered precedence: defaults < team < personal < project < env vars < CLI flags. Dataclass hierarchy: `AppConfig` → `AIConfig`, `AppSettings`, `CliConfig`, `PlanningConfig`, `SkillsConfig`, `McpServerConfig`, `SafetyConfig`, `SubagentConfig`, `EmbeddingsConfig`, `UsageConfig`, `ProxyConfig`, `ReferencesConfig`, `CodebaseIndexConfig`. Enforces locked fields from team `enforce` list. Config validated via `services/config_validator.py` before parsing
 - **`identity.py`** — Ed25519 keypair generation, UUID4 user IDs, PEM serialization
 - **`tls.py`** — Self-signed cert generation for localhost HTTPS
 
 #### Services (Shared Core)
-- **`services/agent_loop.py`** — Shared agentic loop: streams responses, parses tool calls, parallel execution via `asyncio.as_completed`, max 50 iterations. Cancel-aware. Auto-compacts at configurable token threshold. Supports prompt queuing, narration cadence, auto-plan threshold, and token budget enforcement (request/conversation/daily limits with warning and exceed actions). Emits `budget_exceeded` and `budget_warning` events. Internal `_`-prefixed metadata keys stripped before sending to LLM
+- **`services/agent_loop.py`** — Shared agentic loop: streams responses, parses tool calls, parallel execution via `asyncio.as_completed`, max 50 iterations. Cancel-aware. Auto-compacts at configurable token threshold. Supports prompt queuing, narration cadence, auto-plan threshold. Internal `_`-prefixed metadata keys stripped before sending to LLM
 - **`services/ai_service.py`** — OpenAI SDK wrapper with streaming, token refresh on 401, split timeout architecture (6 timeouts: connect/write/pool/first_token/request/chunk_stall), cancel-aware at all phases, exponential backoff retry on transient errors. Emits `phase`, `retrying`, `tool_call_args_delta`, `usage` events. Error events include `retryable` flag
 - **`services/storage.py`** — SQLite DAL with column-allowlisted SQL builder, parameterized queries, UUID IDs. Vector storage (graceful degradation without sqlite-vec). Source CRUD, tags, groups, project linking, text chunking, embeddings. Token usage tracking. Conversation slugs
 - **`services/mcp_manager.py`** — MCP client lifecycle: parallel startup, per-server tool filtering, routes `call_tool()` to correct session. Each server gets own `AsyncExitStack`. Warns on tool-name collisions
@@ -76,7 +76,7 @@ CLI (cli/)         ──┘         │
 - **`services/discovery.py`** — Walk-up directory discovery. Searches `.anteroom/`, `.claude/`, `.parlor/` with precedence
 - **`services/project_config.py`** — Project-scoped config discovery with SHA-256 trust verification
 - **`services/required_keys.py`** — Required keys validation and interactive prompting
-- **`services/token_budget.py`** — Token budget enforcement for denial-of-wallet prevention. Pure functions: `check_budget()`, `check_all_budgets()`. Checks request, conversation, and daily limits with warn threshold
+- **`services/audit.py`** — Structured audit log with HMAC-SHA256 chain tamper protection. JSONL format for SIEM integration (Splunk, ELK/OpenSearch). Async writer, file locking, rotation by date, retention policy. Genesis chain start. Verification and purge subcommands
 
 #### Web UI (routers/)
 - **`routers/chat.py`** — SSE chat streaming with dataclass-based architecture: `ChatRequestContext`, `WebConfirmContext`, `ToolExecutorContext`, `StreamContext`. Extracted functions: `_parse_chat_request()`, `_resolve_sources()`, `_build_tool_list()`, `_build_chat_system_prompt()`, `_web_confirm_tool()`, `_execute_web_tool()`, `_stream_chat_events()`. Supports prompt queuing (max 10), source injection (50K char limit), plan mode, sub-agents
@@ -134,10 +134,10 @@ Key config sections (see `config.py` dataclasses for all fields and defaults):
 - **`SubagentConfig`** — Limits: concurrency (5), total (10), depth (3), iterations (15), timeout (120s)
 - **`EmbeddingsConfig`** — Dual provider (local fastembed default or API). Tri-state `enabled`: None=auto-detect, True=force, False=disable
 - **`RagConfig`** — RAG pipeline: `max_chunks` (10), `max_tokens` (2000), `similarity_threshold` (0.5)
-- **`BudgetConfig`** — Token budget enforcement nested under `cli.usage.budgets`: `enabled` (default false), `max_tokens_per_request` (0 = unlimited), `max_tokens_per_conversation` (0 = unlimited), `max_tokens_per_day` (0 = unlimited), `warn_threshold_percent` (default 80), `action_on_exceed` (default "block"). Denial-of-wallet prevention for cost control
 - **`CodebaseIndexConfig`** — Tree-sitter index: `map_tokens` (1000), auto-detect languages. Optional dependency
 - **`ProxyConfig`** — OpenAI-compatible proxy (opt-in), CORS allowlist
 - **`McpServerConfig`** — Per-server `tools_include`/`tools_exclude` (fnmatch)
+- **`AuditConfig`** — Audit log: `enabled` (default true), `log_path` (default data_dir/audit), `retention_days` (180), `tamper_protection` (default true). HMAC chain integrity verification
 
 ### Developer Workflow
 
@@ -153,7 +153,7 @@ PyPI: `anteroom`. Deploy via `/deploy` skill (merge PR, CI, version bump, build,
 
 ## Testing Patterns
 
-- **Unit tests** (`tests/unit/`, ~2,400 tests): fully mocked, no I/O. `@pytest.mark.asyncio` with `asyncio_mode = "auto"`
+- **Unit tests** (`tests/unit/`, ~2,495 tests): fully mocked, no I/O. `@pytest.mark.asyncio` with `asyncio_mode = "auto"`
 - **Integration** (`tests/integration/`): real SQLite databases
 - **E2e** (`tests/e2e/`): real servers, mock AI. Markers: `e2e`, `requires_mcp`
 - **Agent evals** (`tests/e2e/test_agent_evals.py`): 10 tests with real AI via `aroom exec --json`. Marker: `real_ai`. Auto-skip without API key. Uses `--temperature 0 --seed 42` for reproducibility
