@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 26, 2026
 
+### v1.63.0
+
+**New:**
+
+- Egress domain allowlist: restrict which external domains can be contacted for API calls, with team-enforceable policies (#453)
+- SSRF prevention: block loopback, RFC-1918 private, link-local (cloud IMDS), multicast, and reserved addresses (#453)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.63.0)
+
 ### v1.62.0
 
 **New:**
