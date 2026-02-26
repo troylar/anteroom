@@ -7,6 +7,18 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 26, 2026
 
+### v1.63.1
+
+**Fixed:**
+
+- Built-in `/a-help` skill updated with all current tools, CLI flags, REPL commands, config sections, and docs index (#487)
+
+**Improved:**
+
+- `/submit-pr` now automatically checks a-help.yaml for staleness during documentation freshness audit (#487)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.63.1)
+
 ### v1.63.0
 
 **New:**
