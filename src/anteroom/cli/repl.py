@@ -26,7 +26,7 @@ from ..db import init_db
 from ..services import storage
 from ..services.agent_loop import _build_compaction_history, run_agent_loop
 from ..services.ai_service import AIService, create_ai_service
-from ..services.context_trust import trusted_section_marker, untrusted_section_marker
+from ..services.context_trust import sanitize_trust_tags, trusted_section_marker, untrusted_section_marker
 from ..services.embeddings import get_effective_dimensions
 from ..services.rewind import collect_file_paths
 from ..services.rewind import rewind_conversation as rewind_service
@@ -1724,6 +1724,8 @@ async def _run_repl(
         "conventions",
         "tools",
         "skills",
+        "project",
+        "projects",
         "mcp",
         "model",
         "plan",
@@ -2235,6 +2237,42 @@ async def _run_repl(
             prompt = re.sub(r"\n*<planning_mode>.*?</planning_mode>", "", prompt, flags=re.DOTALL)
             return prompt
 
+        # -- Project state --
+        _active_project: list[dict[str, Any] | None] = [None]
+
+        def _resolve_project(name_or_id: str) -> dict[str, Any] | None:
+            """Look up a project by name (case-insensitive) or UUID prefix."""
+            proj = storage.get_project_by_name(db, name_or_id)
+            if proj:
+                return proj
+            proj = storage.get_project(db, name_or_id)
+            if proj:
+                return proj
+            # Try UUID prefix match
+            all_projects = storage.list_projects(db)
+            matches = [p for p in all_projects if p["id"].startswith(name_or_id)]
+            if len(matches) == 1:
+                return matches[0]
+            return None
+
+        def _inject_project_instructions(project: dict[str, Any]) -> None:
+            nonlocal extra_system_prompt
+            extra_system_prompt = _strip_project_instructions(extra_system_prompt)
+            instructions = project.get("instructions", "")
+            if instructions:
+                safe_name = sanitize_trust_tags(project["name"]).replace('"', "&quot;")
+                safe_instructions = sanitize_trust_tags(instructions)
+                extra_system_prompt += (
+                    '\n\n<project_instructions project="'
+                    + safe_name
+                    + '">\n'
+                    + safe_instructions
+                    + "\n</project_instructions>"
+                )
+
+        def _strip_project_instructions(prompt: str) -> str:
+            return re.sub(r"\n*<project_instructions[^>]*>.*?</project_instructions>", "", prompt, flags=re.DOTALL)
+
         # Apply plan mode at startup if --plan was passed
         if _plan_active[0]:
             _apply_plan_mode(conv["id"])
@@ -2264,11 +2302,13 @@ async def _run_repl(
                     if len(parts) >= 2 and parts[1] in ("note", "doc", "document"):
                         conv_type = "document" if parts[1] in ("doc", "document") else "note"
                         conv_title = parts[2].strip() if len(parts) >= 3 else f"New {conv_type.title()}"
+                    active_pid = _active_project[0]["id"] if _active_project[0] else None
                     conv = storage.create_conversation(
                         db,
                         title=conv_title,
                         conversation_type=conv_type,
                         working_dir=working_dir,
+                        project_id=active_pid,
                         **id_kw,
                     )
                     ai_messages = []
@@ -2605,6 +2645,211 @@ async def _run_repl(
                                 f"[{CHROME}]No skills loaded. Add .yaml files to"
                                 f" ~/.anteroom/skills/ or .anteroom/skills/[/{CHROME}]\n"
                             )
+                    continue
+                elif cmd in ("/projects", "/project"):
+                    parts = user_input.split(maxsplit=2)
+                    sub = parts[1].lower() if len(parts) >= 2 else ""
+
+                    # /projects is shorthand for /project list
+                    if cmd == "/projects":
+                        sub = "list"
+
+                    if sub == "list" or (cmd == "/project" and not sub):
+                        projects = storage.list_projects(db)
+                        if not projects:
+                            renderer.console.print(
+                                f"[{CHROME}]No projects. Create one with /project create <name>[/{CHROME}]\n"
+                            )
+                            continue
+                        renderer.console.print("\n[bold]Projects:[/bold]")
+                        for p in projects:
+                            cnt = storage.count_project_conversations(db, p["id"])
+                            model_info = f" model={p['model']}" if p.get("model") else ""
+                            active = (
+                                " [green](active)[/green]"
+                                if (_active_project[0] and _active_project[0]["id"] == p["id"])
+                                else ""
+                            )
+                            renderer.console.print(
+                                f"  {p['name']} — {cnt} conversations{model_info}{active}"
+                                f" [{MUTED}]{p['id'][:8]}...[/{MUTED}]"
+                            )
+                        renderer.console.print()
+
+                    elif sub == "create":
+                        pname = parts[2].strip() if len(parts) >= 3 else ""
+                        if not pname:
+                            renderer.console.print(f"[{CHROME}]Usage: /project create <name>[/{CHROME}]\n")
+                            continue
+                        existing = storage.get_project_by_name(db, pname)
+                        if existing:
+                            renderer.render_error(f"Project '{pname}' already exists.")
+                            continue
+                        renderer.console.print(
+                            f"[{CHROME}]Enter instructions (empty line to finish, Enter to skip):[/{CHROME}]"
+                        )
+                        instr_lines: list[str] = []
+                        try:
+                            while True:
+                                line = await session.prompt_async("  ")
+                                if line == "":
+                                    break
+                                instr_lines.append(line)
+                        except (EOFError, KeyboardInterrupt):
+                            pass
+                        instr_text = "\n".join(instr_lines).strip()
+                        renderer.console.print(f"[{CHROME}]Model override (press Enter for default):[/{CHROME}]")
+                        try:
+                            model_input = await session.prompt_async("  ")
+                        except (EOFError, KeyboardInterrupt):
+                            model_input = ""
+                        model_val = model_input.strip() or None
+                        proj = storage.create_project(
+                            db,
+                            name=pname,
+                            instructions=instr_text,
+                            model=model_val,
+                            **id_kw,
+                        )
+                        renderer.console.print(
+                            f"[green]Created project: {proj['name']}[/green] [{MUTED}]{proj['id'][:8]}...[/{MUTED}]\n"
+                        )
+
+                    elif sub in ("select", "use"):
+                        target = parts[2].strip() if len(parts) >= 3 else ""
+                        if not target:
+                            renderer.console.print(f"[{CHROME}]Usage: /project select <name|id>[/{CHROME}]\n")
+                            continue
+                        proj = _resolve_project(target)
+                        if not proj:
+                            renderer.render_error(
+                                f"Project '{target}' not found. Run /projects to list available projects."
+                            )
+                            continue
+                        _active_project[0] = proj
+                        storage.update_conversation_project(db, conv["id"], proj["id"])
+                        conv["project_id"] = proj["id"]
+                        _inject_project_instructions(proj)
+                        if proj.get("model") and not conv.get("model"):
+                            current_model = proj["model"]
+                            ai_service = create_ai_service(config.ai)
+                            ai_service.config.model = proj["model"]
+                            renderer.console.print(f"[{CHROME}]Model: {proj['model']}[/{CHROME}]")
+                        renderer.console.print(f"[green]Active project: {proj['name']}[/green]\n")
+
+                    elif sub == "edit":
+                        target = parts[2].strip() if len(parts) >= 3 else ""
+                        if not target:
+                            if _active_project[0]:
+                                target = _active_project[0]["name"]
+                            else:
+                                renderer.console.print(f"[{CHROME}]Usage: /project edit <name|id>[/{CHROME}]\n")
+                                continue
+                        proj = _resolve_project(target)
+                        if not proj:
+                            renderer.render_error(f"Project '{target}' not found.")
+                            continue
+                        renderer.console.print(f"[bold]Editing: {proj['name']}[/bold]")
+                        renderer.console.print(f"[{CHROME}]New name (Enter to keep '{proj['name']}'):[/{CHROME}]")
+                        try:
+                            new_name = await session.prompt_async("  ")
+                        except (EOFError, KeyboardInterrupt):
+                            new_name = ""
+                        renderer.console.print(
+                            f"[{CHROME}]New instructions (Enter to keep current, 'clear' to remove):[/{CHROME}]"
+                        )
+                        new_instr_lines: list[str] = []
+                        try:
+                            while True:
+                                line = await session.prompt_async("  ")
+                                if line == "":
+                                    break
+                                new_instr_lines.append(line)
+                        except (EOFError, KeyboardInterrupt):
+                            pass
+                        new_instr = "\n".join(new_instr_lines).strip()
+                        renderer.console.print(f"[{CHROME}]New model (Enter to keep, 'clear' to remove):[/{CHROME}]")
+                        try:
+                            new_model_input = await session.prompt_async("  ")
+                        except (EOFError, KeyboardInterrupt):
+                            new_model_input = ""
+                        update_kw: dict[str, Any] = {}
+                        if new_name.strip():
+                            update_kw["name"] = new_name.strip()
+                        if new_instr == "clear":
+                            update_kw["instructions"] = ""
+                        elif new_instr:
+                            update_kw["instructions"] = new_instr
+                        if new_model_input.strip() == "clear":
+                            update_kw["model"] = None
+                        elif new_model_input.strip():
+                            update_kw["model"] = new_model_input.strip()
+                        if update_kw:
+                            updated = storage.update_project(db, proj["id"], **update_kw)
+                            if updated and _active_project[0] and _active_project[0]["id"] == proj["id"]:
+                                _active_project[0] = updated
+                                _inject_project_instructions(updated)
+                            renderer.console.print("[green]Project updated[/green]\n")
+                        else:
+                            renderer.console.print(f"[{CHROME}]No changes[/{CHROME}]\n")
+
+                    elif sub == "delete":
+                        target = parts[2].strip() if len(parts) >= 3 else ""
+                        if not target:
+                            renderer.console.print(f"[{CHROME}]Usage: /project delete <name|id>[/{CHROME}]\n")
+                            continue
+                        proj = _resolve_project(target)
+                        if not proj:
+                            renderer.render_error(f"Project '{target}' not found.")
+                            continue
+                        renderer.console.print(f"[yellow]Delete project '{proj['name']}'? (y/N)[/yellow]")
+                        try:
+                            confirm = await session.prompt_async("  ")
+                        except (EOFError, KeyboardInterrupt):
+                            confirm = "n"
+                        if confirm.strip().lower() != "y":
+                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                            continue
+                        storage.delete_project(db, proj["id"])
+                        if _active_project[0] and _active_project[0]["id"] == proj["id"]:
+                            _active_project[0] = None
+                            extra_system_prompt = _strip_project_instructions(extra_system_prompt)
+                        renderer.console.print(f"[green]Deleted: {proj['name']}[/green]\n")
+
+                    elif sub == "clear":
+                        if not _active_project[0]:
+                            renderer.console.print(f"[{CHROME}]No active project[/{CHROME}]\n")
+                            continue
+                        old_name = _active_project[0]["name"]
+                        _active_project[0] = None
+                        storage.update_conversation_project(db, conv["id"], None)
+                        conv["project_id"] = None
+                        extra_system_prompt = _strip_project_instructions(extra_system_prompt)
+                        renderer.console.print(f"[{CHROME}]Cleared project: {old_name}[/{CHROME}]\n")
+
+                    elif sub == "sources":
+                        proj = _active_project[0]
+                        if not proj:
+                            renderer.console.print(
+                                f"[{CHROME}]No active project. Use /project select <name> first.[/{CHROME}]\n"
+                            )
+                            continue
+                        sources = storage.get_project_sources(db, proj["id"])
+                        if not sources:
+                            renderer.console.print(f"[{CHROME}]No sources linked to '{proj['name']}'[/{CHROME}]\n")
+                            continue
+                        renderer.console.print(f"\n[bold]Sources for {proj['name']}:[/bold]")
+                        for s in sources:
+                            title = s.get("title") or s.get("url") or s["id"][:8]
+                            renderer.console.print(f"  {title} [{MUTED}]{s['id'][:8]}...[/{MUTED}]")
+                        renderer.console.print()
+
+                    else:
+                        if _active_project[0]:
+                            renderer.console.print(f"[{CHROME}]Active project: {_active_project[0]['name']}[/{CHROME}]")
+                        renderer.console.print(
+                            f"[{CHROME}]Usage: /project [list|create|select|edit|delete|clear|sources][/{CHROME}]\n"
+                        )
                     continue
                 elif cmd == "/mcp":
                     parts = user_input.split()

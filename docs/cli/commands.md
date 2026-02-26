@@ -19,6 +19,14 @@ All slash commands available in the CLI REPL.
 | `/upload <path>` | Upload a file to the knowledge base, auto-extracts text from PDFs/DOCX |
 | `/tools` | List all available tools (built-in + MCP), sorted alphabetically |
 | `/skills` | List available skills with descriptions and source |
+| `/project list` | List all projects |
+| `/project create <name>` | Create a new project |
+| `/project select <name\|id>` | Set active project for new conversations |
+| `/project edit <name\|id>` | Edit project instructions or model |
+| `/project delete <name\|id>` | Delete a project (with confirmation) |
+| `/project clear` | Deactivate the current project |
+| `/project sources` | List sources linked to the active project |
+| `/projects` | Shortcut for `/project list` |
 | `/mcp` | Show MCP server status |
 | `/mcp status <name>` | Detailed diagnostics for one server |
 | `/usage` | Show token usage statistics (today, this week, this month, all time) |
