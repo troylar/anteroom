@@ -914,6 +914,7 @@ async def run_cli(
     _subagent_counter = 0
     _active_cancel_event: list[asyncio.Event | None] = [None]
 
+    from ..services.tool_rate_limit import ToolRateLimiter
     from ..tools.subagent import SubagentLimiter
 
     _sa_config = config.safety.subagent
@@ -921,6 +922,9 @@ async def run_cli(
         max_concurrent=_sa_config.max_concurrent,
         max_total=_sa_config.max_total,
     )
+
+    _rate_limiter = ToolRateLimiter(config.safety.tool_rate_limit)
+    tool_registry.set_rate_limiter(_rate_limiter)
 
     async def _cli_event_sink(agent_id: str, event: Any) -> None:
         """Render sub-agent progress events in the CLI."""
@@ -1032,7 +1036,14 @@ async def run_cli(
                 confirmed = await _confirm_destructive(verdict)
                 if not confirmed:
                     return {"error": "Operation denied by user", "exit_code": -1}
+            # Rate limiting for MCP tools (built-in tools are checked in call_tool)
+            if _rate_limiter:
+                rl_v = _rate_limiter.check(tool_name)
+                if rl_v and rl_v.exceeded and _rate_limiter.config.action == "block":
+                    return {"error": rl_v.reason, "safety_blocked": True, "rate_limited": True}
             result = await mcp_manager.call_tool(tool_name, arguments)
+            if _rate_limiter:
+                _rate_limiter.record_call(success="error" not in result)
             _audit_tool_call(audit_writer, tool_name, arguments, result, conversation_id)
             return result
         raise ValueError(f"Unknown tool: {tool_name}")
@@ -1212,6 +1223,7 @@ async def run_cli(
                 tool_registry=tool_registry,
                 cancel_event_ref=_active_cancel_event,
                 subagent_limiter=_subagent_limiter,
+                rate_limiter=_rate_limiter,
                 plan_mode=plan_mode,
                 skill_msg_queue_ref=_active_msg_queue,
             )
@@ -1469,6 +1481,7 @@ async def _run_repl(
     tool_registry: Any = None,
     cancel_event_ref: list[asyncio.Event | None] | None = None,
     subagent_limiter: Any = None,
+    rate_limiter: Any = None,
     plan_mode: bool = False,
     skill_msg_queue_ref: list[asyncio.Queue[dict[str, Any]] | None] | None = None,
 ) -> None:
@@ -2813,6 +2826,8 @@ async def _run_repl(
             renderer.clear_subagent_state()
             if subagent_limiter is not None:
                 subagent_limiter.reset()
+            if rate_limiter is not None:
+                rate_limiter.reset()
             cancel_event = asyncio.Event()
             _current_cancel_event[0] = cancel_event
             if cancel_event_ref is not None:
