@@ -26,6 +26,10 @@ Project skills override global skills with the same name. Global skills override
 
 Anteroom walks up from the working directory to find the nearest `.anteroom/skills/` directory, similar to [ANTEROOM.md](../cli/project-instructions.md) discovery.
 
+### Reserved Skill Names
+
+Skill names cannot use built-in slash command names. Reserved names include: `quit`, `exit`, `new`, `help`, `list`, `delete`, `rename`, `search`, `tools`, `model`, `plan`, and others. If you try to create a skill with a reserved name, it will be silently rejected with a warning.
+
 ## Example: Test Runner
 
 ```yaml title=".anteroom/skills/test.yaml"
