@@ -1046,11 +1046,15 @@ async def _stream_chat_events(ctx: StreamContext):
                     )
                     storage.update_tool_call(ctx.db, data["id"], tool_output, data["status"])
                     # Audit log: tool call event
-                    _audit_writer = getattr(
-                        getattr(getattr(ctx.request, "app", None), "state", None),
-                        "audit_writer",
-                        None,
-                    ) if ctx.request else None
+                    _audit_writer = (
+                        getattr(
+                            getattr(getattr(ctx.request, "app", None), "state", None),
+                            "audit_writer",
+                            None,
+                        )
+                        if ctx.request
+                        else None
+                    )
                     if _audit_writer is not None:
                         from ..services.audit import AuditEntry
 

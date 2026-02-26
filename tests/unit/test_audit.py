@@ -442,16 +442,12 @@ class TestVerifyChain:
 class TestChainResumption:
     def test_resume_chain_after_restart(self, audit_dir: Path) -> None:
         """An AuditWriter should resume the chain from the last HMAC in the file."""
-        w1 = AuditWriter(
-            audit_dir, enabled=True, tamper_protection="hmac", private_key_pem=_TEST_PRIVATE_KEY_PEM
-        )
+        w1 = AuditWriter(audit_dir, enabled=True, tamper_protection="hmac", private_key_pem=_TEST_PRIVATE_KEY_PEM)
         w1.emit(AuditEntry.create("event.first", "info"))
         w1.emit(AuditEntry.create("event.second", "info"))
 
         # Create a new writer (simulates restart)
-        w2 = AuditWriter(
-            audit_dir, enabled=True, tamper_protection="hmac", private_key_pem=_TEST_PRIVATE_KEY_PEM
-        )
+        w2 = AuditWriter(audit_dir, enabled=True, tamper_protection="hmac", private_key_pem=_TEST_PRIVATE_KEY_PEM)
         w2.emit(AuditEntry.create("event.third", "info"))
 
         log_file = list(audit_dir.glob("audit-*.jsonl"))[0]

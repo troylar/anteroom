@@ -282,10 +282,15 @@ def verify_chain(log_path: Path, private_key_pem: str) -> list[dict[str, Any]]:
             try:
                 entry = json.loads(stripped)
             except json.JSONDecodeError:
-                results.append({
-                    "line": line_num, "valid": False,
-                    "event_type": "?", "timestamp": "?", "error": "invalid JSON",
-                })
+                results.append(
+                    {
+                        "line": line_num,
+                        "valid": False,
+                        "event_type": "?",
+                        "timestamp": "?",
+                        "error": "invalid JSON",
+                    }
+                )
                 prev_hmac = _GENESIS_HMAC
                 continue
 
@@ -299,12 +304,14 @@ def verify_chain(log_path: Path, private_key_pem: str) -> list[dict[str, Any]]:
             expected_hmac = _compute_hmac(hmac_key, verify_json, stored_prev)
 
             valid = _hmac.compare_digest(stored_hmac, expected_hmac) and stored_prev == prev_hmac
-            results.append({
-                "line": line_num,
-                "valid": valid,
-                "event_type": entry.get("event_type", "?"),
-                "timestamp": entry.get("timestamp", "?"),
-            })
+            results.append(
+                {
+                    "line": line_num,
+                    "valid": valid,
+                    "event_type": entry.get("event_type", "?"),
+                    "timestamp": entry.get("timestamp", "?"),
+                }
+            )
             prev_hmac = stored_hmac
 
     return results

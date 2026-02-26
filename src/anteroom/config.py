@@ -1216,9 +1216,11 @@ def load_config(
     audit_raw = raw.get("audit", {})
     if not isinstance(audit_raw, dict):
         audit_raw = {}
-    audit_enabled = str(
-        audit_raw.get("enabled", os.environ.get("AI_CHAT_AUDIT_ENABLED", "false"))
-    ).lower() in ("true", "1", "yes")
+    audit_enabled = str(audit_raw.get("enabled", os.environ.get("AI_CHAT_AUDIT_ENABLED", "false"))).lower() in (
+        "true",
+        "1",
+        "yes",
+    )
     audit_log_path = str(audit_raw.get("log_path", os.environ.get("AI_CHAT_AUDIT_LOG_PATH", "")))
     audit_tamper = str(audit_raw.get("tamper_protection", os.environ.get("AI_CHAT_AUDIT_TAMPER_PROTECTION", "hmac")))
     if audit_tamper not in ("none", "hmac"):
