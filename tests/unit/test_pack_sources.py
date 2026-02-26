@@ -7,8 +7,12 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from anteroom.config import PackSourceConfig
 from anteroom.services.pack_sources import (
+    _sanitize_git_stderr,
+    _validate_url_scheme,
     check_git_available,
     clone_source,
     ensure_source,
@@ -413,6 +417,69 @@ class TestEnsureSource:
 
         assert result.success is False
         assert "git binary not found" in result.error
+
+
+class TestValidateUrlScheme:
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://github.com/org/repo.git",
+            "http://internal.corp/repo.git",
+            "git://github.com/org/repo.git",
+            "ssh://git@github.com/org/repo.git",
+            "git@github.com:org/repo.git",
+            "git@bitbucket.org:team/packs.git",
+        ],
+    )
+    def test_allowed_schemes(self, url: str) -> None:
+        assert _validate_url_scheme(url) is None
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "ext::sh -c evil_command",
+            "file:///etc/passwd",
+            "ftp://example.com/repo.git",
+            "data:text/plain,hello",
+        ],
+    )
+    def test_rejected_schemes(self, url: str) -> None:
+        error = _validate_url_scheme(url)
+        assert error is not None
+        assert "not allowed" in error
+
+
+class TestSanitizeGitStderr:
+    def test_strips_https_credentials(self) -> None:
+        stderr = "fatal: could not read from https://oauth2:ghp_secret123@github.com/org/repo.git"
+        sanitized = _sanitize_git_stderr(stderr)
+        assert "ghp_secret123" not in sanitized
+        assert "***@" in sanitized
+
+    def test_strips_http_credentials(self) -> None:
+        stderr = "fatal: Authentication failed for 'http://user:pass@internal.corp/repo.git'"
+        sanitized = _sanitize_git_stderr(stderr)
+        assert "pass" not in sanitized
+        assert "***@" in sanitized
+
+    def test_no_credentials_unchanged(self) -> None:
+        stderr = "fatal: repository 'https://github.com/org/repo.git' not found"
+        assert _sanitize_git_stderr(stderr) == stderr
+
+    def test_empty_string(self) -> None:
+        assert _sanitize_git_stderr("") == ""
+
+
+class TestCloneSourceUrlValidation:
+    def test_rejects_ext_scheme(self, tmp_path: Path) -> None:
+        result = clone_source("ext::sh -c evil", "main", tmp_path)
+        assert result.success is False
+        assert "not allowed" in result.error
+
+    def test_rejects_file_scheme(self, tmp_path: Path) -> None:
+        result = clone_source("file:///etc/passwd", "main", tmp_path)
+        assert result.success is False
+        assert "not allowed" in result.error
 
 
 class TestConfigParsing:

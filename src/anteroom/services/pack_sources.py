@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -28,6 +29,27 @@ CLONE_TIMEOUT = 60  # seconds
 PULL_TIMEOUT = 30  # seconds
 _SOURCE_URL_FILE = ".source_url"
 _SOURCE_BRANCH_FILE = ".source_branch"
+
+# URL scheme allowlist — reject ext:: (arbitrary command exec) and file:// (local FS read)
+_ALLOWED_SCHEMES = ("https://", "git://", "ssh://", "http://")
+_GIT_AT_PATTERN = re.compile(r"^[\w.-]+@[\w.-]+:")  # git@host:path SSH shorthand
+
+# Regex to strip embedded credentials from URLs in error messages
+_CREDENTIAL_PATTERN = re.compile(r"(https?://)([^@]+)@", re.IGNORECASE)
+
+
+def _validate_url_scheme(url: str) -> str | None:
+    """Validate that a URL uses an allowed scheme. Returns error message or None."""
+    if any(url.startswith(scheme) for scheme in _ALLOWED_SCHEMES):
+        return None
+    if _GIT_AT_PATTERN.match(url):
+        return None
+    return f"URL scheme not allowed: {url.split(':', 1)[0]}. Use https://, ssh://, or git@host:path"
+
+
+def _sanitize_git_stderr(stderr: str) -> str:
+    """Strip embedded credentials from git stderr before surfacing in errors."""
+    return _CREDENTIAL_PATTERN.sub(r"\1***@", stderr)
 _CACHE_DIR_NAME = "cache"
 _SOURCES_DIR_NAME = "sources"
 
@@ -89,6 +111,10 @@ def clone_source(
     If the cache directory already exists, returns success with the
     existing path (use :func:`pull_source` to update).
     """
+    url_error = _validate_url_scheme(url)
+    if url_error:
+        return PackSourceResult(success=False, error=url_error)
+
     cache_path = resolve_cache_path(url, data_dir)
 
     if cache_path.is_dir():
@@ -121,7 +147,7 @@ def clone_source(
         # Clean up partial clone
         if cache_path.exists():
             shutil.rmtree(cache_path, ignore_errors=True)
-        stderr = result.stderr.strip()
+        stderr = _sanitize_git_stderr(result.stderr.strip())
         return PackSourceResult(
             success=False,
             error=f"git clone failed (exit {result.returncode}): {stderr}",
@@ -171,7 +197,7 @@ def pull_source(
         return PackSourceResult(success=False, error=f"OS error: {e}")
 
     if result.returncode != 0:
-        stderr = result.stderr.strip()
+        stderr = _sanitize_git_stderr(result.stderr.strip())
         return PackSourceResult(
             success=False,
             error=f"git pull failed (exit {result.returncode}): {stderr}",
