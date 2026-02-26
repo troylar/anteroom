@@ -108,6 +108,13 @@ def get_project(db: sqlite3.Connection, project_id: str) -> dict[str, Any] | Non
     return dict(row)
 
 
+def get_project_by_name(db: sqlite3.Connection, name: str) -> dict[str, Any] | None:
+    row = db.execute_fetchone("SELECT * FROM projects WHERE name = ?", (name,))
+    if not row:
+        return None
+    return dict(row)
+
+
 def list_projects(db: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = db.execute_fetchall("SELECT * FROM projects ORDER BY updated_at DESC")
     return [dict(r) for r in rows]
