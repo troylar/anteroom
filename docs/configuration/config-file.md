@@ -151,6 +151,15 @@ dlp:
   # patterns: []                        # Built-in patterns loaded by default
   custom_patterns: []                  # Add custom regex rules
 
+output_filter:
+  enabled: false                       # Set true to enable output filtering
+  system_prompt_leak_detection: true   # Detect system prompt leaks via n-gram analysis (default: true)
+  leak_threshold: 0.4                  # Minimum similarity threshold for leak detection (0.0-1.0, default: 0.4)
+  action: "warn"                       # "warn" | "block" | "redact" (default: warn)
+  redaction_string: "[FILTERED]"       # String to replace filtered content when action is "redact"
+  log_detections: true                 # Log filter detections to security log (default: true)
+  custom_patterns: []                  # Add custom forbidden pattern rules
+
 # Project/team config only — shared references
 references:
   instructions:
@@ -435,6 +444,20 @@ Controls Data Loss Prevention scanning for sensitive patterns (SSN, credit card,
 | `log_detections` | boolean | `true` | Log all DLP detections to the security logger |
 | `patterns` | list | `[]` | Built-in patterns are loaded automatically (SSN, credit card, email, phone, IBAN) |
 | `custom_patterns` | list | `[]` | Custom regex patterns. Each is a dict with `name`, `pattern` (regex), and `description` |
+
+### output_filter
+
+Controls output content filtering to detect and prevent system prompt leaks and forbidden content in LLM responses. See [Output Filter documentation](../security/output-filter.md) for detailed configuration and use cases.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Enable output content filtering |
+| `system_prompt_leak_detection` | boolean | `true` | Detect system prompt leaks via n-gram analysis of LLM output against the system prompt |
+| `leak_threshold` | float | `0.4` | Minimum n-gram similarity threshold (0.0–1.0) for flagging a potential leak |
+| `action` | string | `warn` | Action on filter match: `warn` (allow + log), `redact` (replace with `redaction_string`), or `block` (reject) |
+| `redaction_string` | string | `[FILTERED]` | String to replace filtered content when action is `redact` |
+| `log_detections` | boolean | `true` | Log all filter detections to the security logger |
+| `custom_patterns` | list | `[]` | Custom regex patterns for forbidden content. Each is a dict with `name`, `pattern` (regex), and `description` |
 
 ### usage
 

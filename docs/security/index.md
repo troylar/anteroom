@@ -47,6 +47,9 @@ Browser / CLI
           DLP Scan (redact / block / warn)
                 │
                 ▼
+          Output Filter (leak detect + custom patterns)
+                │
+                ▼
           Audit Log (HMAC-chained JSONL)
 ```
 
@@ -68,7 +71,8 @@ Browser / CLI
 | [Sub-Agent Isolation](hardening.md#sub-agent-safety) | `safety.subagent.*` | Concurrency, depth, iteration, timeout, and output limits |
 | [Team Config Enforcement](hardening.md#team-config-enforcement) | Team config `enforce` list | Lock security settings across team members |
 | [MCP Tool Safety](hardening.md#mcp-tool-safety) | `mcp_servers[].*` | SSRF protection, metachar rejection, tool filtering, trust levels |
-| [Data Loss Prevention](dlp.md) | `safety.dlp.*` | Regex-based PII scanning, redact/block/warn actions, custom patterns |
+| [Data Loss Prevention](dlp.md) | `dlp.*` | Regex-based PII scanning, redact/block/warn actions, custom patterns |
+| [Output Content Filtering](output-filter.md) | `output_filter.*` | System prompt leak detection via n-grams, forbidden content patterns, redact/block/warn actions |
 
 ## Threat Model
 
@@ -84,6 +88,7 @@ Anteroom is a **single-user, local-first application** intended to run on a user
 | Destructive AI tool use | 4 risk tiers, approval gates, hard-block patterns | [Tool Safety](tool-safety.md) |
 | Bash command injection | Hard-block patterns, sandbox controls, path blocking | [Bash Sandboxing](bash-sandboxing.md) |
 | Indirect prompt injection | Trust classification, defensive envelopes, tag sanitization | [Prompt Injection Defense](prompt-injection-defense.md) |
+| System prompt leaking | N-gram similarity detection, redact/block on leak detection | [Output Content Filtering](output-filter.md) |
 | Malicious MCP servers (SSRF) | DNS resolution validation, private IP rejection | [Hardening](hardening.md#mcp-tool-safety) |
 | MCP tool injection | Shell metacharacter rejection, tool filtering | [Hardening](hardening.md#mcp-tool-safety) |
 | Runaway AI costs | Token budgets (per-request, per-conversation, per-day) | [Hardening](hardening.md#token-budget-enforcement) |
@@ -101,3 +106,4 @@ Anteroom is a **single-user, local-first application** intended to run on a user
 - [Prompt Injection Defense](prompt-injection-defense.md) — trust classification, defensive envelopes
 - [Deployment Hardening](hardening.md) — headers, TLS, budgets, sub-agents, MCP, team enforcement
 - [Data Loss Prevention](dlp.md) — sensitive data scanning and redaction
+- [Output Content Filtering](output-filter.md) — system prompt leak detection, forbidden patterns, redaction
