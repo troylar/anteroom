@@ -395,6 +395,14 @@ class SubagentConfig:
 
 
 @dataclass
+class ToolRateLimitConfig:
+    max_calls_per_minute: int = 0
+    max_calls_per_conversation: int = 0
+    max_consecutive_failures: int = 5
+    action: str = "block"
+
+
+@dataclass
 class SafetyConfig:
     enabled: bool = True
     approval_mode: str = "ask_for_writes"
@@ -408,6 +416,7 @@ class SafetyConfig:
     tool_tiers: dict[str, str] = field(default_factory=dict)
     read_only: bool = False
     subagent: SubagentConfig = field(default_factory=SubagentConfig)
+    tool_rate_limit: ToolRateLimitConfig = field(default_factory=ToolRateLimitConfig)
 
 
 @dataclass
@@ -1160,6 +1169,28 @@ def load_config(
         max_prompt_chars=_sa_int("max_prompt_chars", 32_000, 100, 100_000),
     )
 
+    trl_raw = safety_raw.get("tool_rate_limit", {})
+    if not isinstance(trl_raw, dict):
+        trl_raw = {}
+
+    def _trl_int(key: str, default: int, lo: int, hi: int) -> int:
+        try:
+            val = int(trl_raw.get(key, default))
+        except (ValueError, TypeError):
+            val = default
+        return max(lo, min(val, hi))
+
+    trl_action = str(trl_raw.get("action", "block")).lower()
+    if trl_action not in ("block", "warn"):
+        trl_action = "block"
+
+    tool_rate_limit_config = ToolRateLimitConfig(
+        max_calls_per_minute=_trl_int("max_calls_per_minute", 0, 0, 100_000),
+        max_calls_per_conversation=_trl_int("max_calls_per_conversation", 0, 0, 100_000),
+        max_consecutive_failures=_trl_int("max_consecutive_failures", 5, 0, 1000),
+        action=trl_action,
+    )
+
     safety_config = SafetyConfig(
         enabled=safety_enabled,
         approval_mode=safety_approval_mode,
@@ -1173,6 +1204,7 @@ def load_config(
         tool_tiers={str(k): str(v) for k, v in safety_tool_tiers.items()},
         read_only=safety_read_only,
         subagent=subagent_config,
+        tool_rate_limit=tool_rate_limit_config,
     )
 
     # RAG config

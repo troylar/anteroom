@@ -263,7 +263,16 @@ async def _run_subagent(
                         return {"error": "Operation denied by user", "exit_code": -1}
                 else:
                     return {"error": f"Tool '{tool_name}' requires approval but no approval channel available"}
-            return await _mcp_manager.call_tool(tool_name, arguments)
+            # Rate limiting for MCP tools in subagent (shared limiter from parent)
+            _rl = getattr(_tool_registry, "_rate_limiter", None)
+            if _rl is not None:
+                rl_v = _rl.check(tool_name)
+                if rl_v and rl_v.exceeded and _rl.config.action == "block":
+                    return {"error": rl_v.reason, "safety_blocked": True, "rate_limited": True}
+            result = await _mcp_manager.call_tool(tool_name, arguments)
+            if _rl is not None:
+                _rl.record_call(success="error" not in result)
+            return result
         raise ValueError(f"Unknown tool: {tool_name}")
 
     # Isolated message history for the child

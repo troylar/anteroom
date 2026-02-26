@@ -645,6 +645,7 @@ class ToolExecutorContext:
     subagent_limiter: Any
     sa_config: Any
     request_config: Any
+    rate_limiter: Any = None
     subagent_counter: list[int] = field(default_factory=lambda: [0])
     max_subagent_events: int = 500
 
@@ -730,11 +731,21 @@ async def _execute_web_tool(ctx: ToolExecutorContext, tool_name: str, arguments:
             confirmed = await _confirm(verdict)
             if not confirmed:
                 return {"error": "Operation denied by user", "exit_code": -1, "_approval_decision": "denied"}
-            result = await ctx.mcp_manager.call_tool(tool_name, arguments)
-            result["_approval_decision"] = _scope_to_decision(ctx.confirm_ctx)
-            return result
+        # Rate limiting for MCP tools (built-in tools checked in call_tool)
+        if ctx.rate_limiter:
+            rl_v = ctx.rate_limiter.check(tool_name)
+            if rl_v and rl_v.exceeded and ctx.rate_limiter.config.action == "block":
+                return {
+                    "error": rl_v.reason,
+                    "safety_blocked": True,
+                    "rate_limited": True,
+                    "_approval_decision": "rate_limited",
+                }
         result = await ctx.mcp_manager.call_tool(tool_name, arguments)
-        result["_approval_decision"] = "auto"
+        if ctx.rate_limiter:
+            ctx.rate_limiter.record_call(success="error" not in result)
+        decision = _scope_to_decision(ctx.confirm_ctx) if (verdict and verdict.needs_approval) else "auto"
+        result["_approval_decision"] = decision
         return result
     raise ValueError(f"Unknown tool: {tool_name}")
 
@@ -1581,6 +1592,10 @@ async def chat(conversation_id: str, request: Request):
         max_concurrent=_sa_config.max_concurrent if _sa_config else 5,
         max_total=_sa_config.max_total if _sa_config else 10,
     )
+    from ..services.tool_rate_limit import ToolRateLimiter
+
+    _rate_limiter = ToolRateLimiter(safety_config.tool_rate_limit if safety_config else None)
+    tool_registry.set_rate_limiter(_rate_limiter)
     _subagent_events: dict[str, list[dict[str, Any]]] = {}
 
     tool_exec_ctx = ToolExecutorContext(
@@ -1598,6 +1613,7 @@ async def chat(conversation_id: str, request: Request):
         subagent_limiter=_subagent_limiter,
         sa_config=_sa_config,
         request_config=request.app.state.config,
+        rate_limiter=_rate_limiter,
     )
 
     async def _tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:

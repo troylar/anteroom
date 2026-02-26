@@ -6,6 +6,7 @@ import logging
 from typing import Any, Callable, Coroutine
 
 from ..config import SafetyConfig
+from ..services.tool_rate_limit import ToolRateLimiter
 from .safety import SafetyVerdict, check_bash_command, check_write_path
 from .security import check_hard_block
 from .tiers import ToolTier as ToolTier
@@ -27,6 +28,7 @@ class ToolRegistry:
         self._safety_config: SafetyConfig | None = None
         self._working_dir: str | None = None
         self._session_allowed: set[str] = set()
+        self._rate_limiter: ToolRateLimiter | None = None
 
     def set_confirm_callback(self, callback: ConfirmCallback | None) -> None:
         self._confirm_callback = callback
@@ -45,6 +47,9 @@ class ToolRegistry:
 
     def clear_session_permissions(self) -> None:
         self._session_allowed.clear()
+
+    def set_rate_limiter(self, limiter: ToolRateLimiter | None) -> None:
+        self._rate_limiter = limiter
 
     def register(self, name: str, handler: ToolHandler, definition: dict[str, Any]) -> None:
         self._handlers[name] = handler
@@ -223,11 +228,30 @@ class ToolRegistry:
             if verdict.is_hard_blocked:
                 user_approved_hard_block = True
 
+        # Rate limiting check (after safety, before execution)
+        if self._rate_limiter:
+            rl_verdict = self._rate_limiter.check(name)
+            if rl_verdict and rl_verdict.exceeded:
+                if self._rate_limiter.config.action == "block":
+                    logger.warning("Tool rate-limited: %s — %s", name, rl_verdict.reason)
+                    return {
+                        "error": rl_verdict.reason,
+                        "safety_blocked": True,
+                        "rate_limited": True,
+                        "_approval_decision": "rate_limited",
+                    }
+                logger.warning("Tool rate limit warning: %s — %s", name, rl_verdict.reason)
+
         extra_kwargs: dict[str, Any] = {}
         if user_approved_hard_block:
             extra_kwargs["_bypass_hard_block"] = True
         result = await handler(**arguments, **extra_kwargs)
         result["_approval_decision"] = approval_decision
+
+        # Record the call for rate limiting
+        if self._rate_limiter:
+            self._rate_limiter.record_call(success="error" not in result)
+
         return result
 
     def list_tools(self) -> list[str]:

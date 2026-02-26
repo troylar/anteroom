@@ -157,6 +157,13 @@ _KNOWN_KEYS: dict[str, set[str]] = {
         "tool_tiers",
         "read_only",
         "subagent",
+        "tool_rate_limit",
+    },
+    "safety.tool_rate_limit": {
+        "max_calls_per_minute",
+        "max_calls_per_conversation",
+        "max_consecutive_failures",
+        "action",
     },
     "safety.subagent": {
         "max_concurrent",
@@ -199,6 +206,9 @@ _INT_FIELDS: list[tuple[str, str, int, int, int]] = [
     ("cli.usage.budgets", "max_tokens_per_day", 0, 100_000_000, 0),
     ("cli.usage.budgets", "warn_threshold_percent", 0, 100, 80),
     ("safety", "approval_timeout", 10, 600, 120),
+    ("safety.tool_rate_limit", "max_calls_per_minute", 0, 100_000, 0),
+    ("safety.tool_rate_limit", "max_calls_per_conversation", 0, 100_000, 0),
+    ("safety.tool_rate_limit", "max_consecutive_failures", 0, 1000, 5),
     ("safety.subagent", "max_concurrent", 1, 20, 5),
     ("safety.subagent", "max_total", 1, 50, 10),
     ("safety.subagent", "max_depth", 1, 10, 3),
@@ -224,6 +234,7 @@ _ENUM_FIELDS: list[tuple[str, str, set[str]]] = [
     ("safety", "approval_mode", {"auto", "ask_for_dangerous", "ask_for_writes", "ask"}),
     ("cli.planning", "auto_mode", {"off", "suggest", "auto"}),
     ("cli.usage.budgets", "action_on_exceed", {"block", "warn"}),
+    ("safety.tool_rate_limit", "action", {"block", "warn"}),
     ("embeddings", "provider", {"local", "api"}),
 ]
 

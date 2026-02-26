@@ -228,6 +228,12 @@ async def run_exec_mode(
         except (EOFError, KeyboardInterrupt):
             return ""
 
+    # Rate limiting
+    from ..services.tool_rate_limit import ToolRateLimiter
+
+    _rate_limiter = ToolRateLimiter(config.safety.tool_rate_limit)
+    tool_registry.set_rate_limiter(_rate_limiter)
+
     # Sub-agent support
     sa_config = config.safety.subagent
     subagent_limiter = SubagentLimiter(
@@ -275,7 +281,14 @@ async def run_exec_mode(
                 confirmed = await _exec_confirm(verdict)
                 if not confirmed:
                     return {"error": "Operation denied", "exit_code": -1}
-            return await mcp_manager.call_tool(tool_name, arguments)
+            if _rate_limiter:
+                rl_v = _rate_limiter.check(tool_name)
+                if rl_v and rl_v.exceeded and _rate_limiter.config.action == "block":
+                    return {"error": rl_v.reason, "safety_blocked": True, "rate_limited": True}
+            result = await mcp_manager.call_tool(tool_name, arguments)
+            if _rate_limiter:
+                _rate_limiter.record_call(success="error" not in result)
+            return result
         raise ValueError(f"Unknown tool: {tool_name}")
 
     # Build tool list
