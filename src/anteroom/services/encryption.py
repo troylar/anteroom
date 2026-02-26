@@ -117,13 +117,13 @@ def migrate_plaintext_to_encrypted(
     Raises ImportError if sqlcipher3 is not installed.
     Raises ValueError if migration verification fails.
     """
-    import sqlcipher3
-
     if not db_path.exists():
         raise FileNotFoundError(f"Database not found: {db_path}")
 
     if verify_encryption(db_path):
         raise ValueError(f"Database already appears to be encrypted: {db_path}")
+
+    import sqlcipher3
 
     backup_path = db_path.with_suffix(db_path.suffix + backup_suffix)
 
