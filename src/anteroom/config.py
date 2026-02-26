@@ -1833,7 +1833,7 @@ def load_config(
                 must_be=rule_raw.get("must_be"),
                 must_not_be=rule_raw.get("must_not_be"),
                 must_match=str(rule_raw.get("must_match", "")),
-                must_not_be_empty=str(rule_raw.get("must_not_be_empty", "false")).lower() not in ("false", "0", "no"),
+                must_not_be_empty=bool(rule_raw.get("must_not_be_empty", False)),
                 must_contain=rule_raw.get("must_contain"),
             )
         )

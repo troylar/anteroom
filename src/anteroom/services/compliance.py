@@ -2,6 +2,10 @@
 
 Evaluates compliance rules against the final merged AppConfig.
 Non-compliant configurations fail closed at startup.
+
+Each rule should use exactly one operator (must_be, must_not_be, must_match,
+must_not_be_empty, or must_contain). When multiple operators are set on a
+single rule, they are evaluated in order and the first failure wins.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 _MISSING = object()
 
-_SAFE_IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*$")
+_SAFE_IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
 
 _SENSITIVE_SEGMENTS = frozenset({"api_key", "password", "secret", "token", "credential", "private_key"})
 
