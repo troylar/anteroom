@@ -74,7 +74,8 @@ def check_all_budgets(
     """Check all three budget types, returning the worst status or None if all OK.
 
     Returns the first EXCEEDED status, then the first WARNING, or None if all OK.
-    Checks in order: request, conversation, daily.
+    Checks in order: request, conversation, daily. When multiple budgets share
+    the same severity, only the first (by that order) is returned.
     """
     checks = [
         check_budget(request_tokens, max_per_request, warn_threshold_percent, "request"),

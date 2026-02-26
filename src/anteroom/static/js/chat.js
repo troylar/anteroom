@@ -339,6 +339,9 @@ const Chat = (() => {
                 hideThinking();
                 finalizeAssistant();
                 break;
+            case 'budget_warning':
+                showToast(data.message || 'Token budget warning');
+                break;
             case 'error':
                 hideThinking();
                 if (currentAssistantEl) {

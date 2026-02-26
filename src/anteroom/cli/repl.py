@@ -1218,17 +1218,19 @@ async def _run_one_shot(
     renderer.clear_subagent_state()
     thinking = False
     user_attempt = 0
+
+    _budget_cfg = config.cli.usage.budgets
+
+    async def _get_token_totals() -> tuple[int, int]:
+        return (
+            storage.get_conversation_token_total(db, conv["id"]),
+            storage.get_daily_token_total(db),
+        )
+
     try:
         while True:
             user_attempt += 1
             should_retry = False
-            _budget_cfg = config.cli.usage.budgets if hasattr(config.cli.usage, "budgets") else None
-
-            async def _get_token_totals() -> tuple[int, int]:
-                return (
-                    storage.get_conversation_token_total(db, conv["id"]),
-                    storage.get_daily_token_total(db),
-                )
 
             async for event in run_agent_loop(
                 ai_service=ai_service,
@@ -2773,6 +2775,15 @@ async def _run_repl(
 
             thinking = False
             user_attempt = 0
+
+            _budget_cfg = config.cli.usage.budgets
+
+            async def _get_token_totals() -> tuple[int, int]:
+                return (
+                    storage.get_conversation_token_total(db, conv["id"]),
+                    storage.get_daily_token_total(db),
+                )
+
             try:
                 response_token_count = 0
                 total_elapsed = 0.0
@@ -2801,14 +2812,6 @@ async def _run_repl(
                     user_attempt += 1
                     should_retry = False
 
-                    _budget_cfg2 = config.cli.usage.budgets if hasattr(config.cli.usage, "budgets") else None
-
-                    async def _get_token_totals2() -> tuple[int, int]:
-                        return (
-                            storage.get_conversation_token_total(db, conv["id"]),
-                            storage.get_daily_token_total(db),
-                        )
-
                     async for event in run_agent_loop(
                         ai_service=ai_service,
                         messages=ai_messages,
@@ -2825,8 +2828,8 @@ async def _run_repl(
                             if not _plan_active[0] and config.cli.planning.auto_mode != "off"
                             else 0
                         ),
-                        budget_config=_budget_cfg2,
-                        get_token_totals=_get_token_totals2,
+                        budget_config=_budget_cfg,
+                        get_token_totals=_get_token_totals,
                     ):
                         # Drain input_queue into msg_queue during streaming
                         await _drain_input_to_msg_queue(

@@ -857,7 +857,10 @@ def get_conversation_token_total(db: sqlite3.Connection, conversation_id: str) -
 
 
 def get_daily_token_total(db: sqlite3.Connection) -> int:
-    """Get total tokens consumed today (UTC calendar day)."""
+    """Get total tokens consumed today (UTC calendar day).
+
+    Uses date('now') which returns UTC midnight as the day boundary.
+    """
     row = db.execute_fetchone(
         "SELECT COALESCE(SUM(total_tokens), 0) FROM messages "
         "WHERE created_at >= date('now') AND total_tokens IS NOT NULL",
