@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 26, 2026
 
+### v1.55.0
+
+**New:**
+
+- Bash execution sandboxing: configurable network, package install, path, and command restrictions for the AI agent's bash tool (#450)
+- Cross-platform detection covering Unix tools, PowerShell cmdlets, and Windows package managers (#450)
+- Execution timeouts, output limits, and optional audit logging for all bash commands (#450)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.55.0)
+
 ### v1.54.0
 
 **New:**
