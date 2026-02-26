@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,7 +19,9 @@ DEFAULT_INTERVAL = 3600.0  # 1 hour
 MAX_INTERVAL = 7200.0  # 2 hours
 BACKOFF_MULTIPLIER = 2.0
 MAX_CONSECUTIVE_FAILURES = 5
-BATCH_SIZE = 100
+
+# Conversation IDs should be UUID4 format; reject anything else before path operations
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
 
 def purge_conversations_before(
@@ -56,7 +59,7 @@ def purge_conversations_before(
             count += 1
             continue
 
-        if purge_attachments:
+        if purge_attachments and _UUID_RE.match(cid):
             attachments_dir = data_dir / "attachments" / cid
             if attachments_dir.exists():
                 shutil.rmtree(attachments_dir)
@@ -106,14 +109,12 @@ class RetentionWorker:
         *,
         check_interval: int = 3600,
         purge_attachments: bool = True,
-        purge_embeddings: bool = True,
     ) -> None:
         self._db = db
         self._data_dir = data_dir
         self._retention_days = retention_days
         self._check_interval = max(60, check_interval)
         self._purge_attachments = purge_attachments
-        self._purge_embeddings = purge_embeddings
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._consecutive_failures = 0

@@ -113,9 +113,10 @@ class TestPurgeConversationsBefore:
 
     def test_deletes_attachment_files(self, tmp_path: Path) -> None:
         conn = _create_test_db(tmp_path)
-        _insert_conversation(conn, "old-conv", "2024-01-01T00:00:00")
+        cid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        _insert_conversation(conn, cid, "2024-01-01T00:00:00")
 
-        att_dir = tmp_path / "attachments" / "old-conv"
+        att_dir = tmp_path / "attachments" / cid
         att_dir.mkdir(parents=True)
         (att_dir / "file.txt").write_text("hello")
 
@@ -126,15 +127,31 @@ class TestPurgeConversationsBefore:
 
     def test_skips_attachment_deletion_when_disabled(self, tmp_path: Path) -> None:
         conn = _create_test_db(tmp_path)
-        _insert_conversation(conn, "old-conv", "2024-01-01T00:00:00")
+        cid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        _insert_conversation(conn, cid, "2024-01-01T00:00:00")
 
-        att_dir = tmp_path / "attachments" / "old-conv"
+        att_dir = tmp_path / "attachments" / cid
         att_dir.mkdir(parents=True)
         (att_dir / "file.txt").write_text("hello")
 
         cutoff = datetime(2025, 6, 1, tzinfo=timezone.utc)
         purge_conversations_before(conn, cutoff, tmp_path, purge_attachments=False)
 
+        assert att_dir.exists()
+
+    def test_skips_attachment_for_non_uuid_id(self, tmp_path: Path) -> None:
+        """Non-UUID conversation IDs are purged from DB but attachments are not deleted."""
+        conn = _create_test_db(tmp_path)
+        _insert_conversation(conn, "../../etc", "2024-01-01T00:00:00")
+
+        att_dir = tmp_path / "attachments" / "../../etc"
+        att_dir.mkdir(parents=True, exist_ok=True)
+
+        cutoff = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        count = purge_conversations_before(conn, cutoff, tmp_path, purge_attachments=True)
+
+        assert count == 1  # DB row deleted
+        # Attachment dir NOT deleted because ID is not a valid UUID
         assert att_dir.exists()
 
 

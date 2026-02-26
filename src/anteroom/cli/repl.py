@@ -852,7 +852,6 @@ async def run_cli(
             retention_days=config.storage.retention_days,
             check_interval=config.storage.retention_check_interval,
             purge_attachments=config.storage.purge_attachments,
-            purge_embeddings=config.storage.purge_embeddings,
         )
         retention_worker.start()
 
