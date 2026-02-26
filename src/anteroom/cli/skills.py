@@ -143,9 +143,7 @@ def _load_skills_from_dir(skills_dir: Path, source: str) -> _LoadResult:
                 continue
             raw_name = data.get("name", path.stem)
             if not isinstance(raw_name, str):
-                result.warnings.append(
-                    f"Skipped {path.name}: 'name' must be a string, got {type(raw_name).__name__}"
-                )
+                result.warnings.append(f"Skipped {path.name}: 'name' must be a string, got {type(raw_name).__name__}")
                 continue
             name, warning = _validate_skill_name(raw_name, path.stem)
             if warning:
@@ -153,17 +151,14 @@ def _load_skills_from_dir(skills_dir: Path, source: str) -> _LoadResult:
                 continue
             prompt = data.get("prompt", "")
             if not isinstance(prompt, str):
-                result.warnings.append(
-                    f"Skipped {path.name}: 'prompt' must be a string, got {type(prompt).__name__}"
-                )
+                result.warnings.append(f"Skipped {path.name}: 'prompt' must be a string, got {type(prompt).__name__}")
                 continue
             if not prompt.strip():
                 result.warnings.append(f"Skipped {path.name}: missing 'prompt' field")
                 continue
             if len(prompt) > MAX_PROMPT_SIZE:
                 result.warnings.append(
-                    f"Skipped {path.name}: prompt exceeds {MAX_PROMPT_SIZE // 1000}KB limit "
-                    f"({len(prompt) // 1000}KB)"
+                    f"Skipped {path.name}: prompt exceeds {MAX_PROMPT_SIZE // 1000}KB limit ({len(prompt) // 1000}KB)"
                 )
                 continue
             description = data.get("description", "")

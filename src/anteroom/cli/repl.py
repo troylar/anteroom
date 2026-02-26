@@ -507,12 +507,8 @@ async def _drain_input_to_msg_queue(
                 if skill_registry:
                     is_skill, skill_prompt = skill_registry.resolve_input(queued_text)
                     if is_skill:
-                        q_expanded = _expand_file_references(
-                            skill_prompt, working_dir, file_max_chars=file_max_chars
-                        )
-                        storage.create_message(
-                            db, conversation_id, "user", q_expanded, **(identity_kwargs or {})
-                        )
+                        q_expanded = _expand_file_references(skill_prompt, working_dir, file_max_chars=file_max_chars)
+                        storage.create_message(db, conversation_id, "user", q_expanded, **(identity_kwargs or {}))
                         await msg_queue.put({"role": "user", "content": q_expanded})
                         continue
                 if warn_callback:
@@ -2723,16 +2719,13 @@ async def _run_repl(
                         # Rebuild invoke_skill tool schema so LLM sees updated skill list
                         if config.cli.skills.auto_invoke and tools_openai is not None:
                             tools_openai[:] = [
-                                t for t in tools_openai
-                                if t.get("function", {}).get("name") != "invoke_skill"
+                                t for t in tools_openai if t.get("function", {}).get("name") != "invoke_skill"
                             ]
                             invoke_def = skill_registry.get_invoke_skill_definition()
                             if invoke_def:
                                 tools_openai.append(invoke_def)
                         # Refresh tab-completion skill names
-                        completer.update_skill_names(
-                            [s.name for s in skills]
-                        )
+                        completer.update_skill_names([s.name for s in skills])
                     continue
                 elif cmd in ("/projects", "/project"):
                     parts = user_input.split(maxsplit=2)
