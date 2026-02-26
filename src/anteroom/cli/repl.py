@@ -26,7 +26,7 @@ from ..db import init_db
 from ..services import storage
 from ..services.agent_loop import _build_compaction_history, run_agent_loop
 from ..services.ai_service import AIService, create_ai_service
-from ..services.context_trust import trusted_section_marker, untrusted_section_marker
+from ..services.context_trust import sanitize_trust_tags, trusted_section_marker, untrusted_section_marker
 from ..services.embeddings import get_effective_dimensions
 from ..services.rewind import collect_file_paths
 from ..services.rewind import rewind_conversation as rewind_service
@@ -2260,11 +2260,13 @@ async def _run_repl(
             extra_system_prompt = _strip_project_instructions(extra_system_prompt)
             instructions = project.get("instructions", "")
             if instructions:
+                safe_name = sanitize_trust_tags(project["name"]).replace('"', "&quot;")
+                safe_instructions = sanitize_trust_tags(instructions)
                 extra_system_prompt += (
                     '\n\n<project_instructions project="'
-                    + project["name"]
+                    + safe_name
                     + '">\n'
-                    + instructions
+                    + safe_instructions
                     + "\n</project_instructions>"
                 )
 
