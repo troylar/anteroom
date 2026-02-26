@@ -39,11 +39,11 @@ class TestGetProjectByName:
         result = get_project_by_name(db, "nonexistent")
         assert result is None
 
-    def test_name_is_case_sensitive(self, db: ThreadSafeConnection) -> None:
+    def test_name_is_case_insensitive(self, db: ThreadSafeConnection) -> None:
         create_project(db, "MyProject")
         assert get_project_by_name(db, "MyProject") is not None
-        # SQLite = operator is case-sensitive for ASCII by default
-        assert get_project_by_name(db, "myproject") is None
+        # Uses LOWER() for case-insensitive matching
+        assert get_project_by_name(db, "myproject") is not None
 
     def test_unique_name_constraint(self, db: ThreadSafeConnection) -> None:
         create_project(db, "unique-name")
