@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 26, 2026
 
+### v1.64.0
+
+**New:**
+
+- Working directory persistence: CLI conversations remember their project directory and restore it on resume (#274)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.64.0)
+
 ### v1.63.1
 
 **Fixed:**
