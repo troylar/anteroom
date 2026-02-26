@@ -107,6 +107,9 @@ nav:
     - security/index.md
     - security/authentication.md
     - security/tool-safety.md
+    - security/bash-sandboxing.md
+    - security/audit-log.md
+    - security/prompt-injection-defense.md
     - security/hardening.md
   - API:
     - api/index.md
