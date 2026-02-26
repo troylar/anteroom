@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 26, 2026
 
+### v1.66.2
+
+**Fixed:**
+
+- Custom skill files with `.yml` extension now discovered alongside `.yaml` (#510)
+- `/skills` output now shows searched directories with skill counts for debugging discovery issues (#510)
+- `/new-skill` explicitly requires `.yaml` extension and verifies after writing (#510)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.66.2)
+
 ### v1.66.1
 
 **Fixed:**
