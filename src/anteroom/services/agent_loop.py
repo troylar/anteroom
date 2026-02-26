@@ -215,6 +215,7 @@ async def run_agent_loop(
     get_token_totals: Any | None = None,
     dlp_scanner: Any | None = None,
     injection_detector: Any | None = None,
+    output_filter: Any | None = None,
 ) -> AsyncGenerator[AgentEvent, None]:
     """Run the agentic tool-call loop, yielding events.
 
@@ -323,6 +324,17 @@ async def run_agent_loop(
                         )
                         _dlp_blocked = True
                         break
+                # Per-chunk output filter: custom pattern block (leak detection
+                # requires full text and runs post-stream).
+                if output_filter is not None and output_filter.enabled:
+                    chunk_result = output_filter.scan_patterns_only(chunk)
+                    if chunk_result.matched and chunk_result.action == "block":
+                        yield AgentEvent(
+                            kind="output_filter_blocked",
+                            data={"matches": [m.rule_name for m in chunk_result.matches]},
+                        )
+                        _dlp_blocked = True  # reuse flag to skip final scan
+                        break
                 assistant_content += chunk
                 yield AgentEvent(kind="token", data={"content": chunk})
             elif etype == "tool_call":
@@ -412,6 +424,20 @@ async def run_agent_loop(
                             kind="dlp_warning",
                             data={"direction": "output", "matches": [m.rule_name for m in dlp_final.matches]},
                         )
+                # Output content filter scan (system prompt leak + custom patterns)
+                if output_filter is not None and output_filter.enabled:
+                    assistant_content, of_result = output_filter.apply(assistant_content)
+                    if of_result.matched and of_result.action == "block":
+                        yield AgentEvent(
+                            kind="output_filter_blocked",
+                            data={"matches": [m.rule_name for m in of_result.matches]},
+                        )
+                        return
+                    if of_result.matched and of_result.action == "warn":
+                        yield AgentEvent(
+                            kind="output_filter_warning",
+                            data={"matches": [m.rule_name for m in of_result.matches]},
+                        )
                 yield AgentEvent(kind="assistant_message", data={"content": assistant_content})
             yield AgentEvent(kind="done", data={})
 
@@ -429,6 +455,20 @@ async def run_agent_loop(
         # Final DLP scan on complete assistant text before storage (tool-call turn)
         if dlp_scanner is not None and dlp_scanner.enabled and dlp_scanner.scan_output and assistant_content:
             assistant_content, _ = dlp_scanner.apply(assistant_content, "output")
+        # Output filter scan on tool-call turn text
+        if output_filter is not None and output_filter.enabled and assistant_content:
+            assistant_content, of_result = output_filter.apply(assistant_content)
+            if of_result.matched and of_result.action == "block":
+                yield AgentEvent(
+                    kind="output_filter_blocked",
+                    data={"matches": [m.rule_name for m in of_result.matches]},
+                )
+                return
+            if of_result.matched and of_result.action in ("warn", "redact"):
+                yield AgentEvent(
+                    kind="output_filter_warning",
+                    data={"matches": [m.rule_name for m in of_result.matches]},
+                )
 
         # Save assistant message with tool calls into message history
         yield AgentEvent(kind="assistant_message", data={"content": assistant_content})
