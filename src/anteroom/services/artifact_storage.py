@@ -124,8 +124,11 @@ def list_artifacts(
         clauses.append("source = ?")
         params.append(ArtifactSource(source).value)
 
-    where = " WHERE " + " AND ".join(clauses) if clauses else ""
-    rows = db.execute_fetchall(f"SELECT * FROM artifacts{where} ORDER BY updated_at DESC", tuple(params))
+    sql = "SELECT * FROM artifacts"
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY updated_at DESC"
+    rows = db.execute_fetchall(sql, tuple(params))
     return [_row_to_dict(r) for r in rows]
 
 

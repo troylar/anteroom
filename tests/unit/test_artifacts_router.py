@@ -84,3 +84,18 @@ class TestGetArtifactEndpoint:
             client = TestClient(app)
             resp = client.get("/api/artifacts/@no/such/thing")
             assert resp.status_code == 404
+
+    def test_get_invalid_fqn_returns_400(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.get("/api/artifacts/not-a-valid-fqn")
+        assert resp.status_code == 400
+
+    def test_get_error_does_not_reflect_fqn(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.artifacts.artifact_storage") as mock_store:
+            mock_store.get_artifact_by_fqn.return_value = None
+            client = TestClient(app)
+            resp = client.get("/api/artifacts/@no/skill/thing")
+            assert resp.status_code == 404
+            assert "@no/skill/thing" not in resp.json()["detail"]

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..services import artifact_storage
+from ..services.artifacts import validate_fqn
 
 router = APIRouter(tags=["artifacts"])
 
@@ -29,12 +30,13 @@ async def get_artifact(
     fqn: str,
 ) -> dict[str, Any]:
     """Get a single artifact by FQN (e.g. @core/skill/greet)."""
-    from fastapi import HTTPException
+    if not validate_fqn(fqn):
+        raise HTTPException(status_code=400, detail="Invalid artifact FQN format")
 
     db = request.app.state.db
     art = artifact_storage.get_artifact_by_fqn(db, fqn)
     if not art:
-        raise HTTPException(status_code=404, detail=f"Artifact not found: {fqn}")
+        raise HTTPException(status_code=404, detail="Artifact not found")
 
     versions = artifact_storage.list_artifact_versions(db, art["id"])
     art["versions"] = versions
