@@ -155,6 +155,7 @@ _KNOWN_KEYS: dict[str, set[str]] = {
         "allowed_tools",
         "denied_tools",
         "tool_tiers",
+        "read_only",
         "subagent",
     },
     "safety.subagent": {
@@ -394,6 +395,7 @@ def validate_config(raw: dict[str, Any]) -> ValidationResult:
         ("cli.planning", "enabled"),
         ("embeddings", "enabled"),
         ("safety", "enabled"),
+        ("safety", "read_only"),
         ("proxy", "enabled"),
     ]:
         section = _get_section(raw, section_path)

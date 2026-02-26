@@ -64,6 +64,7 @@ async def get_config(request: Request) -> AppConfigResponse:
         mcp_servers=mcp_statuses,
         identity=identity_data,
         enforced_fields=enforced_fields,
+        read_only=config.safety.read_only,
     )
 
 

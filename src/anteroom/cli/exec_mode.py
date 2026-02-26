@@ -293,6 +293,10 @@ async def run_exec_mode(
     from ..tools import cap_tools
 
     tools_openai = cap_tools(tools_openai, set(tool_registry.list_tools()), limit=config.ai.max_tools)
+    if config.safety.read_only:
+        from ..tools.tiers import filter_read_only_tools
+
+        tools_openai = filter_read_only_tools(tools_openai, config.safety.tool_tiers)
     tools_openai_or_none = tools_openai if tools_openai else None
 
     # Load instructions (require --trust-project for project ANTEROOM.md)

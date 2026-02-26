@@ -406,6 +406,7 @@ class SafetyConfig:
     allowed_tools: list[str] = field(default_factory=list)
     denied_tools: list[str] = field(default_factory=list)
     tool_tiers: dict[str, str] = field(default_factory=dict)
+    read_only: bool = False
     subagent: SubagentConfig = field(default_factory=SubagentConfig)
 
 
@@ -1101,6 +1102,11 @@ def load_config(
     safety_tool_tiers = safety_raw.get("tool_tiers", {})
     if not isinstance(safety_tool_tiers, dict):
         safety_tool_tiers = {}
+    safety_read_only = str(safety_raw.get("read_only", os.environ.get("AI_CHAT_READ_ONLY", "false"))).lower() in (
+        "true",
+        "1",
+        "yes",
+    )
 
     sa_raw = safety_raw.get("subagent", {})
     if not isinstance(sa_raw, dict):
@@ -1134,6 +1140,7 @@ def load_config(
         allowed_tools=[str(t) for t in safety_allowed_tools],
         denied_tools=[str(t) for t in safety_denied_tools],
         tool_tiers={str(k): str(v) for k, v in safety_tool_tiers.items()},
+        read_only=safety_read_only,
         subagent=subagent_config,
     )
 

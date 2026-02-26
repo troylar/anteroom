@@ -317,6 +317,8 @@ def _build_tool_list(
     conversation_id: str,
     data_dir: Path,
     max_tools: int,
+    read_only: bool = False,
+    tier_overrides: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], Path | None, str]:
     """Build the unified tool list (builtins + MCP) and return (tools, plan_path, plan_prompt).
 
@@ -327,6 +329,11 @@ def _build_tool_list(
         mcp_tools = mcp_manager.get_openai_tools()
         if mcp_tools:
             tools_openai.extend(mcp_tools)
+
+    if read_only:
+        from ..tools.tiers import filter_read_only_tools
+
+        tools_openai = filter_read_only_tools(tools_openai, tier_overrides)
 
     plan_path: Path | None = None
     plan_prompt = ""
@@ -1515,6 +1522,8 @@ async def chat(conversation_id: str, request: Request):
         conversation_id=conversation_id,
         data_dir=request.app.state.config.app.data_dir,
         max_tools=request.app.state.config.ai.max_tools,
+        read_only=request.app.state.config.safety.read_only,
+        tier_overrides=request.app.state.config.safety.tool_tiers,
     )
 
     tools = tools_openai if tools_openai else None

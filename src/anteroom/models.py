@@ -78,6 +78,7 @@ class AppConfigResponse(BaseModel):
     mcp_servers: list[McpServerStatus] = Field(default_factory=list)
     identity: dict | None = None
     enforced_fields: list[str] = Field(default_factory=list)
+    read_only: bool = False
 
 
 class ConventionsResponse(BaseModel):

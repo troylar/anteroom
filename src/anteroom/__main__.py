@@ -703,6 +703,13 @@ def main() -> None:
         help="Override approval mode for this session",
     )
     parser.add_argument(
+        "--read-only",
+        dest="read_only",
+        action="store_true",
+        default=False,
+        help="Enable read-only mode: only READ-tier tools are available",
+    )
+    parser.add_argument(
         "--port",
         dest="port",
         type=int,
@@ -815,6 +822,16 @@ def main() -> None:
         extra = [t.strip() for t in _allowed_tools.split(",") if t.strip()]
         existing = set(config.safety.allowed_tools)
         config.safety.allowed_tools.extend(t for t in extra if t not in existing)
+
+    _read_only = getattr(args, "read_only", False)
+    if _read_only:
+        if "safety.read_only" in enforced_fields:
+            print(
+                "WARNING: --read-only ignored; 'safety.read_only' is enforced by team config.",
+                file=sys.stderr,
+            )
+        else:
+            config.safety.read_only = True
 
     _port = getattr(args, "port", None)
     if _port is not None:

@@ -1052,6 +1052,10 @@ async def run_cli(
     from ..tools import cap_tools
 
     tools_openai = cap_tools(tools_openai, set(tool_registry.list_tools()), limit=config.ai.max_tools)
+    if config.safety.read_only:
+        from ..tools.tiers import filter_read_only_tools
+
+        tools_openai = filter_read_only_tools(tools_openai, config.safety.tool_tiers)
     tools_openai_or_none = tools_openai if tools_openai else None
 
     # Load skills (before system prompt so skill descriptions can be injected)
@@ -1177,8 +1181,17 @@ async def run_cli(
                     tools_openai[:] = cap_tools(
                         tools_openai, set(tool_registry.list_tools()), limit=config.ai.max_tools
                     )
+                    if config.safety.read_only:
+                        from ..tools.tiers import filter_read_only_tools as _fro
+
+                        tools_openai[:] = _fro(tools_openai, config.safety.tool_tiers)
                     tools_openai_or_none = tools_openai if tools_openai else None
                     all_tool_names.extend(t["name"] for t in mcp_manager.get_all_tools())
+            if config.safety.read_only:
+                renderer.console.print(
+                    f"[yellow]Read-only mode active.[/yellow] Only READ-tier tools are available.\n"
+                    f"  [{MUTED}]Write, execute, and destructive tools are disabled.[/{MUTED}]\n"
+                )
             if plan_mode:
                 renderer.console.print(
                     f"[yellow]Planning mode active.[/yellow] The AI will explore and write a plan.\n"
@@ -1584,6 +1597,10 @@ async def _run_repl(
 
         builtin = set(tool_registry.list_tools()) if tool_registry else set()
         new_tools = _cap_tools(new_tools, builtin, limit=config.ai.max_tools)
+        if config.safety.read_only:
+            from ..tools.tiers import filter_read_only_tools as _fro2
+
+            new_tools = _fro2(new_tools, config.safety.tool_tiers)
         tools_openai = new_tools if new_tools else None
         new_names: list[str] = list(tool_registry.list_tools()) if tool_registry else []
         if mcp_manager:
