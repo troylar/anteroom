@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 26, 2026
 
+### v1.53.0
+
+**New:**
+
+- Session hardening: pluggable session stores (memory or SQLite), configurable idle/absolute timeouts, concurrent session limits (#452)
+- IP allowlisting with CIDR support — restrict access to specific networks or addresses (#452)
+- Session IP binding — sessions locked to the IP that created them, invalidated on mismatch (#452)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.53.0)
+
 ### v1.52.0
 
 **New:**
