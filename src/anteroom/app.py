@@ -19,20 +19,20 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from .config import AppConfig, ensure_identity, load_config
+from .config import AppConfig, SessionConfig, ensure_identity, load_config
 from .db import DatabaseManager, has_vec_support, init_db
 from .services.embedding_worker import EmbeddingWorker
 from .services.embeddings import create_embedding_service, get_effective_dimensions
 from .services.event_bus import EventBus
+from .services.ip_allowlist import check_ip_allowed
 from .services.mcp_manager import McpManager
+from .services.session_store import create_session_store
 from .tools import ToolRegistry, register_default_tools
 
 logger = logging.getLogger(__name__)
 security_logger = logging.getLogger("anteroom.security")
 
 MAX_REQUEST_BODY_BYTES = 15 * 1024 * 1024  # 15 MB
-SESSION_ABSOLUTE_TIMEOUT = 12 * 60 * 60  # 12 hours
-SESSION_IDLE_TIMEOUT = 30 * 60  # 30 minutes
 
 
 @asynccontextmanager
@@ -273,29 +273,78 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 class BearerTokenMiddleware(BaseHTTPMiddleware):
-    """Auth via bearer token header or HttpOnly session cookie with session expiry."""
+    """Auth via bearer token header or HttpOnly session cookie with session expiry.
 
-    def __init__(self, app: FastAPI, token_hash: str, auth_token: str = "", secure_cookies: bool = False) -> None:
+    Supports pluggable session stores (memory or SQLite), IP allowlisting,
+    concurrent session limits, and configurable timeouts.
+    """
+
+    def __init__(
+        self,
+        app: FastAPI,
+        token_hash: str,
+        auth_token: str = "",
+        secure_cookies: bool = False,
+        session_config: SessionConfig | None = None,
+    ) -> None:
         super().__init__(app)
         self.token_hash = token_hash
         self._auth_token = auth_token
         self._secure_cookies = secure_cookies
-        self._session_created_at = time.time()
-        self._last_activity = time.time()
+        self._session_config = session_config or SessionConfig()
+        self._store = create_session_store(
+            self._session_config.store,
+            str(getattr(getattr(app, "state", None), "config", None) and "") or "",
+        )
+        self._store_initialized = False
 
-    def _is_session_valid(self) -> bool:
-        now = time.time()
-        if now - self._session_created_at > SESSION_ABSOLUTE_TIMEOUT:
-            security_logger.info("Session expired (absolute timeout)")
-            return False
-        if now - self._last_activity > SESSION_IDLE_TIMEOUT:
-            security_logger.info("Session expired (idle timeout)")
-            return False
-        return True
+    def _ensure_store(self, request: Request) -> None:
+        """Lazy-init session store with the correct data_dir once app.state is ready."""
+        if self._store_initialized:
+            return
+        cfg = getattr(getattr(request.app, "state", None), "config", None)
+        if cfg and self._session_config.store == "sqlite":
+            data_dir = str(cfg.app.data_dir) if hasattr(cfg.app, "data_dir") else ""
+            if data_dir:
+                self._store = create_session_store("sqlite", data_dir)
+        self._store_initialized = True
+
+    def _session_id_from_token(self, token: str) -> str:
+        """Derive a deterministic session ID from the auth token value."""
+        return hashlib.sha256(token.encode()).hexdigest()[:32]
 
     def _check_token(self, provided: str) -> bool:
         provided_hash = hashlib.sha256(provided.encode()).hexdigest()
         return hmac.compare_digest(provided_hash, self.token_hash)
+
+    def _is_session_valid(self, session_id: str) -> bool:
+        session = self._store.get(session_id)
+        if session is None:
+            return False
+        now = time.time()
+        idle_timeout = self._session_config.idle_timeout
+        absolute_timeout = self._session_config.absolute_timeout
+        if now - session["created_at"] > absolute_timeout:
+            security_logger.info("Session expired (absolute timeout)")
+            self._store.delete(session_id)
+            return False
+        if now - session["last_activity_at"] > idle_timeout:
+            security_logger.info("Session expired (idle timeout)")
+            self._store.delete(session_id)
+            return False
+        return True
+
+    def _ensure_session(self, session_id: str, client_ip: str) -> bool:
+        """Ensure session exists, creating if needed. Returns False if limit exceeded."""
+        session = self._store.get(session_id)
+        if session is not None:
+            self._store.touch(session_id)
+            return True
+        max_sessions = self._session_config.max_concurrent_sessions
+        if max_sessions > 0 and self._store.count_active() >= max_sessions:
+            return False
+        self._store.create(session_id, client_ip)
+        return True
 
     def _make_401(self, detail: str = "Unauthorized") -> JSONResponse:
         """Return a 401 response with a fresh session cookie so the browser auto-recovers."""
@@ -308,7 +357,7 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
                 secure=self._secure_cookies,
                 samesite="strict",
                 path="/api/",
-                max_age=SESSION_ABSOLUTE_TIMEOUT,
+                max_age=self._session_config.absolute_timeout,
             )
         return response
 
@@ -317,23 +366,46 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
         if not (path.startswith("/api/") or path.startswith("/v1/")):
             return await call_next(request)
 
+        self._ensure_store(request)
         client_ip = request.client.host if request.client else "unknown"
 
-        if not self._is_session_valid():
-            security_logger.warning("Expired session access attempt from %s: %s", client_ip, path)
-            _emit_auth_audit(request, "auth.session_expired", "warning", client_ip, path)
-            return JSONResponse(status_code=401, content={"detail": "Session expired"})
+        # IP allowlist check
+        if not check_ip_allowed(client_ip, self._session_config.allowed_ips):
+            security_logger.warning("IP not in allowlist: %s", client_ip)
+            _emit_auth_audit(request, "auth.ip_blocked", "warning", client_ip, path)
+            return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+
+        # Cleanup expired sessions periodically (cheap for small stores)
+        self._store.cleanup_expired(
+            self._session_config.idle_timeout,
+            self._session_config.absolute_timeout,
+        )
 
         # Check Authorization header
         auth = request.headers.get("authorization", "")
         if auth.startswith("Bearer ") and self._check_token(auth[7:]):
-            self._last_activity = time.time()
+            session_id = self._session_id_from_token(auth[7:])
+            if not self._is_session_valid(session_id):
+                if not self._ensure_session(session_id, client_ip):
+                    security_logger.warning("Concurrent session limit reached from %s", client_ip)
+                    _emit_auth_audit(request, "auth.session_limit", "warning", client_ip, path)
+                    return JSONResponse(status_code=429, content={"detail": "Too many active sessions"})
+            else:
+                self._store.touch(session_id)
             _emit_auth_audit(request, "auth.success", "info", client_ip, path)
             return await call_next(request)
 
         # Check HttpOnly session cookie
         cookie_token = request.cookies.get("anteroom_session", "")
         if cookie_token and self._check_token(cookie_token):
+            session_id = self._session_id_from_token(cookie_token)
+            if not self._is_session_valid(session_id):
+                if not self._ensure_session(session_id, client_ip):
+                    security_logger.warning("Concurrent session limit reached from %s", client_ip)
+                    _emit_auth_audit(request, "auth.session_limit", "warning", client_ip, path)
+                    return JSONResponse(status_code=429, content={"detail": "Too many active sessions"})
+            else:
+                self._store.touch(session_id)
             # Verify CSRF token for state-changing requests
             if request.method in ("POST", "PATCH", "PUT", "DELETE"):
                 csrf_cookie = request.cookies.get("anteroom_csrf", "")
@@ -350,7 +422,6 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
                         security_logger.warning("Origin mismatch from %s: %s", client_ip, origin)
                         _emit_auth_audit(request, "auth.origin_mismatch", "warning", client_ip, path)
                         return JSONResponse(status_code=403, content={"detail": "Origin not allowed"})
-            self._last_activity = time.time()
             _emit_auth_audit(request, "auth.success", "info", client_ip, path)
             return await call_next(request)
 
@@ -477,9 +548,11 @@ def create_app(config: AppConfig | None = None, enforced_fields: list[str] | Non
         token_hash=token_hash,
         auth_token=auth_token,
         secure_cookies=config.app.tls,
+        session_config=config.session,
     )
     app.state.auth_token = auth_token
 
+    session_absolute_timeout = config.session.absolute_timeout
     csrf_token = secrets.token_urlsafe(32)
     app.state.csrf_token = csrf_token
     cache_bust = str(int(time.time()))
@@ -553,7 +626,7 @@ def create_app(config: AppConfig | None = None, enforced_fields: list[str] | Non
             secure=secure_cookies,
             samesite="strict",
             path="/api/",
-            max_age=SESSION_ABSOLUTE_TIMEOUT,
+            max_age=session_absolute_timeout,
         )
         response.set_cookie(
             key="anteroom_csrf",
@@ -562,7 +635,7 @@ def create_app(config: AppConfig | None = None, enforced_fields: list[str] | Non
             secure=secure_cookies,
             samesite="strict",
             path="/",
-            max_age=SESSION_ABSOLUTE_TIMEOUT,
+            max_age=session_absolute_timeout,
         )
         return response
 

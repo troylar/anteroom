@@ -468,6 +468,18 @@ class ReferencesConfig:
 
 
 @dataclass
+class SessionConfig:
+    """Session management and network access control settings."""
+
+    store: str = "memory"  # "memory" or "sqlite"
+    max_concurrent_sessions: int = 0  # 0 = unlimited
+    idle_timeout: int = 1800  # seconds (30 minutes)
+    absolute_timeout: int = 43200  # seconds (12 hours)
+    allowed_ips: list[str] = field(default_factory=list)  # CIDR or exact; empty = allow all
+    log_session_events: bool = False
+
+
+@dataclass
 class AuditConfig:
     """Structured audit log settings."""
 
@@ -501,6 +513,7 @@ class AppConfig:
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     rag: RagConfig = field(default_factory=RagConfig)
     codebase_index: CodebaseIndexConfig = field(default_factory=CodebaseIndexConfig)
+    session: SessionConfig = field(default_factory=SessionConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
 
 
@@ -1216,6 +1229,68 @@ def load_config(
         skills=[str(p) for p in refs_raw.get("skills", []) if isinstance(p, str) and p],
     )
 
+    # Session config
+    session_raw = raw.get("session", {})
+    if not isinstance(session_raw, dict):
+        session_raw = {}
+    session_store = str(session_raw.get("store", os.environ.get("AI_CHAT_SESSION_STORE", "memory")))
+    if session_store not in ("memory", "sqlite"):
+        session_store = "memory"
+    try:
+        session_max_concurrent = max(
+            0,
+            int(
+                session_raw.get(
+                    "max_concurrent_sessions",
+                    os.environ.get("AI_CHAT_SESSION_MAX_CONCURRENT", 0),
+                )
+            ),
+        )
+    except (ValueError, TypeError):
+        session_max_concurrent = 0
+    try:
+        session_idle_timeout = max(
+            0,
+            int(
+                session_raw.get(
+                    "idle_timeout",
+                    os.environ.get("AI_CHAT_SESSION_IDLE_TIMEOUT", 1800),
+                )
+            ),
+        )
+    except (ValueError, TypeError):
+        session_idle_timeout = 1800
+    try:
+        session_absolute_timeout = max(
+            0,
+            int(
+                session_raw.get(
+                    "absolute_timeout",
+                    os.environ.get("AI_CHAT_SESSION_ABSOLUTE_TIMEOUT", 43200),
+                )
+            ),
+        )
+    except (ValueError, TypeError):
+        session_absolute_timeout = 43200
+    session_allowed_ips_raw = session_raw.get("allowed_ips", [])
+    if not isinstance(session_allowed_ips_raw, list):
+        session_allowed_ips_raw = []
+    session_allowed_ips = [str(ip) for ip in session_allowed_ips_raw if ip]
+    env_allowed_ips = os.environ.get("AI_CHAT_SESSION_ALLOWED_IPS", "")
+    if env_allowed_ips and not session_allowed_ips:
+        session_allowed_ips = [ip.strip() for ip in env_allowed_ips.split(",") if ip.strip()]
+    session_log_events = str(
+        session_raw.get("log_session_events", os.environ.get("AI_CHAT_SESSION_LOG_EVENTS", "false"))
+    ).lower() in ("true", "1", "yes")
+    session_config = SessionConfig(
+        store=session_store,
+        max_concurrent_sessions=session_max_concurrent,
+        idle_timeout=session_idle_timeout,
+        absolute_timeout=session_absolute_timeout,
+        allowed_ips=session_allowed_ips,
+        log_session_events=session_log_events,
+    )
+
     # Audit config
     audit_raw = raw.get("audit", {})
     if not isinstance(audit_raw, dict):
@@ -1294,6 +1369,7 @@ def load_config(
             rag=rag_config,
             references=refs_config,
             codebase_index=ci_config,
+            session=session_config,
             audit=audit_config,
         ),
         enforced_fields,

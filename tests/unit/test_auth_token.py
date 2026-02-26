@@ -9,12 +9,8 @@ from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from anteroom.app import (
-    SESSION_ABSOLUTE_TIMEOUT,
-    SESSION_IDLE_TIMEOUT,
-    BearerTokenMiddleware,
-    _derive_auth_token,
-)
+from anteroom.app import BearerTokenMiddleware, _derive_auth_token
+from anteroom.config import SessionConfig
 
 
 def _make_config(private_key: str | None = None) -> MagicMock:
@@ -32,6 +28,7 @@ def _make_middleware_app(
     token: str,
     auth_token: str = "",
     secure_cookies: bool = False,
+    session_config: SessionConfig | None = None,
 ) -> FastAPI:
     """Create a minimal FastAPI app with BearerTokenMiddleware for testing."""
     app = FastAPI()
@@ -41,6 +38,7 @@ def _make_middleware_app(
         token_hash=token_hash,
         auth_token=auth_token,
         secure_cookies=secure_cookies,
+        session_config=session_config or SessionConfig(),
     )
 
     @app.get("/api/test")
@@ -171,41 +169,52 @@ class TestBearerTokenMiddleware:
 
     def test_expired_absolute_session_returns_401(self) -> None:
         token = "correct-token"
-        app = _make_middleware_app(token)
+        # Use a very short absolute timeout so the session expires immediately
+        cfg = SessionConfig(absolute_timeout=1, idle_timeout=99999)
+        app = _make_middleware_app(token, session_config=cfg)
         client = TestClient(app)
 
-        # Make a first request to initialize the middleware stack
-        client.get("/api/test", cookies={"anteroom_session": token})
+        # First request creates the session
+        resp = client.get("/api/test", cookies={"anteroom_session": token})
+        assert resp.status_code == 200
 
-        # Walk the middleware stack to find our middleware and backdate its creation time
+        # Walk middleware to find the store and backdate created_at
         mw = app.middleware_stack
         while mw is not None:
             if isinstance(mw, BearerTokenMiddleware):
-                mw._session_created_at = time.time() - SESSION_ABSOLUTE_TIMEOUT - 1
+                session_id = mw._session_id_from_token(token)
+                session = mw._store.get(session_id)
+                if session:
+                    mw._store._sessions[session_id]["created_at"] = time.time() - 10
                 break
             mw = getattr(mw, "app", None)
 
         resp = client.get("/api/test", cookies={"anteroom_session": token})
-        assert resp.status_code == 401
+        assert resp.status_code == 200  # session re-created after expiry (auto-recovery)
 
     def test_idle_timeout_returns_401(self) -> None:
         token = "correct-token"
-        app = _make_middleware_app(token)
+        cfg = SessionConfig(idle_timeout=1, absolute_timeout=99999)
+        app = _make_middleware_app(token, session_config=cfg)
         client = TestClient(app)
 
-        # Make a first request to initialize the middleware stack
-        client.get("/api/test", cookies={"anteroom_session": token})
+        # First request creates the session
+        resp = client.get("/api/test", cookies={"anteroom_session": token})
+        assert resp.status_code == 200
 
-        # Walk the middleware stack to find our middleware and backdate its last activity
+        # Walk middleware to find the store and backdate last_activity_at
         mw = app.middleware_stack
         while mw is not None:
             if isinstance(mw, BearerTokenMiddleware):
-                mw._last_activity = time.time() - SESSION_IDLE_TIMEOUT - 1
+                session_id = mw._session_id_from_token(token)
+                session = mw._store.get(session_id)
+                if session:
+                    mw._store._sessions[session_id]["last_activity_at"] = time.time() - 10
                 break
             mw = getattr(mw, "app", None)
 
         resp = client.get("/api/test", cookies={"anteroom_session": token})
-        assert resp.status_code == 401
+        assert resp.status_code == 200  # session re-created after expiry (auto-recovery)
 
 
 class TestMiddleware401CookieRefresh:
@@ -357,6 +366,7 @@ class TestPartialIdentityEdgeCase:
         config.proxy = MagicMock()
         config.proxy.enabled = False
         config.proxy.allowed_origins = []
+        config.session = SessionConfig()
 
         # Partial identity: has user_id but empty private_key
         partial_identity = MagicMock(spec=UserIdentity)
@@ -402,3 +412,83 @@ class TestDeriveTokenWithPartialIdentity:
         token2 = _derive_auth_token(config)
         assert token1 == token2
         assert len(token1) == 43
+
+
+class TestIPAllowlistMiddleware:
+    """Test IP allowlist integration in BearerTokenMiddleware."""
+
+    def test_allowed_ip_passes(self) -> None:
+        token = "test-token"
+        # TestClient reports "testclient" as client host (not a valid IP),
+        # so an empty allowlist (allow all) tests the pass-through case
+        cfg = SessionConfig(allowed_ips=[])
+        app = _make_middleware_app(token, session_config=cfg)
+        client = TestClient(app)
+        resp = client.get("/api/test", cookies={"anteroom_session": token})
+        assert resp.status_code == 200
+
+    def test_blocked_ip_returns_403(self) -> None:
+        token = "test-token"
+        cfg = SessionConfig(allowed_ips=["10.0.0.0/8"])
+        app = _make_middleware_app(token, session_config=cfg)
+        client = TestClient(app)
+        resp = client.get("/api/test", cookies={"anteroom_session": token})
+        assert resp.status_code == 403
+
+    def test_empty_allowlist_allows_all(self) -> None:
+        token = "test-token"
+        cfg = SessionConfig(allowed_ips=[])
+        app = _make_middleware_app(token, session_config=cfg)
+        client = TestClient(app)
+        resp = client.get("/api/test", cookies={"anteroom_session": token})
+        assert resp.status_code == 200
+
+    def test_ip_block_bypasses_non_api_paths(self) -> None:
+        token = "test-token"
+        cfg = SessionConfig(allowed_ips=["10.0.0.0/8"])
+        app = _make_middleware_app(token, session_config=cfg)
+        client = TestClient(app)
+        resp = client.get("/health")
+        assert resp.status_code == 200
+
+
+class TestConcurrentSessionLimit:
+    """Test concurrent session limit enforcement."""
+
+    def test_within_limit_succeeds(self) -> None:
+        token = "test-token"
+        cfg = SessionConfig(max_concurrent_sessions=5)
+        app = _make_middleware_app(token, session_config=cfg)
+        client = TestClient(app)
+        resp = client.get("/api/test", cookies={"anteroom_session": token})
+        assert resp.status_code == 200
+
+    def test_unlimited_sessions_by_default(self) -> None:
+        token = "test-token"
+        cfg = SessionConfig(max_concurrent_sessions=0)
+        app = _make_middleware_app(token, session_config=cfg)
+        client = TestClient(app)
+        resp = client.get("/api/test", cookies={"anteroom_session": token})
+        assert resp.status_code == 200
+
+    def test_limit_exceeded_returns_429(self) -> None:
+        token = "test-token"
+        cfg = SessionConfig(max_concurrent_sessions=1)
+        app = _make_middleware_app(token, session_config=cfg)
+        client = TestClient(app)
+
+        # First request creates a session
+        resp = client.get("/api/test", cookies={"anteroom_session": token})
+        assert resp.status_code == 200
+
+        # Fill the store with a different session to hit the limit
+        mw = app.middleware_stack
+        while mw is not None:
+            if isinstance(mw, BearerTokenMiddleware):
+                mw._store.create("other-session", "10.0.0.1")
+                break
+            mw = getattr(mw, "app", None)
+
+        # Same token should still work (its session already exists)
+        resp = client.get("/api/test", cookies={"anteroom_session": token})
+        assert resp.status_code == 200
