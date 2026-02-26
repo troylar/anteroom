@@ -1,8 +1,10 @@
-# Hardening
+# Deployment Hardening
 
-Security headers and protections applied to every response.
+Security controls and configuration recommendations for production deployments.
 
 ## Security Headers
+
+Applied to every response by `SecurityHeadersMiddleware`:
 
 | Header | Value | Purpose |
 |---|---|---|
@@ -14,36 +16,29 @@ Security headers and protections applied to every response.
 | `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Enforces HTTPS (when TLS enabled) |
 | `Cache-Control` | `no-store` | Prevents caching of API responses |
 
+Server identification headers (`Server`, `X-Powered-By`) are not exposed.
+
+## TLS
+
+Anteroom generates self-signed ECDSA P-256 certificates for localhost HTTPS:
+
+```yaml
+app:
+  tls: true
+```
+
+When TLS is enabled:
+
+- Self-signed cert auto-generated on first run
+- HSTS header enforced on all responses
+- `Secure` flag set on all cookies
+- SSL verification enabled by default for AI backend connections (`ai.verify_ssl: true`)
+
+For production, use a reverse proxy (nginx, Caddy) with proper certificates instead of the built-in self-signed certs.
+
 ## Subresource Integrity (SRI)
 
 All vendor scripts (marked.js, highlight.js, KaTeX, DOMPurify) include SHA-384 hashes. If a CDN or file is tampered with, the browser refuses to execute it.
-
-## Session Management & IP Allowlisting
-
-### Session Stores
-Sessions can be stored in-memory or persisted to SQLite:
-- **In-memory** (default): Sessions are volatile and lost on server restart. Suitable for single-machine dev/test deployments
-- **SQLite**: Sessions persist across restarts. Stores session ID, user ID, client IP, creation time, and last activity time for full lifecycle tracking
-
-### IP Allowlisting
-Network-level access control via CIDR and exact IP matching:
-- Allowlist entries can be exact IPs (`192.168.1.5`) or CIDR ranges (`10.0.0.0/8`)
-- Both IPv4 and IPv6 supported
-- Empty allowlist permits all IPs (no restrictions)
-- Fails closed: invalid IP addresses are denied
-- Enforced before session validation in request processing pipeline
-
-### Concurrent Session Limits
-Prevent token reuse and excessive session proliferation:
-- Configurable limit on concurrent active sessions (default: unlimited)
-- When limit is exceeded, returns 429 Too Many Sessions
-- Useful in enterprise deployments to limit damage from token leakage
-
-### Idle & Absolute Timeouts
-Sessions automatically expire via two mechanisms:
-- **Idle timeout** (default: 30 minutes) — expires after period of inactivity
-- **Absolute timeout** (default: 12 hours) — forces re-authentication after fixed duration
-- Expired sessions are cleaned up on next request (cheap operation on small stores)
 
 ## Rate Limiting
 
@@ -53,21 +48,24 @@ Sessions automatically expire via two mechanisms:
 
 ## Request Size Limits
 
-- **15 MB** maximum request body size
-- **10 MB** maximum per file attachment
-- **10 files** maximum per message
+| Limit | Value |
+|---|---|
+| Max request body | 15 MB |
+| Max file attachment | 10 MB |
+| Max files per message | 10 |
 
 ## CORS
 
-- Locked to the configured origin
+- Locked to the configured origin (no wildcards)
 - Explicit method allowlist (`GET`, `POST`, `PATCH`, `PUT`, `DELETE`)
 - Explicit header allowlist
-- No wildcard origins
+- Authenticated endpoints never use `Access-Control-Allow-Origin: *`
 
-## API Surface
+## API Surface Reduction
 
-- OpenAPI/Swagger documentation is disabled in production
-- Server version headers (`Server`, `X-Powered-By`) are not exposed
+- OpenAPI/Swagger documentation disabled in production
+- Server version headers not exposed
+- Error responses return generic messages (no stack traces, no SQL errors)
 
 ## File Upload Security
 
@@ -79,35 +77,14 @@ Sessions automatically expire via two mechanisms:
 ## Database Security
 
 - Column-allowlisted SQL builder prevents injection
-- All queries use parameterized statements
+- All queries use parameterized statements (`?` placeholders)
 - Database files created with `0600` permissions (owner-only)
 - Data directory created with `0700` permissions
 - UUID validation on all ID parameters
 
-## Tool Call Rate Limiting
-
-Prevent tool abuse, runaway agents, and denial-of-service via excessive tool calls:
-
-- **Per-minute limits** — Cap total tool calls across all conversations to prevent API resource exhaustion
-- **Per-conversation limits** — Cap accumulated tool calls within a single conversation (including sub-agents)
-- **Consecutive failure detection** — Automatically block after N failed tool calls to break infinite error loops
-- **Configurable actions** — Choose `block` (hard deny with error) or `warn` (log warning, allow execution)
-- **Shared across agents** — Parent and sub-agent tool calls count toward the same limits
-
-All limits default to 0 (unlimited). Configure in `safety.tool_rate_limit`:
-
-```yaml
-safety:
-  tool_rate_limit:
-    max_calls_per_minute: 30              # max 30 tool calls per minute
-    max_calls_per_conversation: 100       # max 100 total calls per conversation
-    max_consecutive_failures: 3           # break infinite error loops
-    action: "block"                       # deny when limits exceeded
-```
-
 ## Read-Only Mode
 
-For untrusted or shared environments, enable read-only mode to restrict the AI to read-only operations:
+Restrict the AI to read-only operations in untrusted or shared environments:
 
 ```yaml
 safety:
@@ -115,21 +92,146 @@ safety:
 ```
 
 When enabled:
-- Only READ-tier tools are available (read_file, glob_files, grep, introspect)
+
+- Only READ-tier tools are available (`read_file`, `glob_files`, `grep`, `introspect`, `ask_user`, canvas tools, `invoke_skill`)
 - All WRITE, EXECUTE, and DESTRUCTIVE tools are blocked
-- AI cannot modify files, run bash commands, or create canvases
-- Can be toggled at runtime: `aroom chat --read-only` or `AI_CHAT_READ_ONLY=true`
+- AI cannot modify files, run bash commands, or spawn sub-agents
+- Toggle at runtime: `aroom chat --read-only` or `AI_CHAT_READ_ONLY=true`
 
-Use this in shared environments, demo settings, or when auditing AI behavior in a sandbox.
+## Token Budget Enforcement
 
-## Token Budget Enforcement (Denial-of-Wallet Prevention)
+Denial-of-wallet prevention via configurable token consumption limits:
 
-Enterprise teams can enforce token consumption limits to control API costs and prevent runaway spending:
+```yaml
+cli:
+  usage:
+    budgets:
+      enabled: true
+      max_tokens_per_request: 50000
+      max_tokens_per_conversation: 500000
+      max_tokens_per_day: 2000000
+      warn_threshold_percent: 80
+      action_on_exceed: block        # "block" or "warn"
+```
 
-- **Per-request limit** — Blocks individual requests exceeding the limit
-- **Per-conversation limit** — Caps total token consumption within a conversation thread
-- **Per-day limit** — Caps total daily consumption across all conversations
-- **Warning threshold** — Emits warnings when approaching limits (configurable percentage)
-- **Exceeding actions** — Administrators choose: `block` (reject requests) or `warn` (allow but notify)
+### Budget Config Reference
 
-See [Configuration: Token Budgets](../configuration/config-file.md#usagebudgets) for setup details.
+| Field | Type | Default | Env Var | Description |
+|---|---|---|---|---|
+| `enabled` | bool | `false` | `AI_CHAT_BUDGET_ENABLED` | Enable budget enforcement |
+| `max_tokens_per_request` | int | `0` | `AI_CHAT_BUDGET_MAX_TOKENS_PER_REQUEST` | Per-request limit (0 = unlimited) |
+| `max_tokens_per_conversation` | int | `0` | `AI_CHAT_BUDGET_MAX_TOKENS_PER_CONVERSATION` | Per-conversation limit (0 = unlimited) |
+| `max_tokens_per_day` | int | `0` | `AI_CHAT_BUDGET_MAX_TOKENS_PER_DAY` | Daily limit (0 = unlimited) |
+| `warn_threshold_percent` | int | `80` | `AI_CHAT_BUDGET_WARN_THRESHOLD_PERCENT` | Warning at this % of limit |
+| `action_on_exceed` | string | `"block"` | `AI_CHAT_BUDGET_ACTION_ON_EXCEED` | `"block"` or `"warn"` |
+
+## Sub-Agent Safety
+
+The `run_agent` tool spawns isolated child AI sessions. Multiple layers prevent abuse:
+
+```yaml
+safety:
+  subagent:
+    max_concurrent: 5          # simultaneous sub-agents
+    max_total: 10              # total per root request
+    max_depth: 3               # nesting levels
+    max_iterations: 15         # tool calls per sub-agent
+    timeout: 120               # wall-clock seconds (10–600)
+    max_output_chars: 4000     # output truncation
+    max_prompt_chars: 32000    # prompt size cap
+```
+
+### Sub-Agent Config Reference
+
+| Field | Type | Default | Range | Description |
+|---|---|---|---|---|
+| `max_concurrent` | int | `5` | 1–20 | Simultaneous sub-agents |
+| `max_total` | int | `10` | 1–50 | Total per root request |
+| `max_depth` | int | `3` | 1–10 | Nesting depth |
+| `max_iterations` | int | `15` | 1–100 | Tool calls per sub-agent |
+| `timeout` | int | `120` | 10–600 | Wall-clock timeout (seconds) |
+| `max_output_chars` | int | `4000` | 100–100,000 | Output truncation |
+| `max_prompt_chars` | int | `32000` | 100–100,000 | Prompt size cap |
+
+### Sub-Agent Isolation
+
+- Each sub-agent gets a deep-copied `AIService` config (no shared mutable state)
+- Sub-agents have their own message history (cannot see parent conversation)
+- Defensive system prompt constrains sub-agent behavior
+- At max depth, `run_agent` is removed from the child's available tools
+- Parent's approval callback propagates to children (same safety gates)
+- Model ID is regex-validated (`^[a-zA-Z0-9._:/-]{1,128}$`)
+
+## MCP Tool Safety
+
+MCP tools are gated by the same safety system as built-in tools, with additional protections:
+
+- **Default tier**: All MCP tools default to `EXECUTE` tier (requires approval in `ask_for_writes` mode)
+- **SSRF protection**: DNS resolution validates that target URLs don't point to private IP addresses
+- **Shell metacharacter rejection**: Tool arguments sanitized to prevent command injection
+- **Tool filtering**: Per-server `tools_include` / `tools_exclude` with fnmatch patterns
+- **Trust levels**: Per-server `trust_level` controls [prompt injection defense](prompt-injection-defense.md) envelope wrapping
+
+```yaml
+mcp_servers:
+  - name: internal-tools
+    command: npx
+    args: ["-y", "@my-org/tools"]
+    trust_level: trusted
+    tools_include:
+      - "search_*"
+      - "read_*"
+
+  - name: external-api
+    command: npx
+    args: ["-y", "@third-party/api"]
+    trust_level: untrusted       # default
+    tools_exclude:
+      - "admin_*"
+```
+
+## Team Config Enforcement
+
+Team administrators can lock security settings across all team members:
+
+```yaml
+# team-config.yaml
+enforce:
+  - safety.approval_mode
+  - safety.bash.allow_network
+  - safety.bash.allow_package_install
+  - safety.denied_tools
+  - audit.enabled
+
+safety:
+  approval_mode: ask
+  bash:
+    allow_network: false
+    allow_package_install: false
+  denied_tools:
+    - dangerous_tool
+
+audit:
+  enabled: true
+```
+
+Enforced fields cannot be overridden by personal config, project config, or environment variables. Project configs require SHA-256 trust verification before being applied.
+
+## Hardening Checklist
+
+!!! tip "Recommended Steps for Production Deployments"
+
+    - [ ] Enable TLS (`app.tls: true`) or use a reverse proxy with proper certificates
+    - [ ] Set `session.store: sqlite` for durable sessions
+    - [ ] Configure `session.allowed_ips` to restrict access
+    - [ ] Set `session.max_concurrent_sessions` to a reasonable limit
+    - [ ] Set `safety.approval_mode: ask` or `ask_for_dangerous`
+    - [ ] Disable network access in bash: `safety.bash.allow_network: false`
+    - [ ] Disable package installs: `safety.bash.allow_package_install: false`
+    - [ ] Enable audit logging: `audit.enabled: true`
+    - [ ] Enable command audit: `safety.bash.log_all_commands: true`
+    - [ ] Configure token budgets to prevent runaway costs
+    - [ ] Set up IP allowlisting for known networks
+    - [ ] Use team config enforcement for shared security policies
+    - [ ] Review MCP server trust levels (default `untrusted` is correct for external servers)
+    - [ ] Run `pip-audit` regularly to check for dependency vulnerabilities

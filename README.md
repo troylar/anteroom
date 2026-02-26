@@ -93,13 +93,13 @@ A full-featured chat interface with projects, folders, tags, file attachments, c
 
 ### CLI REPL
 
-An agentic terminal with **11 built-in tools**, MCP integration, sub-agent orchestration, a skills system, and planning mode &mdash; all with Rich markdown rendering. Type while the AI works; messages queue automatically.
+An agentic terminal with **12 built-in tools**, MCP integration, sub-agent orchestration, a skills system, and planning mode &mdash; all with Rich markdown rendering. Type while the AI works; messages queue automatically.
 
 ```
 $ aroom chat
 
-anteroom v1.24.6 — the secure AI gateway
-  model: gpt-4o | tools: 10 built-in + 3 MCP | safety: ask_for_writes
+anteroom v1.57.0 — the secure AI gateway
+  model: gpt-4o | tools: 12 built-in + 3 MCP | safety: ask_for_writes
 
 > Refactor the auth module to use JWT tokens
 
@@ -146,7 +146,7 @@ echo "review this" | aroom exec - --quiet      # pipe stdin
 
 The AI reads files, edits code, runs commands, searches your codebase, and spawns parallel sub-agents &mdash; with safety gates at every step. Not a chatbot. A collaborator.
 
-**Built-in tools:** `read_file` `write_file` `edit_file` `bash` `glob_files` `grep` `create_canvas` `update_canvas` `patch_canvas` `run_agent` `ask_user`
+**Built-in tools:** `read_file` `write_file` `edit_file` `bash` `glob_files` `grep` `create_canvas` `update_canvas` `patch_canvas` `run_agent` `ask_user` `introspect`
 
 ---
 
@@ -157,8 +157,20 @@ Connect any [Model Context Protocol](https://modelcontextprotocol.io/) server to
 ```yaml
 # config.yaml
 mcp_servers:
-  - name: filesystem
-    command: npx @anthropic/mcp-filesystem
+  - name: internal-tools
+    command: npx
+    args: ["-y", "@my-org/internal-tools"]
+    trust_level: trusted              # trusted = no defensive prompt wrapping
+    tools_include:
+      - "search_*"
+      - "read_*"
+
+  - name: external-api
+    command: npx
+    args: ["-y", "@third-party/api"]
+    trust_level: untrusted            # default — outputs wrapped in defensive envelopes
+    tools_exclude:
+      - "admin_*"
 ```
 
 ---
@@ -180,16 +192,20 @@ For complex tasks, the AI explores first, writes a plan, then executes only afte
 
 ---
 
-### Security-first
+### Enterprise-grade security
 
-Built to [OWASP ASVS Level 1](SECURITY.md) standards. Not bolted on &mdash; baked in.
+Built to [OWASP ASVS Level 2](SECURITY.md) standards. Not bolted on &mdash; baked in.
 
-- **4 tool risk tiers**: read / write / execute / destructive
-- **Configurable approval modes**: auto, ask_for_writes, ask_for_dangerous
-- **Session + CSRF + rate limiting + CSP**
-- **Destructive command detection** before execution
-- **Bash sandboxing**: execution timeouts, output limits, path/command blocking, network/package restrictions
-- **MCP SSRF protection** built in
+- **Tool safety gate**: 4 risk tiers, 4 approval modes, 3 permission scopes
+- **16 hard-block patterns**: Catastrophic commands (rm -rf, fork bombs, disk wipes) blocked unconditionally
+- **Bash sandboxing**: Execution timeouts, output limits, path/command blocking, network/package restrictions
+- **Prompt injection defense**: Trust classification, defensive XML envelopes, tag breakout prevention
+- **Structured audit log**: HMAC-SHA256 chained JSONL for tamper detection, SIEM-ready
+- **Session hardening**: Ed25519 identity, concurrent session limits, IP allowlisting, idle/absolute timeouts
+- **Token budgets**: Per-request, per-conversation, per-day limits (denial-of-wallet prevention)
+- **Sub-agent isolation**: Concurrency, depth, iteration, timeout, and output caps
+- **Team config enforcement**: Lock security settings across team members
+- **MCP SSRF protection**: DNS validation, metacharacter rejection, per-server tool filtering and trust levels
 
 ---
 
@@ -226,12 +242,18 @@ Any endpoint that speaks the OpenAI protocol:
 |---|---|
 | **Web UI** | Conversations with auto-generated slugs, projects, folders, tags, attachments, canvas, themes, keyboard shortcuts |
 | **CLI** | REPL, one-shot, exec mode, planning, skills, @file references, Rich rendering, slug-based conversation lookup |
-| **Tools** | 10 built-in + unlimited MCP tools, parallel execution, sub-agent orchestration |
-| **Safety** | 4 risk tiers, 3 approval modes, destructive command detection, SSRF protection |
+| **Tools** | 12 built-in + unlimited MCP tools, parallel execution, sub-agent orchestration |
+| **Tool Safety** | 4 risk tiers, 4 approval modes, 16 hard-block patterns, destructive command detection |
+| **Bash Sandbox** | Execution timeouts, output limits, path/command blocking, network/package restrictions, OS-level sandbox |
+| **Prompt Defense** | Trust classification, defensive XML envelopes, tag breakout prevention, per-server trust levels |
+| **Audit** | HMAC-SHA256 chained JSONL, daily rotation, content redaction, SIEM integration |
+| **Token Budgets** | Per-request, per-conversation, per-day limits with configurable block/warn actions |
 | **Storage** | SQLite + FTS5 + optional vector search, fully local, no cloud |
-| **Security** | OWASP ASVS L1, CSRF, CSP, HSTS, rate limiting, parameterized queries |
+| **Security** | OWASP ASVS L2, CSRF, CSP, HSTS, SRI, rate limiting, parameterized queries |
 | **Identity** | Ed25519 keypairs, HMAC-SHA256 session tokens, stable across restarts |
-| **Config** | YAML + env vars, per-project ANTEROOM.md conventions, dynamic API key refresh |
+| **Sessions** | Memory or SQLite stores, idle/absolute timeouts, concurrent limits, IP allowlisting |
+| **Config** | YAML + env vars, per-project ANTEROOM.md conventions, team config enforcement, dynamic API key refresh |
+| **Teams** | Shared databases, team config with enforced fields, project configs with SHA-256 trust, skills system |
 | **Deployment** | `pip install anteroom` &mdash; one command, no infrastructure |
 
 <br>
@@ -245,7 +267,7 @@ Any endpoint that speaks the OpenAI protocol:
 ```bash
 git clone https://github.com/troylar/anteroom.git
 cd anteroom && pip install -e ".[dev]"
-pytest tests/ -v                    # 1800+ tests
+pytest tests/ -v                    # 2900+ tests
 ruff check src/ tests/              # lint
 ruff format src/ tests/             # format
 ```
