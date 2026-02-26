@@ -53,10 +53,13 @@ class AIService:
             self.config.allowed_domains,
             block_localhost=self.config.block_localhost_api,
         ):
-            raise ValueError(
-                f"Egress blocked: {self.config.base_url} is not in the allowed domains list. "
-                f"Allowed: {', '.join(self.config.allowed_domains) or '(block_localhost_api is enabled)'}"
+            logger.debug(
+                "Egress blocked for %s (allowed: %s, block_localhost: %s)",
+                self.config.base_url,
+                self.config.allowed_domains,
+                self.config.block_localhost_api,
             )
+            raise ValueError("Egress blocked: the configured base_url is not permitted by the egress allowlist.")
 
     def _build_client(self) -> None:
         """Build (or rebuild) the AsyncOpenAI client with the current API key.
