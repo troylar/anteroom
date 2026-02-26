@@ -6,7 +6,7 @@ Before creating issues, planning features, or starting work, check that the prop
 
 1. **Zero-friction setup** — pip install and go. No Docker, no external DB required.
 2. **Security is structural** — OWASP ASVS Level 2. Secure by default, not by configuration.
-3. **Lean over sprawling** — fewer features, done well. Complexity is a bug.
+3. **Lean over sprawling, but maximally configurable** — fewer features, done well. Internal complexity is a bug; user-facing configurability is a feature. Every behavioral parameter should be a config knob with a sensible default.
 4. **Two interfaces, one engine** — web UI and CLI share the same core. Neither is second-class.
 5. **Local-first, always** — SQLite, no cloud, no telemetry. Works offline with a local LLM.
 6. **Extensible through standards** — MCP, OpenAI-compatible APIs. Standard protocols, not proprietary plugins.
@@ -18,7 +18,7 @@ These are identity-level constraints. If a feature makes Anteroom more like any 
 
 - **Not a walled garden** — extensibility through MCP and standards, not proprietary ecosystems. A plugin store or shared skill library is fine if lightweight and optional, but extensibility should never require its own infrastructure or admin UI
 - **Not a ChatGPT clone** — the chat is the interaction layer, not the product. Features that just make it "more like ChatGPT" without serving core use cases don't belong
-- **Not a configuration burden** — highly configurable is good (shareable configs, per-project settings, global defaults), but zero configuration must always work. Every option needs a sensible default. If a feature doesn't work without configuration, the defaults are wrong
+- **Not a configuration burden — but a configuration powerhouse** — enterprise teams need a plethora of knobs and levers for security and operational flexibility. Every behavioral parameter should be configurable. But zero configuration must always work, and every knob needs a sensible default
 - **Not enterprise software** — no license keys, seat management, SSO, or compliance dashboards. It serves enterprise users by being secure and simple, not by having enterprise features
 - **Not a deployment project** — if setup takes more than 2 minutes, something is broken
 - **Not a model host** — Anteroom talks to models. It doesn't run, serve, quantize, or benchmark them
