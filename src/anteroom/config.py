@@ -750,7 +750,7 @@ class PackSourceConfig:
                 self.refresh_interval,
                 self._MIN_REFRESH,
             )
-            object.__setattr__(self, "refresh_interval", self._MIN_REFRESH)
+            self.refresh_interval = self._MIN_REFRESH
 
 
 @dataclass
@@ -1896,11 +1896,15 @@ def load_config(
         url = str(src.get("url", "")).strip()
         if not url:
             continue
+        try:
+            refresh = int(src.get("refresh_interval", 30))
+        except (ValueError, TypeError):
+            refresh = 30
         pack_sources_list.append(
             PackSourceConfig(
                 url=url,
                 branch=str(src.get("branch", "main")),
-                refresh_interval=int(src.get("refresh_interval", 30)),
+                refresh_interval=refresh,
             )
         )
 

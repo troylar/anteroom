@@ -187,7 +187,7 @@ class TestCloneSource:
             clone_source(SAMPLE_URL, "develop", tmp_path)
 
         call_args = mock.call_args[0][0]
-        assert call_args == ["git", "clone", "--depth", "1", "-b", "develop", SAMPLE_URL, str(cache_path)]
+        assert call_args == ["git", "clone", "--depth", "1", "-b", "develop", "--", SAMPLE_URL, str(cache_path)]
 
 
 class TestPullSource:
@@ -262,7 +262,7 @@ class TestPullSource:
                 pull_source(cache_path)
 
         call_args = mock.call_args[0][0]
-        assert call_args == ["git", "-C", str(cache_path), "pull"]
+        assert call_args == ["git", "-C", str(cache_path), "pull", "--ff-only"]
 
 
 class TestGetSourceRef:
@@ -392,12 +392,19 @@ class TestEnsureSource:
     def test_clones_when_missing(self, tmp_path: Path) -> None:
         cache_path = resolve_cache_path(SAMPLE_URL, tmp_path)
 
-        def fake_clone(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-            cache_path.mkdir(parents=True, exist_ok=True)
+        call_count = 0
+
+        def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # clone creates the directory
+                cache_path.mkdir(parents=True, exist_ok=True)
             return _completed()
 
-        with patch(_SUBPROCESS_RUN, side_effect=fake_clone):
-            result = ensure_source(SAMPLE_URL, SAMPLE_BRANCH, tmp_path)
+        with patch(_SUBPROCESS_RUN, side_effect=fake_run):
+            with patch(f"{_MODULE}.get_source_ref", return_value=SAMPLE_SHA):
+                result = ensure_source(SAMPLE_URL, SAMPLE_BRANCH, tmp_path)
 
         assert result.success is True
 
@@ -417,6 +424,22 @@ class TestEnsureSource:
 
         assert result.success is False
         assert "git binary not found" in result.error
+
+    def test_pull_failure_of_existing_cache(self, tmp_path: Path) -> None:
+        cache_path = resolve_cache_path(SAMPLE_URL, tmp_path)
+        cache_path.mkdir(parents=True)
+        (cache_path / ".source_url").write_text(SAMPLE_URL)
+        (cache_path / ".source_branch").write_text(SAMPLE_BRANCH)
+
+        # clone_source sees cache hit and returns immediately (no subprocess call)
+        # pull_source makes the subprocess call which fails
+        pull_result = _completed(returncode=1, stderr="network unreachable")
+        with patch(_SUBPROCESS_RUN, return_value=pull_result):
+            with patch(f"{_MODULE}.get_source_ref", return_value=SAMPLE_SHA):
+                result = ensure_source(SAMPLE_URL, SAMPLE_BRANCH, tmp_path)
+
+        assert result.success is False
+        assert "git pull failed" in result.error
 
 
 class TestValidateUrlScheme:

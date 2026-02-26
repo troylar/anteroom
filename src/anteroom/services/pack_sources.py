@@ -41,6 +41,8 @@ _CREDENTIAL_PATTERN = re.compile(r"(https?://)([^@]+)@", re.IGNORECASE)
 def _validate_url_scheme(url: str) -> str | None:
     """Validate that a URL uses an allowed scheme. Returns error message or None."""
     if any(url.startswith(scheme) for scheme in _ALLOWED_SCHEMES):
+        if url.startswith("http://"):
+            logger.warning("Pack source URL uses plaintext HTTP (MITM risk): %s", url)
         return None
     if _GIT_AT_PATTERN.match(url):
         return None
@@ -50,6 +52,8 @@ def _validate_url_scheme(url: str) -> str | None:
 def _sanitize_git_stderr(stderr: str) -> str:
     """Strip embedded credentials from git stderr before surfacing in errors."""
     return _CREDENTIAL_PATTERN.sub(r"\1***@", stderr)
+
+
 _CACHE_DIR_NAME = "cache"
 _SOURCES_DIR_NAME = "sources"
 
@@ -125,7 +129,7 @@ def clone_source(
 
     try:
         result = subprocess.run(
-            ["git", "clone", "--depth", "1", "-b", branch, url, str(cache_path)],
+            ["git", "clone", "--depth", "1", "-b", branch, "--", url, str(cache_path)],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -181,7 +185,7 @@ def pull_source(
 
     try:
         result = subprocess.run(
-            ["git", "-C", str(cache_path), "pull"],
+            ["git", "-C", str(cache_path), "pull", "--ff-only"],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -265,7 +269,7 @@ def remove_cached_source(url: str, data_dir: Path) -> bool:
     if not cache_path.is_dir():
         return False
 
-    shutil.rmtree(cache_path)
+    shutil.rmtree(cache_path, ignore_errors=True)
     logger.info("Removed cached pack source for %s at %s", url, cache_path)
     return True
 
@@ -282,9 +286,13 @@ def ensure_source(
 
     Clones the source if it is not cached, otherwise pulls updates.
     """
-    cache_path = resolve_cache_path(url, data_dir)
+    clone_result = clone_source(url, branch, data_dir, timeout=clone_timeout)
+    if not clone_result.success:
+        return clone_result
 
+    # clone_source returns immediately on cache hit; pull to update
+    cache_path = resolve_cache_path(url, data_dir)
     if cache_path.is_dir():
         return pull_source(cache_path, timeout=pull_timeout)
 
-    return clone_source(url, branch, data_dir, timeout=clone_timeout)
+    return clone_result
