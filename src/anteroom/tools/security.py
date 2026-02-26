@@ -118,6 +118,82 @@ _HARD_BLOCK_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
+# Network command patterns (Unix + PowerShell + cmd.exe)
+_NETWORK_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\b(curl|wget|nc|ncat|socat|nmap)\b", re.IGNORECASE), "network tool"),
+    (re.compile(r"\b(ssh|scp|rsync|sftp|ftp|telnet)\b", re.IGNORECASE), "remote connection"),
+    (re.compile(r"\b(Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b", re.IGNORECASE), "PowerShell network"),
+    (re.compile(r"\bStart-BitsTransfer\b", re.IGNORECASE), "PowerShell download"),
+    (re.compile(r"\bNet\.WebClient\b", re.IGNORECASE), ".NET web client"),
+    (re.compile(r"\b(nslookup|dig)\b", re.IGNORECASE), "DNS lookup"),
+]
+
+# Package manager patterns (cross-platform)
+_PACKAGE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\b(pip|pip3)\s+install\b", re.IGNORECASE), "pip install"),
+    (re.compile(r"\b(npm|yarn|pnpm)\s+(install|add|i)\b", re.IGNORECASE), "Node package install"),
+    (re.compile(r"\bgem\s+install\b", re.IGNORECASE), "gem install"),
+    (re.compile(r"\bcargo\s+install\b", re.IGNORECASE), "cargo install"),
+    (re.compile(r"\bgo\s+install\b", re.IGNORECASE), "go install"),
+    (re.compile(r"\b(apt|apt-get|yum|dnf|pacman|zypper)\s+install\b", re.IGNORECASE), "system package install"),
+    (re.compile(r"\bbrew\s+install\b", re.IGNORECASE), "brew install"),
+    (re.compile(r"\b(choco|winget|scoop)\s+install\b", re.IGNORECASE), "Windows package install"),
+    (re.compile(r"\bconda\s+install\b", re.IGNORECASE), "conda install"),
+]
+
+
+def check_network_command(command: str) -> str | None:
+    """Check if a command uses network tools. Returns description if matched."""
+    if not command or not command.strip():
+        return None
+    normalized = _normalize_whitespace(command)
+    for pattern, description in _NETWORK_PATTERNS:
+        if pattern.search(normalized):
+            return description
+    return None
+
+
+def check_package_install(command: str) -> str | None:
+    """Check if a command installs packages. Returns description if matched."""
+    if not command or not command.strip():
+        return None
+    normalized = _normalize_whitespace(command)
+    for pattern, description in _PACKAGE_PATTERNS:
+        if pattern.search(normalized):
+            return description
+    return None
+
+
+def check_blocked_path(command: str, blocked_paths: list[str]) -> str | None:
+    """Check if a command references any blocked path.
+
+    Normalizes both forward and backslashes for cross-platform matching.
+    """
+    if not command or not blocked_paths:
+        return None
+    # Normalize the command: replace backslashes and lowercase for case-insensitive path matching
+    cmd_lower = command.replace("\\", "/").lower()
+    for blocked in blocked_paths:
+        normalized_blocked = blocked.replace("\\", "/").lower().rstrip("/")
+        if normalized_blocked and normalized_blocked in cmd_lower:
+            return f"path restricted: {blocked}"
+    return None
+
+
+def check_custom_patterns(command: str, patterns: list[str]) -> str | None:
+    """Check command against user-defined regex patterns. Returns description if matched."""
+    if not command or not patterns:
+        return None
+    normalized = _normalize_whitespace(command)
+    for pattern_str in patterns:
+        try:
+            if re.search(pattern_str, normalized, re.IGNORECASE):
+                return f"custom pattern: {pattern_str}"
+        except re.error:
+            logger.warning("Invalid custom bash pattern, skipping: %s", pattern_str)
+    return None
+
+
 def _normalize_whitespace(text: str) -> str:
     """Collapse all whitespace to single spaces for pattern matching."""
     return re.sub(r"\s+", " ", text.strip())
