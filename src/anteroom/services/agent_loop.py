@@ -213,6 +213,7 @@ async def run_agent_loop(
     auto_plan_threshold: int = 0,
     budget_config: Any | None = None,
     get_token_totals: Any | None = None,
+    dlp_scanner: Any | None = None,
 ) -> AsyncGenerator[AgentEvent, None]:
     """Run the agentic tool-call loop, yielding events.
 
@@ -307,8 +308,22 @@ async def run_agent_loop(
         ):
             etype = event["event"]
             if etype == "token":
-                assistant_content += event["data"]["content"]
-                yield AgentEvent(kind="token", data=event["data"])
+                chunk = event["data"]["content"]
+                if dlp_scanner is not None and dlp_scanner.enabled and dlp_scanner.scan_output:
+                    chunk, dlp_result = dlp_scanner.apply(chunk, "output")
+                    if dlp_result.matched and dlp_result.action == "block":
+                        yield AgentEvent(
+                            kind="dlp_blocked",
+                            data={"direction": "output", "matches": [m.rule_name for m in dlp_result.matches]},
+                        )
+                        break
+                    if dlp_result.matched and dlp_result.action == "warn":
+                        yield AgentEvent(
+                            kind="dlp_warning",
+                            data={"direction": "output", "matches": [m.rule_name for m in dlp_result.matches]},
+                        )
+                assistant_content += chunk
+                yield AgentEvent(kind="token", data={"content": chunk})
             elif etype == "tool_call":
                 tool_calls_pending.append(event["data"])
                 yield AgentEvent(
@@ -379,6 +394,20 @@ async def run_agent_loop(
 
         if not tool_calls_pending:
             if assistant_content:
+                # Final DLP scan on complete assembled text (catches patterns split across chunks)
+                if dlp_scanner is not None and dlp_scanner.enabled and dlp_scanner.scan_output:
+                    assistant_content, dlp_final = dlp_scanner.apply(assistant_content, "output")
+                    if dlp_final.matched and dlp_final.action == "block":
+                        yield AgentEvent(
+                            kind="dlp_blocked",
+                            data={"direction": "output", "matches": [m.rule_name for m in dlp_final.matches]},
+                        )
+                        return
+                    if dlp_final.matched and dlp_final.action == "warn":
+                        yield AgentEvent(
+                            kind="dlp_warning",
+                            data={"direction": "output", "matches": [m.rule_name for m in dlp_final.matches]},
+                        )
                 yield AgentEvent(kind="assistant_message", data={"content": assistant_content})
             yield AgentEvent(kind="done", data={})
 
@@ -392,6 +421,10 @@ async def run_agent_loop(
                 except asyncio.QueueEmpty:
                     pass
             return
+
+        # Final DLP scan on complete assistant text before storage (tool-call turn)
+        if dlp_scanner is not None and dlp_scanner.enabled and dlp_scanner.scan_output and assistant_content:
+            assistant_content, _ = dlp_scanner.apply(assistant_content, "output")
 
         # Save assistant message with tool calls into message history
         yield AgentEvent(kind="assistant_message", data={"content": assistant_content})

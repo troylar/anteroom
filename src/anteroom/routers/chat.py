@@ -892,6 +892,17 @@ async def _stream_chat_events(ctx: StreamContext):
                 storage.get_daily_token_total(ctx.db),
             )
 
+        # Construct DLP scanner if configured
+        _dlp_scanner = None
+        _app_config = getattr(getattr(ctx.request, "app", None), "state", None)
+        _app_config = getattr(_app_config, "config", None) if _app_config else None
+        if _app_config is not None:
+            _dlp_cfg = getattr(getattr(_app_config, "safety", None), "dlp", None)
+            if _dlp_cfg is not None and _dlp_cfg.enabled:
+                from ..services.dlp import DlpScanner
+
+                _dlp_scanner = DlpScanner(_dlp_cfg)
+
         agent_gen = run_agent_loop(
             ai_service=ctx.ai_service,
             messages=ctx.ai_messages,
@@ -906,6 +917,7 @@ async def _stream_chat_events(ctx: StreamContext):
             ),
             budget_config=ctx.budget_config,
             get_token_totals=_get_token_totals,
+            dlp_scanner=_dlp_scanner,
         )
         async for agent_event in _with_keepalive(agent_gen):
             if isinstance(agent_event, dict) and "comment" in agent_event:
@@ -1178,6 +1190,29 @@ async def _stream_chat_events(ctx: StreamContext):
 
             elif kind == "budget_warning":
                 yield {"event": "budget_warning", "data": json.dumps(data)}
+
+            elif kind == "dlp_blocked":
+                yield {
+                    "event": "error",
+                    "data": json.dumps(
+                        {
+                            "message": "Response blocked by DLP policy",
+                            "code": "dlp_blocked",
+                            "rules": data.get("matches", []),
+                        }
+                    ),
+                }
+
+            elif kind == "dlp_warning":
+                yield {
+                    "event": "dlp_warning",
+                    "data": json.dumps(
+                        {
+                            "message": "Sensitive data detected in response",
+                            "rules": data.get("matches", []),
+                        }
+                    ),
+                }
 
             elif kind == "queued_message":
                 current_assistant_msg = None
