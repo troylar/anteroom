@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 26, 2026
 
+### v1.66.1
+
+**Fixed:**
+
+- Skill system hardening: reload safety, queue handling, code-fence-aware `{args}`, built-in command protection (#498)
+- Default skills (`/commit`, `/review`, `/explain`, `/new-skill`) now use inline `{args}` placeholders (#498)
+- Queued skill invocations no longer silently dropped while AI is responding (#498)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.66.1)
+
 ### v1.66.0
 
 **New:**
