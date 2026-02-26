@@ -477,6 +477,25 @@ class SessionConfig:
     absolute_timeout: int = 43200  # seconds (12 hours)
     allowed_ips: list[str] = field(default_factory=list)  # CIDR or exact; empty = allow all
 
+    _MIN_IDLE_TIMEOUT: int = field(default=60, init=False, repr=False)
+    _MIN_ABSOLUTE_TIMEOUT: int = field(default=300, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.idle_timeout < self._MIN_IDLE_TIMEOUT:
+            logger.warning(
+                "idle_timeout=%d is below minimum (%d), clamping",
+                self.idle_timeout,
+                self._MIN_IDLE_TIMEOUT,
+            )
+            object.__setattr__(self, "idle_timeout", self._MIN_IDLE_TIMEOUT)
+        if self.absolute_timeout < self._MIN_ABSOLUTE_TIMEOUT:
+            logger.warning(
+                "absolute_timeout=%d is below minimum (%d), clamping",
+                self.absolute_timeout,
+                self._MIN_ABSOLUTE_TIMEOUT,
+            )
+            object.__setattr__(self, "absolute_timeout", self._MIN_ABSOLUTE_TIMEOUT)
+
 
 @dataclass
 class AuditConfig:

@@ -173,8 +173,8 @@ class TestBearerTokenMiddleware:
 
     def test_expired_absolute_session_returns_401(self) -> None:
         token = "correct-token"
-        # Use a very short absolute timeout so the session expires immediately
-        cfg = SessionConfig(absolute_timeout=1, idle_timeout=99999)
+        # Use minimum absolute timeout (300s) and backdate beyond it
+        cfg = SessionConfig(absolute_timeout=300, idle_timeout=99999)
         app = _make_middleware_app(token, session_config=cfg)
         client = TestClient(app)
 
@@ -182,17 +182,18 @@ class TestBearerTokenMiddleware:
         resp = client.get("/api/test", cookies={"anteroom_session": token})
         assert resp.status_code == 200
 
-        # Backdate created_at via the shared store
+        # Backdate created_at beyond absolute timeout
         store = app.state.session_store
         sid = session_id_from_token(token)
-        store._sessions[sid]["created_at"] = time.time() - 10
+        store._sessions[sid]["created_at"] = time.time() - 400
 
         resp = client.get("/api/test", cookies={"anteroom_session": token})
         assert resp.status_code == 401  # expired sessions are rejected, not auto-recreated
 
     def test_idle_timeout_returns_401(self) -> None:
         token = "correct-token"
-        cfg = SessionConfig(idle_timeout=1, absolute_timeout=99999)
+        # Use minimum idle timeout (60s) and backdate beyond it
+        cfg = SessionConfig(idle_timeout=60, absolute_timeout=99999)
         app = _make_middleware_app(token, session_config=cfg)
         client = TestClient(app)
 
@@ -200,10 +201,10 @@ class TestBearerTokenMiddleware:
         resp = client.get("/api/test", cookies={"anteroom_session": token})
         assert resp.status_code == 200
 
-        # Backdate last_activity_at via the shared store
+        # Backdate last_activity_at beyond idle timeout
         store = app.state.session_store
         sid = session_id_from_token(token)
-        store._sessions[sid]["last_activity_at"] = time.time() - 10
+        store._sessions[sid]["last_activity_at"] = time.time() - 120
 
         resp = client.get("/api/test", cookies={"anteroom_session": token})
         assert resp.status_code == 401  # expired sessions are rejected, not auto-recreated
@@ -487,9 +488,54 @@ class TestConcurrentSessionLimit:
         resp = client.get("/api/test", cookies={"anteroom_session": token})
         assert resp.status_code == 200
 
-        # Add another session to reach the limit (count: 2)
-        app.state.session_store.create("other-session", "10.0.0.1")
 
-        # Same token should still work (its session already exists)
+class TestSessionIPBinding:
+    """Test that sessions are bound to the IP that created them."""
+
+    def test_ip_mismatch_returns_401(self) -> None:
+        token = "test-token"
+        app = _make_middleware_app(token)
+        client = TestClient(app)
+
+        # Create session (TestClient uses "testclient" as host)
         resp = client.get("/api/test", cookies={"anteroom_session": token})
         assert resp.status_code == 200
+
+        # Tamper with the stored IP to simulate a different origin
+        store = app.state.session_store
+        sid = session_id_from_token(token)
+        store._sessions[sid]["ip_address"] = "10.99.99.99"
+
+        # Next request from "testclient" should fail IP binding check
+        resp = client.get("/api/test", cookies={"anteroom_session": token})
+        assert resp.status_code == 401
+
+    def test_same_ip_succeeds(self) -> None:
+        token = "test-token"
+        app = _make_middleware_app(token)
+        client = TestClient(app)
+
+        # Create session
+        resp = client.get("/api/test", cookies={"anteroom_session": token})
+        assert resp.status_code == 200
+
+        # Second request from same IP succeeds
+        resp = client.get("/api/test", cookies={"anteroom_session": token})
+        assert resp.status_code == 200
+
+
+class TestSessionConfigClamping:
+    """Test that SessionConfig enforces minimum timeout values."""
+
+    def test_idle_timeout_clamped_to_minimum(self) -> None:
+        cfg = SessionConfig(idle_timeout=5)
+        assert cfg.idle_timeout == 60  # minimum is 60s
+
+    def test_absolute_timeout_clamped_to_minimum(self) -> None:
+        cfg = SessionConfig(absolute_timeout=10)
+        assert cfg.absolute_timeout == 300  # minimum is 300s
+
+    def test_valid_timeouts_unchanged(self) -> None:
+        cfg = SessionConfig(idle_timeout=1800, absolute_timeout=43200)
+        assert cfg.idle_timeout == 1800
+        assert cfg.absolute_timeout == 43200

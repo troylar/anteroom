@@ -320,8 +320,8 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
         provided_hash = hashlib.sha256(provided.encode()).hexdigest()
         return hmac.compare_digest(provided_hash, self.token_hash)
 
-    def _check_session(self, session_id: str) -> str:
-        """Check session state. Returns 'valid', 'expired', or 'new'."""
+    def _check_session(self, session_id: str, client_ip: str) -> str:
+        """Check session state. Returns 'valid', 'expired', 'ip_mismatch', or 'new'."""
         session = self._store.get(session_id)
         if session is None:
             return "new"
@@ -334,16 +334,27 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
             security_logger.info("Session expired (idle timeout)")
             self._store.delete(session_id)
             return "expired"
+        if session.get("ip_address") and session["ip_address"] != client_ip:
+            security_logger.warning(
+                "Session IP mismatch: expected %s, got %s",
+                session["ip_address"],
+                client_ip,
+            )
+            self._store.delete(session_id)
+            return "ip_mismatch"
         return "valid"
 
     def _handle_session(self, session_id: str, client_ip: str, request: Request, path: str) -> JSONResponse | None:
         """Validate or create a session. Returns an error response, or None to proceed."""
         # Check the specific session first (before bulk cleanup which would mask expiry)
-        state = self._check_session(session_id)
+        state = self._check_session(session_id, client_ip)
         if state == "expired":
             security_logger.warning("Expired session from %s: %s", client_ip, path)
             _emit_auth_audit(request, "auth.session_expired", "warning", client_ip, path)
             return JSONResponse(status_code=401, content={"detail": "Session expired"})
+        if state == "ip_mismatch":
+            _emit_auth_audit(request, "auth.ip_mismatch", "warning", client_ip, path)
+            return JSONResponse(status_code=401, content={"detail": "Session invalidated"})
         if state == "new":
             # Clean up expired sessions before limit check so stale entries don't inflate count
             self._store.cleanup_expired(
