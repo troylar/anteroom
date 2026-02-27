@@ -17,7 +17,9 @@ async def check_artifacts(request: Request) -> dict[str, Any]:
     db = request.app.state.db
     report = artifact_health.run_health_check(db)
     result = report.to_dict()
+    sensitive_keys = {"source_path", "error"}
     for issue in result.get("issues", []):
         details = issue.get("details", {})
-        details.pop("source_path", None)
+        for key in sensitive_keys:
+            details.pop(key, None)
     return result

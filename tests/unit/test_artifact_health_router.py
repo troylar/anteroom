@@ -72,7 +72,7 @@ class TestArtifactHealthEndpoint:
                     severity=HealthSeverity.WARN,
                     category="test",
                     message="test",
-                    details={"source_path": "/secret/path", "other": "ok"},
+                    details={"source_path": "/secret/path", "error": "yaml error at /etc/foo", "other": "ok"},
                 )
             ],
         )
@@ -81,6 +81,7 @@ class TestArtifactHealthEndpoint:
             resp = client.get("/api/artifacts/check")
         data = resp.json()
         assert "source_path" not in data["issues"][0]["details"]
+        assert "error" not in data["issues"][0]["details"]
         assert data["issues"][0]["details"]["other"] == "ok"
 
     def test_report_structure(self, client: TestClient) -> None:

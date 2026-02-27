@@ -281,13 +281,13 @@ def check_malformed_artifacts(db: sqlite3.Connection) -> list[HealthIssue]:
                             details={"fqn": fqn, "type": art_type},
                         )
                     )
-            except yaml.YAMLError as e:
+            except yaml.YAMLError:
                 issues.append(
                     HealthIssue(
                         severity=HealthSeverity.ERROR,
                         category="malformed",
-                        message=f"Invalid YAML in {fqn}: {e}",
-                        details={"fqn": fqn, "error": str(e)},
+                        message=f"Invalid YAML in {fqn}",
+                        details={"fqn": fqn},
                     )
                 )
 
@@ -359,10 +359,13 @@ def check_orphaned_artifacts(db: sqlite3.Connection) -> list[HealthIssue]:
     if pack_count_val == 0:
         return []
 
+    excluded_sources = ("built_in", "local", "inline")
+    placeholders = ",".join("?" for _ in excluded_sources)
     rows = db.execute(
-        """SELECT a.fqn, a.source FROM artifacts a
+        f"""SELECT a.fqn, a.source FROM artifacts a
            WHERE a.id NOT IN (SELECT artifact_id FROM pack_artifacts)
-           AND a.source NOT IN ('built_in', 'local', 'inline')"""
+           AND a.source NOT IN ({placeholders})""",
+        excluded_sources,
     ).fetchall()
 
     issues: list[HealthIssue] = []
