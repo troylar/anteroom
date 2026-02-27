@@ -162,6 +162,117 @@ class TestListSourcesEndpoint:
         assert data[0]["ref"] is None
 
 
+class TestAttachPackEndpoint:
+    def test_attach_success(self) -> None:
+        app = _make_app()
+        with (
+            patch("anteroom.services.pack_attachments.resolve_pack_id", return_value="pack-1"),
+            patch("anteroom.services.pack_attachments.attach_pack", return_value={"id": "att-1", "scope": "global"}),
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/packs/test-ns/test-pack/attach", json={})
+            assert resp.status_code == 200
+            assert resp.json()["scope"] == "global"
+
+    def test_attach_not_found(self) -> None:
+        app = _make_app()
+        with patch("anteroom.services.pack_attachments.resolve_pack_id", return_value=None):
+            client = TestClient(app)
+            resp = client.post("/api/packs/test-ns/test-pack/attach", json={})
+            assert resp.status_code == 404
+
+    def test_attach_duplicate_returns_409(self) -> None:
+        app = _make_app()
+        with (
+            patch("anteroom.services.pack_attachments.resolve_pack_id", return_value="pack-1"),
+            patch("anteroom.services.pack_attachments.attach_pack", side_effect=ValueError("already attached")),
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/packs/test-ns/test-pack/attach", json={})
+            assert resp.status_code == 409
+
+    def test_attach_with_project_path(self) -> None:
+        app = _make_app()
+        with (
+            patch("anteroom.services.pack_attachments.resolve_pack_id", return_value="pack-1"),
+            patch(
+                "anteroom.services.pack_attachments.attach_pack",
+                return_value={"id": "att-1", "scope": "project"},
+            ) as mock_attach,
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/packs/test-ns/test-pack/attach", json={"project_path": "/my/proj"})
+            assert resp.status_code == 200
+            mock_attach.assert_called_once_with(app.state.db, "pack-1", project_path="/my/proj")
+
+
+class TestDetachPackEndpoint:
+    def test_detach_success(self) -> None:
+        app = _make_app()
+        with (
+            patch("anteroom.services.pack_attachments.resolve_pack_id", return_value="pack-1"),
+            patch("anteroom.services.pack_attachments.detach_pack", return_value=True),
+        ):
+            client = TestClient(app)
+            resp = client.request("DELETE", "/api/packs/test-ns/test-pack/attach", json={})
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "detached"
+
+    def test_detach_not_found(self) -> None:
+        app = _make_app()
+        with patch("anteroom.services.pack_attachments.resolve_pack_id", return_value=None):
+            client = TestClient(app)
+            resp = client.request("DELETE", "/api/packs/test-ns/test-pack/attach", json={})
+            assert resp.status_code == 404
+
+    def test_detach_not_attached(self) -> None:
+        app = _make_app()
+        with (
+            patch("anteroom.services.pack_attachments.resolve_pack_id", return_value="pack-1"),
+            patch("anteroom.services.pack_attachments.detach_pack", return_value=False),
+        ):
+            client = TestClient(app)
+            resp = client.request("DELETE", "/api/packs/test-ns/test-pack/attach", json={})
+            assert resp.status_code == 404
+
+
+class TestRemovePackEndpoint:
+    def test_remove_success(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.packs.packs") as mock_packs:
+            mock_packs.remove_pack.return_value = True
+            client = TestClient(app)
+            resp = client.delete("/api/packs/test-ns/test-pack")
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "removed"
+
+    def test_remove_not_found(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.packs.packs") as mock_packs:
+            mock_packs.remove_pack.return_value = False
+            client = TestClient(app)
+            resp = client.delete("/api/packs/test-ns/test-pack")
+            assert resp.status_code == 404
+
+
+class TestListPackAttachmentsEndpoint:
+    def test_list_attachments(self) -> None:
+        app = _make_app()
+        with patch("anteroom.services.pack_attachments.resolve_pack_id", return_value="pack-1"):
+            app.state.db.execute.return_value.fetchall.return_value = []
+            client = TestClient(app)
+            resp = client.get("/api/packs/test-ns/test-pack/attachments")
+            assert resp.status_code == 200
+            assert resp.json() == []
+
+    def test_list_attachments_not_found(self) -> None:
+        app = _make_app()
+        with patch("anteroom.services.pack_attachments.resolve_pack_id", return_value=None):
+            client = TestClient(app)
+            resp = client.get("/api/packs/test-ns/test-pack/attachments")
+            assert resp.status_code == 404
+
+
 class TestRefreshSourcesEndpoint:
     def test_refresh_no_sources(self) -> None:
         app = _make_app()
