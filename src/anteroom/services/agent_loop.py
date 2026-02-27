@@ -98,11 +98,11 @@ def _build_compaction_history(messages: list[dict[str, Any]]) -> str:
                 result = {"raw": content}
             if isinstance(result, dict) and "error" in result:
                 snippet = str(result["error"])[:200]
-                history_text.append(f"  tool_result: {tool_name} → ERROR: {snippet}")
+                history_text.append(f"  tool_result: {tool_name} -> ERROR: {snippet}")
             else:
                 safe_content = content if isinstance(content, str) else ""
                 snippet = safe_content[:200] + "..." if len(safe_content) > 200 else safe_content
-                history_text.append(f"  tool_result: {tool_name} → SUCCESS: {snippet}")
+                history_text.append(f"  tool_result: {tool_name} -> SUCCESS: {snippet}")
             continue
 
         if isinstance(content, str) and content:

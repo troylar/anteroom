@@ -439,7 +439,7 @@ async def run_exec_mode(
                 if not quiet:
                     status = event.data.get("status", "success")
                     name = event.data.get("tool_name", "")
-                    print(f"[tool] {name} → {status}", file=sys.stderr)
+                    print(f"[tool] {name} -> {status}", file=sys.stderr)
 
                 # Audit: always write tool calls to DB (even with --no-conversation)
                 if not assistant_msg_id:
