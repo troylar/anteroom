@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 26, 2026
 
+### v1.70.0
+
+**New:**
+
+- Pack distribution: configure Git-based pack sources with auto-clone, background refresh, and per-source intervals (#506)
+- CLI `aroom pack sources` and `aroom pack refresh` commands for source management (#506)
+- Lock file provenance: entries include `source_url` and `source_ref` for traceability (#506)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.70.0)
+
 ### v1.69.0
 
 **New:**
