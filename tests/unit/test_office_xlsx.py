@@ -6,7 +6,9 @@ from unittest.mock import patch
 
 import pytest
 
-from anteroom.tools.office_xlsx import _MAX_ROWS, DEFINITION, handle, set_working_dir
+from anteroom.tools.office_xlsx import _MAX_ROWS, AVAILABLE, DEFINITION, handle, set_working_dir
+
+_needs_openpyxl = pytest.mark.skipif(not AVAILABLE, reason="requires openpyxl: pip install anteroom[office]")
 
 
 @pytest.fixture(autouse=True)
@@ -24,6 +26,7 @@ class TestDefinition:
         assert "path" in DEFINITION["parameters"]["required"]
 
 
+@_needs_openpyxl
 class TestCreate:
     @pytest.mark.asyncio
     async def test_create_simple(self, tmp_path):
@@ -63,6 +66,7 @@ class TestCreate:
         assert "Too many rows" in result["error"]
 
 
+@_needs_openpyxl
 class TestRead:
     @pytest.mark.asyncio
     async def test_read_simple(self, tmp_path):
@@ -125,6 +129,7 @@ class TestRead:
         assert result["rows_read"] == 2
 
 
+@_needs_openpyxl
 class TestEdit:
     @pytest.mark.asyncio
     async def test_edit_cells(self, tmp_path):
@@ -202,6 +207,7 @@ class TestEdit:
         assert "error" in result
 
 
+@_needs_openpyxl
 class TestPathValidation:
     @pytest.mark.asyncio
     async def test_blocked_system_path_rejected(self):
@@ -218,6 +224,7 @@ class TestPathValidation:
         assert "error" in result
 
 
+@_needs_openpyxl
 class TestUnknownAction:
     @pytest.mark.asyncio
     async def test_unknown_action(self):

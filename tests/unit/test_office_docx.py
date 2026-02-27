@@ -6,7 +6,9 @@ from unittest.mock import patch
 
 import pytest
 
-from anteroom.tools.office_docx import _MAX_CONTENT_BLOCKS, DEFINITION, handle, set_working_dir
+from anteroom.tools.office_docx import _MAX_CONTENT_BLOCKS, AVAILABLE, DEFINITION, handle, set_working_dir
+
+_needs_docx = pytest.mark.skipif(not AVAILABLE, reason="requires python-docx: pip install anteroom[office]")
 
 
 @pytest.fixture(autouse=True)
@@ -24,6 +26,7 @@ class TestDefinition:
         assert "path" in DEFINITION["parameters"]["required"]
 
 
+@_needs_docx
 class TestCreate:
     @pytest.mark.asyncio
     async def test_create_simple(self, tmp_path):
@@ -74,6 +77,7 @@ class TestCreate:
         assert (tmp_path / "sub" / "dir" / "test.docx").exists()
 
 
+@_needs_docx
 class TestRead:
     @pytest.mark.asyncio
     async def test_read_simple(self, tmp_path):
@@ -117,6 +121,7 @@ class TestRead:
         assert "error" in result
 
 
+@_needs_docx
 class TestEdit:
     @pytest.mark.asyncio
     async def test_edit_replace(self, tmp_path):
@@ -182,6 +187,7 @@ class TestEdit:
         assert "error" in result
 
 
+@_needs_docx
 class TestPathValidation:
     @pytest.mark.asyncio
     async def test_blocked_system_path_rejected(self):
@@ -198,6 +204,7 @@ class TestPathValidation:
         assert "error" in result
 
 
+@_needs_docx
 class TestUnknownAction:
     @pytest.mark.asyncio
     async def test_unknown_action(self):
