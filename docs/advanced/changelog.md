@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 27, 2026
 
+### v1.82.1
+
+**Fixed:**
+
+- Tool elapsed timer no longer clobbers the `ask_user` input prompt (#581)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.82.1)
+
 ### v1.82.0
 
 **New:**
