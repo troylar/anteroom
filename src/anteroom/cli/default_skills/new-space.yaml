@@ -65,6 +65,7 @@ prompt: |
   1. **Understand intent.** If no request was provided above, ask the user:
      - What is this workspace for? (project name, team name, or use case)
      - Which git repos should be included?
+     - Do you already have repos cloned locally, or should Anteroom clone them?
      - Any specific coding standards or conventions? (becomes instructions)
      - Should it use a particular AI model or config?
 
@@ -76,20 +77,31 @@ prompt: |
      - Must be lowercase, alphanumeric with hyphens
      - Examples: `backend-team`, `acme-platform`, `production-debug`
 
-  3. **Design the space file.** Based on user input:
+  3. **Choose the file location.** Two options:
+
+     **Option A — Personal config (default):**
+     `~/.anteroom/spaces/<name>.yaml`
+     Best for: personal workspaces, local-only use.
+
+     **Option B — Inside a git repo:**
+     `<repo-root>/.anteroom/space.yaml` or `<repo-root>/spaces/<name>.yaml`
+     Best for: team-shared spaces versioned with the project. Changes are committed
+     and shared via git pull. Ask which repo if the space spans multiple repos.
+
+     If the user mentions a team, sharing, or version control, suggest Option B.
+     Otherwise default to Option A.
+
+  4. **Design the space file.** Based on user input:
      - Add repos if mentioned (validate URL schemes)
      - Add packs if the user has team packs
      - Write clear, actionable instructions
      - Add config overrides only if the user has specific needs
      - Omit empty sections — keep it minimal
 
-  4. **Write the space file.** Use `write_file` to create:
-
-     `~/.anteroom/spaces/<name>.yaml`
-
+  5. **Write the space file.** Use `write_file` to create the file at the chosen location.
      Write the YAML with clear comments explaining each section.
 
-  5. **Validate the space file.** Run with `bash`:
+  6. **Validate the space file.** Run with `bash`:
 
      ```
      python3 -c "
@@ -108,17 +120,33 @@ prompt: |
      If validation reports errors, fix them and re-validate. Do not declare
      success until validation passes.
 
-  6. **Register the space.** Run with `bash`:
+  7. **Register the space.** Run with `bash`:
 
      ```
      aroom space create <space-file-path>
      ```
 
-  7. **Report what was created and next steps.** Show:
-     - Space file location
-     - How to clone repos: `aroom space clone <name>`
-     - How to activate: `/space switch <name>` in REPL
-     - How to share with team: copy the YAML file (no machine-specific paths)
+  8. **Map existing repos (if applicable).** If the user mentioned they already have
+     repos cloned locally, map each one:
+
+     ```
+     aroom space map <name> <local-path>
+     ```
+
+     For each local path, verify it exists: `test -d <path>`
+
+  9. **Handle git commit (if in a repo).** If the space file was written inside a git
+     repo (Option B), ask if the user wants to commit it:
+     - Show what will be committed: `git status <space-file-path>`
+     - Suggest: `git add <path> && git commit -m "chore: add <name> space definition"`
+     - Note: the `.local.yaml` file should be in `.gitignore` — it is machine-specific
+
+  10. **Report what was created and next steps.** Show:
+      - Space file location
+      - If repos need cloning: `aroom space clone <name>`
+      - If repos already mapped: list the mappings
+      - How to activate: `/space switch <name>` in REPL
+      - If in a git repo: remind to add `<name>.local.yaml` to `.gitignore`
 
   ## Constraints
 
@@ -126,5 +154,6 @@ prompt: |
   - Do NOT add empty sections (e.g., empty repos list) — omit them
   - Do NOT skip validation — always run the validation step
   - Do NOT include machine-specific paths in the space file — those go in .local.yaml
+  - Do NOT commit .local.yaml files — they are machine-specific
   - Keep instructions focused and actionable — no filler text
   - Use YAML block scalar `instructions: |` for multi-line instructions

@@ -1,13 +1,25 @@
 # Space File Format
 
-The space file is the single source of truth for a workspace. It's a YAML file stored in `~/.anteroom/spaces/` that defines everything Anteroom needs to configure itself for a project, team, or workflow.
+The space file is the single source of truth for a workspace. It's a YAML file that can live anywhere on the filesystem — in `~/.anteroom/spaces/` for personal use, inside a git repo for team sharing, or any other path. It defines everything Anteroom needs to configure itself for a project, team, or workflow.
 
 ## File Locations
 
-| File | Purpose |
-|------|---------|
-| `~/.anteroom/spaces/<name>.yaml` | Space definition (shared, versioned) |
-| `~/.anteroom/spaces/<name>.local.yaml` | Machine-specific overrides (never shared) |
+Space files can live anywhere. Common patterns:
+
+| Location | Use Case | Example |
+|----------|----------|---------|
+| `~/.anteroom/spaces/<name>.yaml` | Personal workspace | `~/.anteroom/spaces/backend-api.yaml` |
+| `<repo>/.anteroom/space.yaml` | Team-shared, version-controlled | `~/projects/acme/.anteroom/space.yaml` |
+| Any path | Custom deployments | `/opt/anteroom/spaces/production.yaml` |
+
+Each space file has a companion `.local.yaml` for machine-specific overrides:
+
+| File | Purpose | Commit to git? |
+|------|---------|----------------|
+| `<name>.yaml` | Space definition (portable, shareable) | Yes (if in a repo) |
+| `<name>.local.yaml` | Machine-specific paths and overrides | **Never** |
+
+If the space file lives inside a git repo, add `*.local.yaml` to `.gitignore`.
 
 Both files must be valid YAML mappings. The space file is limited to **256 KB**.
 
@@ -244,14 +256,16 @@ Any field from `AppConfig` and its nested dataclasses can be set here. See [Conf
 
 ## Local Config File
 
-The companion `.local.yaml` file stores machine-specific settings.
+The companion `.local.yaml` file stores machine-specific settings. It is always located next to the space file with `.local.yaml` appended to the base name.
 
 ### Location
 
-For a space file at `~/.anteroom/spaces/backend-api.yaml`, the local config is:
+For a space file at any path, the local config is the same name with `.local.yaml`:
 
 ```
-~/.anteroom/spaces/backend-api.local.yaml
+/path/to/backend-api.yaml       → /path/to/backend-api.local.yaml
+~/.anteroom/spaces/my.yaml      → ~/.anteroom/spaces/my.local.yaml
+~/repo/.anteroom/space.yaml     → ~/repo/.anteroom/space.local.yaml
 ```
 
 ### Fields

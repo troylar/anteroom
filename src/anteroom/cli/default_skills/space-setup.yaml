@@ -12,8 +12,10 @@ prompt: |
   If no request was provided, ask what they want to set up. Key questions:
   - What is this workspace for? (project name, team, or use case)
   - Which git repos should be included? (URLs)
+  - Do you already have repos cloned locally? (map existing dirs vs clone fresh)
   - Any team packs to install? (namespace/name)
   - Any specific instructions or coding standards?
+  - Should this space file be version-controlled in a git repo? (team-shared vs personal)
 
   ## Workflow
 
@@ -26,10 +28,24 @@ prompt: |
      - Instructions (actionable context for the AI)
      - Config overrides (if needed — omit if defaults are fine)
 
-  2. **Write the space file.** Create `~/.anteroom/spaces/<name>.yaml` using `write_file`.
+  2. **Choose the file location.** Two options:
+
+     **Option A — Personal config (default):**
+     `~/.anteroom/spaces/<name>.yaml`
+     Best for: personal workspaces, local-only use.
+
+     **Option B — Inside a git repo:**
+     `<repo-root>/.anteroom/space.yaml` or `<repo-root>/spaces/<name>.yaml`
+     Best for: team-shared spaces versioned with the project. Changes are committed
+     and shared via git pull.
+
+     If the user mentions a team, sharing, or version control, suggest Option B.
+     Otherwise default to Option A.
+
+  3. **Write the space file.** Create the file at the chosen location using `write_file`.
      Include comments explaining each section. Omit empty sections.
 
-  3. **Validate.** Run with `bash`:
+  4. **Validate.** Run with `bash`:
 
      ```
      python3 -c "
@@ -48,13 +64,27 @@ prompt: |
 
   ### Phase 2: Register and Clone
 
-  4. **Register the space:**
+  5. **Register the space:**
 
      ```
      aroom space create <path>
      ```
 
-  5. **Clone repos** (if any repos are defined):
+  6. **Clone or map repos** (if any repos are defined):
+
+     Ask the user: "Do you already have these repos cloned locally?"
+
+     **If yes — map existing dirs:**
+
+     For each repo, ask for the local path and map it:
+
+     ```
+     aroom space map <name> <local-path>
+     ```
+
+     Verify each path exists: `test -d <path>`
+
+     **If no — clone fresh:**
 
      ```
      aroom space clone <name>
@@ -65,7 +95,7 @@ prompt: |
 
   ### Phase 3: Install Packs
 
-  6. **Install packs** (if any packs are defined). For each pack:
+  7. **Install packs** (if any packs are defined). For each pack:
 
      ```
      aroom pack install <namespace>/<name>
@@ -77,7 +107,7 @@ prompt: |
 
   ### Phase 4: Activate
 
-  7. **Activate the space.** If in a REPL session:
+  8. **Activate the space.** If in a REPL session:
 
      ```
      /space switch <name>
@@ -92,9 +122,17 @@ prompt: |
      Note: `--space` flag may not exist yet. In that case, instruct the user to
      activate from within the REPL.
 
-  ### Phase 5: Verify
+  ### Phase 5: Handle Git Commit (if applicable)
 
-  8. **Show the final state:**
+  9. **Commit the space file (if in a git repo).** If the space file was written inside
+     a git repo (Option B), ask if the user wants to commit it:
+     - Show: `git status <space-file-path>`
+     - Suggest: `git add <path> && git commit -m "chore: add <name> space definition"`
+     - Remind: add `<name>.local.yaml` to `.gitignore` — it is machine-specific
+
+  ### Phase 6: Verify
+
+  10. **Show the final state:**
 
      ```
      aroom space show <name>
@@ -106,26 +144,29 @@ prompt: |
      - Packs installed (if any)
      - Ready to use
 
-  9. **Report summary:**
+  11. **Report summary:**
 
-     ```
-     Space Setup Complete: <name>
-     ============================
+      ```
+      Space Setup Complete: <name>
+      ============================
 
-     File:         ~/.anteroom/spaces/<name>.yaml
-     Repos:        <N> cloned to <root>
-     Packs:        <N> installed
-     Instructions: <N> chars
+      File:         <path> (personal config / git-versioned in <repo>)
+      Repos:        <N> cloned to <root> / <N> mapped from existing dirs
+      Packs:        <N> installed
+      Instructions: <N> chars
+      Hot Reload:   active when space is active in REPL
 
-     Activate: /space switch <name>
-     Diagnose: /space-doctor <name>
-     Share:    /space-share <name>
-     ```
+      Activate: /space switch <name>
+      Diagnose: /space-doctor <name>
+      Edit:     /space-edit <name>
+      ```
 
   ## Constraints
 
   - Do NOT skip validation — always validate before registering
   - Do NOT assume pack sources are configured — check first
   - Do NOT force a repos root — let the user choose or accept the default
+  - Do NOT commit .local.yaml files — they are machine-specific
+  - Do NOT include machine-specific paths in the space file — those go in .local.yaml
   - If any step fails, stop and help fix it before continuing
   - Show progress as each phase completes

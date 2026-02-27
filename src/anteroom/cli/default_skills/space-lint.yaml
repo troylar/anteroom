@@ -9,7 +9,10 @@ prompt: |
   The space file to validate: {args}
 
   If no file path was provided above, ask the user for the path to the space YAML file.
-  Common locations: `~/.anteroom/spaces/<name>.yaml` or a local path.
+  Common locations:
+  - `~/.anteroom/spaces/<name>.yaml` (personal config)
+  - `<repo-root>/.anteroom/space.yaml` (git-versioned, team-shared)
+  - Any path on the filesystem
 
   ## Validation Steps
 
@@ -83,6 +86,14 @@ prompt: |
   8. **Check for .local.yaml companion.** Look for a `.local.yaml` file next to the space file:
      - If it exists, validate it has `repos_root` as a string path
      - If it does not exist, note this is fine — it is created on first clone
+
+  9. **Check file location context.** Determine where the space file lives:
+     - Is it in `~/.anteroom/spaces/`? (personal config — standard location)
+     - Is it inside a git repo? (`git -C $(dirname <path>) rev-parse --is-inside-work-tree 2>/dev/null`)
+     - If in a git repo, check whether `.local.yaml` is in `.gitignore`:
+       - `git -C $(dirname <path>) check-ignore <name>.local.yaml 2>/dev/null`
+       - If NOT ignored, warn: `.local.yaml` contains machine-specific paths and should not be committed
+     - If in a git repo, note this is a team-shared space file — changes should be committed
 
   ## Output Format
 

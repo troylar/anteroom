@@ -7,7 +7,7 @@ Spaces are named workspaces that bundle repos, packs, sources, instructions, and
 | Concept | What It Is |
 |---------|-----------|
 | **Space** | A named workspace defined by a YAML file |
-| **Space file** | `~/.anteroom/spaces/<name>.yaml` — the workspace definition |
+| **Space file** | A YAML file defining the workspace (can live anywhere on the filesystem) |
 | **Local config** | `<name>.local.yaml` — machine-specific overrides (repos root, paths) |
 | **Space paths** | Directories mapped to a space for auto-detection |
 | **Config overlay** | Config values from the space file merged into Anteroom's config |
