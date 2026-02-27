@@ -702,6 +702,11 @@ class TestDefaultPackSkills:
                 "pack-doctor",
                 "pack-update",
                 "a-help",
+                "new-space",
+                "space-doctor",
+                "space-lint",
+                "space-setup",
+                "space-edit",
             }
             for skill_name in expected:
                 assert skill_name in names, f"Expected default skill '{skill_name}' not found"

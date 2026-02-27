@@ -1,0 +1,131 @@
+name: space-edit
+description: Edit an existing space — add repos, change instructions, update config
+prompt: |
+  Help the user modify an existing Anteroom space. Read the current space file,
+  apply the requested changes, validate, and refresh.
+
+  ## Target
+
+  The user's request: {args}
+
+  If no specific change was requested, ask the user what they want to modify:
+  - Add or remove repos?
+  - Change instructions?
+  - Add or remove packs?
+  - Update config overrides?
+  - Rename the space?
+
+  If no space was specified, check for an active space in the current session.
+  If none, list spaces with `aroom space list` and ask which one to edit.
+
+  ## Workflow
+
+  1. **Load the current space file.** Get the file path:
+
+     ```
+     aroom space show <name>
+     ```
+
+     Read the space file using `read_file`.
+
+  2. **Show current state.** Before making changes, display:
+     - Current repos
+     - Current packs
+     - Current instructions (first 200 chars if long)
+     - Current config overrides
+
+  3. **Apply the requested changes.** Common operations:
+
+     **Add a repo:**
+     - Validate URL scheme (https, git, ssh, git@host only)
+     - Check for duplicates
+     - Append to repos list
+
+     **Remove a repo:**
+     - Remove from repos list
+     - Warn that the local clone is NOT deleted (manual cleanup)
+     - Warn that the space_paths mapping will be removed on next refresh
+
+     **Change instructions:**
+     - Replace the instructions block
+     - Keep them actionable and focused
+     - Warn if very long (>10,000 chars)
+
+     **Add a pack:**
+     - Validate namespace/name format
+     - Check for duplicates
+     - Append to packs list
+     - Note: pack must be installed separately (`aroom pack install`)
+
+     **Remove a pack:**
+     - Remove from packs list
+     - Note: the pack is not uninstalled — just no longer part of this space
+
+     **Update config:**
+     - Merge new values into existing config
+     - Validate keys are known config sections
+     - Show before/after for config changes
+
+  4. **Write the updated file.** Use `write_file` to save the modified space YAML.
+     Preserve any comments from the original file where possible.
+
+  5. **Validate.** Run with `bash`:
+
+     ```
+     python3 -c "
+     from pathlib import Path
+     from anteroom.services.spaces import parse_space_file, validate_space
+     config = parse_space_file(Path('<path>'))
+     errors = validate_space(config)
+     if errors:
+         for e in errors: print(f'ERROR: {e}')
+     else:
+         print(f'Valid: {config.name} ({len(config.repos)} repos, {len(config.packs)} packs)')
+     "
+     ```
+
+     If validation fails, revert the change and help fix the issue.
+
+  6. **Refresh the space.** Apply changes to the running session:
+
+     ```
+     aroom space refresh <name>
+     ```
+
+     Or in REPL: `/space refresh`
+
+  7. **Handle follow-up actions.** After editing, some changes need extra steps:
+
+     | Change | Follow-up needed |
+     |--------|-----------------|
+     | Added repo | `aroom space clone <name>` to clone the new repo |
+     | Removed repo | Manual cleanup of local directory if desired |
+     | Added pack | `aroom pack install <namespace>/<name>` |
+     | Removed pack | No action needed (pack remains installed globally) |
+     | Changed instructions | Takes effect immediately after refresh |
+     | Changed config | Some config requires session restart |
+
+     Show the user which follow-up actions are needed.
+
+  8. **Show diff.** Summarize what changed:
+
+     ```
+     Space Updated: <name>
+     ======================
+
+     Changes:
+       + Added repo: https://github.com/org/new-repo.git
+       - Removed pack: old-team/legacy-rules
+       ~ Updated instructions (was 150 chars, now 280 chars)
+
+     Follow-up:
+       1. Clone new repo: aroom space clone <name>
+     ```
+
+  ## Constraints
+
+  - Do NOT modify the .local.yaml file — that is machine-specific
+  - Always show the user what will change before writing
+  - Always validate after editing — do not save invalid YAML
+  - Always refresh after saving — do not leave stale state
+  - If the edit breaks something, revert and explain what went wrong

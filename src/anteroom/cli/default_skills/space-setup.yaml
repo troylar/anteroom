@@ -1,0 +1,131 @@
+name: space-setup
+description: Full space onboarding — create, clone, install packs, and activate
+prompt: |
+  Walk the user through complete space setup from scratch. This is the "do everything"
+  skill — create the space file, register it, clone repos, install packs, and activate
+  the space, all in one guided flow.
+
+  ## Target
+
+  The user's request: {args}
+
+  If no request was provided, ask what they want to set up. Key questions:
+  - What is this workspace for? (project name, team, or use case)
+  - Which git repos should be included? (URLs)
+  - Any team packs to install? (namespace/name)
+  - Any specific instructions or coding standards?
+
+  ## Workflow
+
+  ### Phase 1: Create the Space File
+
+  1. **Design the space.** Based on user input, determine:
+     - Space name (lowercase, hyphens, descriptive)
+     - Repos list (git URLs)
+     - Packs list (namespace/name)
+     - Instructions (actionable context for the AI)
+     - Config overrides (if needed — omit if defaults are fine)
+
+  2. **Write the space file.** Create `~/.anteroom/spaces/<name>.yaml` using `write_file`.
+     Include comments explaining each section. Omit empty sections.
+
+  3. **Validate.** Run with `bash`:
+
+     ```
+     python3 -c "
+     from pathlib import Path
+     from anteroom.services.spaces import parse_space_file, validate_space
+     config = parse_space_file(Path('<path>'))
+     errors = validate_space(config)
+     if errors:
+         for e in errors: print(f'ERROR: {e}')
+     else:
+         print(f'Valid: {config.name}')
+     "
+     ```
+
+     Fix any errors before continuing.
+
+  ### Phase 2: Register and Clone
+
+  4. **Register the space:**
+
+     ```
+     aroom space create <path>
+     ```
+
+  5. **Clone repos** (if any repos are defined):
+
+     ```
+     aroom space clone <name>
+     ```
+
+     This prompts for a repos root directory. If running non-interactively, suggest
+     a default: `~/.anteroom/spaces/<name>/repos/`
+
+  ### Phase 3: Install Packs
+
+  6. **Install packs** (if any packs are defined). For each pack:
+
+     ```
+     aroom pack install <namespace>/<name>
+     ```
+
+     If packs reference a pack source not yet configured, note that the user needs
+     to add the source first: `aroom pack add-source <url>` or add `pack_sources`
+     to the space file.
+
+  ### Phase 4: Activate
+
+  7. **Activate the space.** If in a REPL session:
+
+     ```
+     /space switch <name>
+     ```
+
+     If running from CLI, show how to start a session with the space:
+
+     ```
+     aroom chat --space <name>
+     ```
+
+     Note: `--space` flag may not exist yet. In that case, instruct the user to
+     activate from within the REPL.
+
+  ### Phase 5: Verify
+
+  8. **Show the final state:**
+
+     ```
+     aroom space show <name>
+     ```
+
+     Confirm:
+     - Space registered
+     - Repos cloned (if any)
+     - Packs installed (if any)
+     - Ready to use
+
+  9. **Report summary:**
+
+     ```
+     Space Setup Complete: <name>
+     ============================
+
+     File:         ~/.anteroom/spaces/<name>.yaml
+     Repos:        <N> cloned to <root>
+     Packs:        <N> installed
+     Instructions: <N> chars
+
+     Activate: /space switch <name>
+     Diagnose: /space-doctor <name>
+     Share:    /space-share <name>
+     ```
+
+  ## Constraints
+
+  - Do NOT skip validation — always validate before registering
+  - Do NOT assume pack sources are configured — check first
+  - Do NOT force a repos root — let the user choose or accept the default
+  - If any step fails, stop and help fix it before continuing
+  - Show progress as each phase completes

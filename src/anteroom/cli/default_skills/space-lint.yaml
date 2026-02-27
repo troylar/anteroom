@@ -1,0 +1,132 @@
+name: space-lint
+description: Validate a space YAML file before registering — catch errors early
+prompt: |
+  Validate an Anteroom space YAML file before registration. Catch errors early
+  without touching the database.
+
+  ## Target
+
+  The space file to validate: {args}
+
+  If no file path was provided above, ask the user for the path to the space YAML file.
+  Common locations: `~/.anteroom/spaces/<name>.yaml` or a local path.
+
+  ## Validation Steps
+
+  1. **Parse and validate the space file.** Run with `bash`:
+
+     ```
+     python3 -c "
+     import json, sys
+     from pathlib import Path
+     from anteroom.services.spaces import parse_space_file, validate_space
+     space_path = Path('<space-file-path>')
+     if not space_path.exists():
+         print('ERROR: File not found: ' + str(space_path))
+         sys.exit(1)
+     if space_path.stat().st_size > 262144:
+         print('ERROR: File too large (max 256KB)')
+         sys.exit(1)
+     config = parse_space_file(space_path)
+     errors = validate_space(config)
+     if errors:
+         for e in errors:
+             print(f'SCHEMA ERROR: {e}')
+     else:
+         print(f'Schema OK: {config.name}')
+     print(f'  version: {config.version}')
+     print(f'  repos: {len(config.repos)}')
+     print(f'  packs: {len(config.packs)}')
+     print(f'  pack_sources: {len(config.pack_sources)}')
+     print(f'  instructions: {len(config.instructions)} chars' if config.instructions else '  instructions: (none)')
+     print(f'  config keys: {list(config.config.keys()) if config.config else \"(none)\"}')
+     "
+     ```
+
+     Replace `<space-file-path>` with the actual path.
+
+  2. **Check the name.** Verify:
+     - Matches `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`
+     - Is lowercase (warn if mixed case — it works but is inconsistent)
+     - Uses hyphens, not underscores (warn, not error)
+
+  3. **Check repo URLs.** For each URL in `repos`:
+     - Must use an allowed scheme: https://, git://, ssh://, or git@host:path
+     - Reject file:// and ext:: schemes (security risk)
+     - Must look like a valid git URL (has a host and path component)
+     - Warn about duplicate URLs
+
+  4. **Check pack references.** For each entry in `packs`:
+     - Must follow `namespace/name` format
+     - Both namespace and name must match `^[a-z0-9][a-z0-9._-]*$`
+     - Warn about duplicates
+
+  5. **Check pack source URLs.** For each entry in `pack_sources`:
+     - Same URL scheme validation as repos
+     - `branch` field should be a simple ref name (no slashes beyond one)
+     - `refresh_interval` should be non-negative if present
+
+  6. **Check instructions.** If present:
+     - Warn if very short (<20 chars) — may not be useful
+     - Warn if very long (>10,000 chars) — inflates every system prompt
+     - Check for accidental YAML issues (unescaped colons, tab characters)
+
+  7. **Check config overrides.** If present:
+     - Validate that top-level keys are known config sections:
+       `ai`, `safety`, `planning`, `subagent`, `rag`, `embeddings`, `cli`
+     - Warn about unknown keys — they will be silently ignored
+     - Check for common mistakes:
+       - `model` at top level instead of `ai.model`
+       - `temperature` at top level instead of `ai.temperature`
+       - `approval_mode` at top level instead of `safety.approval_mode`
+
+  8. **Check for .local.yaml companion.** Look for a `.local.yaml` file next to the space file:
+     - If it exists, validate it has `repos_root` as a string path
+     - If it does not exist, note this is fine — it is created on first clone
+
+  ## Output Format
+
+  ```
+  Space: <name> (v<version>)
+  File:  <path>
+
+  Schema:
+    [PASS/FAIL] YAML parses correctly
+    [PASS/FAIL] name format valid
+    [PASS/FAIL] version field present
+
+  Repos:
+    [PASS/WARN/FAIL] <N> repo URLs checked
+    ...
+
+  Packs:
+    [PASS/WARN/FAIL] <N> pack references checked
+    ...
+
+  Pack Sources:
+    [PASS/WARN/FAIL] <N> source URLs checked
+    ...
+
+  Instructions:
+    [PASS/WARN] length and content check
+
+  Config:
+    [PASS/WARN] known keys check
+    ...
+
+  Result: <PASS / N warnings / N errors>
+  ```
+
+  9. **Suggest fixes** for any issues found. Be specific — show the exact change needed.
+
+  10. **If clean**, suggest the next step:
+      ```
+      aroom space create <path>
+      ```
+
+  ## Constraints
+
+  - Do NOT modify the space file — this is a read-only validation
+  - Do NOT register the space — only validate
+  - Report ALL issues found, not just the first one
+  - Distinguish between errors (must fix) and warnings (should review)
