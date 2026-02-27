@@ -20,6 +20,7 @@ from anteroom.services.packs import (
 
 def _write_manifest(path, data):
     import yaml
+
     manifest_path = path / "pack.yaml"
     with open(manifest_path, "w", encoding="utf-8") as f:
         yaml.dump(data, f)
@@ -82,63 +83,43 @@ class TestCommitFalse:
     def test_create_no_commit(self, db: ThreadSafeConnection) -> None:
         from anteroom.services.artifact_storage import create_artifact
 
-        create_artifact(
-            db, "@ns/skill/x", "skill", "ns", "x", "content", commit=False
-        )
+        create_artifact(db, "@ns/skill/x", "skill", "ns", "x", "content", commit=False)
         db._conn.rollback()
-        row = db.execute_fetchone(
-            "SELECT * FROM artifacts WHERE fqn = ?", ("@ns/skill/x",)
-        )
+        row = db.execute_fetchone("SELECT * FROM artifacts WHERE fqn = ?", ("@ns/skill/x",))
         assert row is None
 
     def test_create_with_commit(self, db: ThreadSafeConnection) -> None:
         from anteroom.services.artifact_storage import create_artifact
 
-        create_artifact(
-            db, "@ns/skill/y", "skill", "ns", "y", "content", commit=True
-        )
+        create_artifact(db, "@ns/skill/y", "skill", "ns", "y", "content", commit=True)
         db._conn.rollback()
-        row = db.execute_fetchone(
-            "SELECT * FROM artifacts WHERE fqn = ?", ("@ns/skill/y",)
-        )
+        row = db.execute_fetchone("SELECT * FROM artifacts WHERE fqn = ?", ("@ns/skill/y",))
         assert row is not None
 
     def test_update_no_commit(self, db: ThreadSafeConnection) -> None:
         from anteroom.services.artifact_storage import create_artifact, update_artifact
 
-        art = create_artifact(
-            db, "@ns/skill/u", "skill", "ns", "u", "v1", commit=True
-        )
+        art = create_artifact(db, "@ns/skill/u", "skill", "ns", "u", "v1", commit=True)
         update_artifact(db, art["id"], content="v2", commit=False)
         db._conn.rollback()
-        row = db.execute_fetchone(
-            "SELECT content FROM artifacts WHERE id = ?", (art["id"],)
-        )
+        row = db.execute_fetchone("SELECT content FROM artifacts WHERE id = ?", (art["id"],))
         assert row["content"] == "v1"
 
     def test_delete_no_commit(self, db: ThreadSafeConnection) -> None:
         from anteroom.services.artifact_storage import create_artifact, delete_artifact
 
-        art = create_artifact(
-            db, "@ns/skill/d", "skill", "ns", "d", "content", commit=True
-        )
+        art = create_artifact(db, "@ns/skill/d", "skill", "ns", "d", "content", commit=True)
         delete_artifact(db, art["id"], commit=False)
         db._conn.rollback()
-        row = db.execute_fetchone(
-            "SELECT * FROM artifacts WHERE id = ?", (art["id"],)
-        )
+        row = db.execute_fetchone("SELECT * FROM artifacts WHERE id = ?", (art["id"],))
         assert row is not None
 
     def test_upsert_no_commit(self, db: ThreadSafeConnection) -> None:
         from anteroom.services.artifact_storage import upsert_artifact
 
-        upsert_artifact(
-            db, "@ns/skill/up", "skill", "ns", "up", "content", commit=False
-        )
+        upsert_artifact(db, "@ns/skill/up", "skill", "ns", "up", "content", commit=False)
         db._conn.rollback()
-        row = db.execute_fetchone(
-            "SELECT * FROM artifacts WHERE fqn = ?", ("@ns/skill/up",)
-        )
+        row = db.execute_fetchone("SELECT * FROM artifacts WHERE fqn = ?", ("@ns/skill/up",))
         assert row is None
 
     def test_transaction_rollback(self, db: ThreadSafeConnection) -> None:
@@ -146,14 +127,10 @@ class TestCommitFalse:
 
         with pytest.raises(RuntimeError):
             with db.transaction():
-                create_artifact(
-                    db, "@ns/skill/txn", "skill", "ns", "txn", "data", commit=False
-                )
+                create_artifact(db, "@ns/skill/txn", "skill", "ns", "txn", "data", commit=False)
                 raise RuntimeError("force rollback")
 
-        row = db.execute_fetchone(
-            "SELECT * FROM artifacts WHERE fqn = ?", ("@ns/skill/txn",)
-        )
+        row = db.execute_fetchone("SELECT * FROM artifacts WHERE fqn = ?", ("@ns/skill/txn",))
         assert row is None
 
 
@@ -163,9 +140,7 @@ class TestCommitFalse:
 class TestSymlinkRejection:
     """Validate that symlinks are rejected in pack manifests and resolution."""
 
-    def test_validate_manifest_rejects_symlink_explicit_file(
-        self, tmp_path: Path
-    ) -> None:
+    def test_validate_manifest_rejects_symlink_explicit_file(self, tmp_path: Path) -> None:
         pack_dir = tmp_path / "pack"
         pack_dir.mkdir()
         skills_dir = pack_dir / "skills"
@@ -179,18 +154,14 @@ class TestSymlinkRejection:
             {
                 "name": "p",
                 "namespace": "ns",
-                "artifacts": [
-                    {"type": "skill", "name": "evil", "file": "skills/evil.yaml"}
-                ],
+                "artifacts": [{"type": "skill", "name": "evil", "file": "skills/evil.yaml"}],
             },
         )
         manifest = parse_manifest(pack_dir / "pack.yaml")
         errors = validate_manifest(manifest, pack_dir)
         assert any("ymlink" in e for e in errors)
 
-    def test_validate_manifest_rejects_symlink_auto_resolved(
-        self, tmp_path: Path
-    ) -> None:
+    def test_validate_manifest_rejects_symlink_auto_resolved(self, tmp_path: Path) -> None:
         pack_dir = tmp_path / "pack"
         pack_dir.mkdir()
         skills_dir = pack_dir / "skills"
@@ -222,9 +193,7 @@ class TestSymlinkRejection:
         result = _resolve_artifact_file(art, tmp_path)
         assert result is None
 
-    def test_resolve_artifact_file_rejects_explicit_symlink(
-        self, tmp_path: Path
-    ) -> None:
+    def test_resolve_artifact_file_rejects_explicit_symlink(self, tmp_path: Path) -> None:
         target = tmp_path / "real.txt"
         target.write_text("real content")
         link = tmp_path / "link.txt"
@@ -271,17 +240,13 @@ class TestSanitizeGitStderrExtended:
     """Extended tests for _sanitize_git_stderr covering ssh/git schemes."""
 
     def test_strips_ssh_credentials(self) -> None:
-        stderr = (
-            "fatal: could not read from ssh://deploy:secret@git.corp.com/repo.git"
-        )
+        stderr = "fatal: could not read from ssh://deploy:secret@git.corp.com/repo.git"
         sanitized = _sanitize_git_stderr(stderr)
         assert "secret" not in sanitized
         assert "***@" in sanitized
 
     def test_strips_git_scheme_credentials(self) -> None:
-        stderr = (
-            "fatal: could not read from git://user:pass@git.example.com/repo.git"
-        )
+        stderr = "fatal: could not read from git://user:pass@git.example.com/repo.git"
         sanitized = _sanitize_git_stderr(stderr)
         assert "pass" not in sanitized
         assert "***@" in sanitized
