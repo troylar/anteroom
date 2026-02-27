@@ -174,14 +174,13 @@ class TestPackAddSourceValidation:
 
         assert _validate_url_scheme("git@github.com:org/repo.git") is None
 
-    def test_http_returns_none_but_repl_rejects(self) -> None:
-        """_validate_url_scheme allows http:// (with warning), but the REPL handler
-        explicitly rejects it for pack sources to prevent MITM attacks."""
+    def test_http_rejected_by_validator(self) -> None:
+        """_validate_url_scheme rejects http:// to prevent MITM attacks."""
         from anteroom.services.pack_sources import _validate_url_scheme
 
-        # The low-level validator allows http with a warning
-        assert _validate_url_scheme("http://example.com/repo.git") is None
-        # The REPL handler adds a second gate: url.startswith("http://") → reject
+        result = _validate_url_scheme("http://example.com/repo.git")
+        assert result is not None
+        assert "HTTP" in result
 
 
 class TestPackAddSource:

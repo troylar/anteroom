@@ -3376,44 +3376,18 @@ async def _run_repl(
                             renderer.console.print(f"[{CHROME}]Usage: /pack add-source <git-url>[/{CHROME}]\n")
                             continue
 
-                        from ..services.pack_sources import _validate_url_scheme
+                        from rich.markup import escape as rich_escape
 
-                        url_err = _validate_url_scheme(url)
-                        if url_err:
-                            renderer.console.print(f"[red]{url_err}[/red]\n")
+                        from ..services.pack_sources import add_pack_source
+
+                        result = add_pack_source(url)
+                        if not result.ok:
+                            renderer.console.print(f"[red]{rich_escape(result.message)}[/red]\n")
                             continue
-                        if url.startswith("http://"):
-                            renderer.console.print(
-                                "[red]Plaintext HTTP is not allowed for pack sources (MITM risk)."
-                                " Use https:// instead.[/red]\n"
-                            )
+                        if result.message:
+                            renderer.console.print(f"[{CHROME}]{rich_escape(result.message)}[/{CHROME}]\n")
                             continue
-
-                        import stat
-
-                        import yaml
-
-                        from ..config import _get_config_path
-
-                        config_path = _get_config_path()
-                        config_path.parent.mkdir(parents=True, exist_ok=True)
-                        raw: dict[str, object] = {}
-                        if config_path.exists():
-                            with open(config_path) as f:
-                                raw = yaml.safe_load(f) or {}
-                        sources_list: list[dict[str, object]] = raw.setdefault("pack_sources", [])  # type: ignore[assignment]
-                        existing_urls = [s.get("url") for s in sources_list if isinstance(s, dict)]
-                        if url in existing_urls:
-                            renderer.console.print(f"[{CHROME}]Source already configured: {url}[/{CHROME}]\n")
-                            continue
-                        sources_list.append({"url": url, "branch": "main", "refresh_interval": 30})
-                        with open(config_path, "w", encoding="utf-8") as f:
-                            yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
-                        try:
-                            config_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-                        except OSError:
-                            pass
-                        renderer.console.print(f"[green]Added pack source:[/green] {url}")
+                        renderer.console.print(f"[green]Added pack source:[/green] {rich_escape(url)}")
                         renderer.console.print(f"[{MUTED}]Run /pack refresh to clone and install packs.[/{MUTED}]\n")
 
                     elif sub == "attach":
@@ -3427,20 +3401,26 @@ async def _run_repl(
                         if not ns:
                             ns = "default"
 
+                        from rich.markup import escape as rich_escape
+
                         from ..services.pack_attachments import attach_pack, resolve_pack_id
 
                         pack_id = resolve_pack_id(db, ns, name)
                         if not pack_id:
-                            renderer.console.print(f"[{CHROME}]Pack @{ns}/{name} not found.[/{CHROME}]\n")
+                            renderer.console.print(
+                                f"[{CHROME}]Pack @{rich_escape(ns)}/{rich_escape(name)} not found.[/{CHROME}]\n"
+                            )
                             continue
                         project_path = str(Path(working_dir)) if "--project" in user_input else None
                         try:
                             attach_pack(db, pack_id, project_path=project_path)
                         except ValueError as exc:
-                            renderer.console.print(f"[red]{exc}[/red]\n")
+                            renderer.console.print(f"[red]{rich_escape(str(exc))}[/red]\n")
                             continue
                         scope = "project" if project_path else "global"
-                        renderer.console.print(f"[green]Attached[/green] @{ns}/{name} ({scope})\n")
+                        renderer.console.print(
+                            f"[green]Attached[/green] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
+                        )
 
                     elif sub == "detach":
                         ref = parts[2].strip() if len(parts) >= 3 else ""
@@ -3453,20 +3433,27 @@ async def _run_repl(
                         if not ns:
                             ns = "default"
 
-                        from ..services.pack_attachments import detach_pack
-                        from ..services.pack_attachments import resolve_pack_id as _resolve_id
+                        from rich.markup import escape as rich_escape
 
-                        pack_id = _resolve_id(db, ns, name)
+                        from ..services.pack_attachments import detach_pack, resolve_pack_id
+
+                        pack_id = resolve_pack_id(db, ns, name)
                         if not pack_id:
-                            renderer.console.print(f"[{CHROME}]Pack @{ns}/{name} not found.[/{CHROME}]\n")
+                            renderer.console.print(
+                                f"[{CHROME}]Pack @{rich_escape(ns)}/{rich_escape(name)} not found.[/{CHROME}]\n"
+                            )
                             continue
                         project_path = str(Path(working_dir)) if "--project" in user_input else None
                         removed = detach_pack(db, pack_id, project_path=project_path)
                         if removed:
                             scope = "project" if project_path else "global"
-                            renderer.console.print(f"[green]Detached[/green] @{ns}/{name} ({scope})\n")
+                            renderer.console.print(
+                                f"[green]Detached[/green] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
+                            )
                         else:
-                            renderer.console.print(f"[yellow]Not attached:[/yellow] @{ns}/{name}\n")
+                            renderer.console.print(
+                                f"[yellow]Not attached:[/yellow] @{rich_escape(ns)}/{rich_escape(name)}\n"
+                            )
 
                     elif sub == "update":
                         target = parts[2].strip() if len(parts) >= 3 else ""

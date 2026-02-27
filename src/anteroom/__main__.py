@@ -898,45 +898,17 @@ def _run_pack(config: object, args: object) -> None:
         return
 
     if action == "add-source":
-        import stat
-
-        import yaml
-
-        from .config import _get_config_path
-        from .services.pack_sources import _validate_url_scheme
+        from .services.pack_sources import add_pack_source
 
         url = args.url.strip()
-        url_err = _validate_url_scheme(url)
-        if url_err:
-            console = Console()
-            console.print(f"[red]{url_err}[/red]")
-            sys.exit(1)
-        if url.startswith("http://"):
-            console = Console()
-            console.print(
-                "[red]Plaintext HTTP is not allowed for pack sources (MITM risk). Use https:// instead.[/red]"
-            )
-            sys.exit(1)
-
+        result = add_pack_source(url)
         console = Console()
-        config_path = _get_config_path()
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        raw: dict[str, object] = {}
-        if config_path.exists():
-            with open(config_path) as f:
-                raw = yaml.safe_load(f) or {}
-        sources_list: list[dict[str, object]] = raw.setdefault("pack_sources", [])
-        existing_urls = [s.get("url") for s in sources_list if isinstance(s, dict)]
-        if url in existing_urls:
-            console.print(f"[yellow]Source already configured:[/yellow] {escape(url)}")
+        if not result.ok:
+            console.print(f"[red]{escape(result.message)}[/red]")
+            sys.exit(1)
+        if result.message:
+            console.print(f"[yellow]{escape(result.message)}[/yellow]")
             return
-        sources_list.append({"url": url, "branch": "main", "refresh_interval": 30})
-        with open(config_path, "w", encoding="utf-8") as f:
-            yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
-        try:
-            config_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-        except OSError:
-            pass
         console.print(f"[green]Added pack source:[/green] {escape(url)}")
         console.print("Run [bold]aroom pack refresh[/bold] to clone and install packs.")
         return
