@@ -650,6 +650,7 @@ def create_app(config: AppConfig | None = None, enforced_fields: list[str] | Non
         sources,
         usage,
     )
+    from .routers import artifact_health as artifact_health_router
     from .routers import packs as packs_router
 
     app.include_router(conversations.router, prefix="/api")
@@ -665,6 +666,7 @@ def create_app(config: AppConfig | None = None, enforced_fields: list[str] | Non
     app.include_router(plan.router, prefix="/api")
     app.include_router(artifacts.router, prefix="/api")
     app.include_router(packs_router.router, prefix="/api")
+    app.include_router(artifact_health_router.router, prefix="/api")
 
     if config.proxy.enabled:
         from .routers import proxy

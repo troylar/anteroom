@@ -657,7 +657,7 @@ def _run_artifact(config: object, args: object) -> None:
 
     action = getattr(args, "artifact_action", None)
     if not action:
-        print("Usage: aroom artifact {list,show}")
+        print("Usage: aroom artifact {list,show,check}")
         return
 
     db = get_db(config.app.data_dir / "anteroom.db")
@@ -707,6 +707,81 @@ def _run_artifact(config: object, args: object) -> None:
         console.print()
         console.print("[bold]Content:[/bold]")
         console.print(escape(art["content"]))
+
+    elif action == "check":
+        _run_artifact_check(config, args, db, console)
+
+
+def _run_artifact_check(config: object, args: object, db: object, console: object) -> None:
+    """Handle `aroom artifact check` subcommand."""
+    import json as json_mod
+    from pathlib import Path
+
+    from .services import artifact_health
+
+    project_dir = Path.cwd() if getattr(args, "project", False) else None
+    fix = getattr(args, "fix", False)
+    json_output = getattr(args, "json_output", False)
+
+    report = artifact_health.run_health_check(db, project_dir=project_dir, fix=fix)
+
+    if json_output:
+        print(json_mod.dumps(report.to_dict(), indent=2))
+        return
+
+    console.print()
+    console.print("[bold]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold]")
+    console.print("[bold]  🏥 Artifact Health Check[/bold]")
+    console.print("[bold]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold]")
+    console.print()
+    console.print(f"  📊 Loaded: {report.artifact_count} artifacts from {report.pack_count} packs")
+    console.print(f"  📏 Total size: {report.total_size_bytes:,} bytes (~{report.estimated_tokens:,} tokens)")
+    console.print()
+
+    if not report.issues:
+        console.print("[green]  ✅ No issues found — artifact ecosystem is healthy[/green]")
+        console.print()
+        return
+
+    categories: dict[str, list] = {}
+    for issue in report.issues:
+        categories.setdefault(issue.category, []).append(issue)
+
+    category_labels = {
+        "config_conflict": ("📋 Config Conflicts", "red"),
+        "skill_collision": ("📋 Skill Collisions", "yellow"),
+        "shadow": ("📋 Shadows", "dim"),
+        "empty_artifact": ("📋 Quality", "yellow"),
+        "malformed": ("📋 Malformed", "red"),
+        "lock_drift": ("📋 Lock Drift", "yellow"),
+        "orphaned": ("📋 Orphaned Artifacts", "yellow"),
+        "duplicate_content": ("📋 Duplicates", "yellow"),
+        "bloat": ("📋 Bloat Report", "dim"),
+        "fix_applied": ("📋 Fixes Applied", "green"),
+    }
+
+    for cat, issues in categories.items():
+        label, color = category_labels.get(cat, (f"📋 {cat}", "white"))
+        console.print(f"[bold]{label}[/bold]")
+        for issue in issues:
+            icon = {"error": "❌", "warn": "⚠️", "info": "💡"}.get(issue.severity.value, "•")
+            console.print(f"  {icon} {issue.message}")
+        console.print()
+
+    console.print("[bold]────────────────────────────────────────────[/bold]")
+    parts = []
+    if report.error_count:
+        parts.append(f"[red]❌ {report.error_count} errors[/red]")
+    if report.warn_count:
+        parts.append(f"[yellow]⚠️ {report.warn_count} warnings[/yellow]")
+    if report.info_count:
+        parts.append(f"[dim]💡 {report.info_count} suggestions[/dim]")
+    console.print(f"  {' '.join(parts)}")
+
+    if report.error_count:
+        console.print("\n  [bold]👉 Fix errors first[/bold]")
+    console.print("[bold]────────────────────────────────────────────[/bold]")
+    console.print()
 
 
 def _run_pack(config: object, args: object) -> None:
@@ -1250,6 +1325,23 @@ def main() -> None:
     art_list_parser.add_argument("--source", choices=["built_in", "global", "team", "project", "local", "inline"])
     art_show_parser = artifact_subparsers.add_parser("show", help="Show artifact details by FQN")
     art_show_parser.add_argument("fqn", help="Fully-qualified name, e.g. @core/skill/greet")
+    art_check_parser = artifact_subparsers.add_parser("check", help="Run artifact health check")
+    art_check_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output results as JSON",
+    )
+    art_check_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Auto-fix issues (removes exact duplicates)",
+    )
+    art_check_parser.add_argument(
+        "--project",
+        action="store_true",
+        help="Include lock file validation for current directory",
+    )
 
     pack_parser = subparsers.add_parser("pack", help="Manage artifact packs")
     pack_subparsers = pack_parser.add_subparsers(dest="pack_action")
