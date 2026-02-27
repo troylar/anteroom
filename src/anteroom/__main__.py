@@ -657,7 +657,7 @@ def _run_artifact(config: object, args: object) -> None:
 
     action = getattr(args, "artifact_action", None)
     if not action:
-        print("Usage: aroom artifact {list,show,check}")
+        print("Usage: aroom artifact {list,show,check,import,create}")
         return
 
     db = get_db(config.app.data_dir / "anteroom.db")
@@ -710,6 +710,67 @@ def _run_artifact(config: object, args: object) -> None:
 
     elif action == "check":
         _run_artifact_check(config, args, db, console)
+
+    elif action == "import":
+        from pathlib import Path
+
+        from .services.artifact_import import import_all, import_instructions, import_skills
+
+        do_skills = getattr(args, "skills", False)
+        do_instructions = getattr(args, "instructions", False)
+        do_all = getattr(args, "import_all", False)
+
+        if not (do_skills or do_instructions or do_all):
+            console.print("[red]Specify --skills, --instructions, or --all[/red]")
+            sys.exit(1)
+
+        if do_all:
+            results = import_all(db, config.app.data_dir, project_dir=Path.cwd())
+            for category, result in results.items():
+                msg = f"{result.imported} imported, {result.skipped} skipped, {result.errors} errors"
+                console.print(f"[bold]{category}:[/bold] {msg}")
+                for detail in result.details:
+                    console.print(f"  {detail}")
+        else:
+            if do_skills:
+                result = import_skills(db, config.app.data_dir / "skills")
+                msg = f"{result.imported} imported, {result.skipped} skipped, {result.errors} errors"
+                console.print(f"[bold]Skills:[/bold] {msg}")
+                for detail in result.details:
+                    console.print(f"  {detail}")
+            if do_instructions:
+                for name in (".anteroom.md", "ANTEROOM.md", "anteroom.md"):
+                    path = Path.cwd() / name
+                    if path.is_file():
+                        result = import_instructions(db, path)
+                        console.print(f"[bold]Instructions:[/bold] {result.imported} imported, {result.errors} errors")
+                        for detail in result.details:
+                            console.print(f"  {detail}")
+                        break
+                else:
+                    console.print("[dim]No ANTEROOM.md found in current directory.[/dim]")
+
+    elif action == "create":
+        from pathlib import Path
+
+        from .services.local_artifacts import scaffold_local_artifact
+
+        art_type = args.type
+        art_name = args.name
+        is_project = getattr(args, "project", False)
+        project_dir = Path.cwd() if is_project else None
+        try:
+            path = scaffold_local_artifact(
+                art_type,
+                art_name,
+                config.app.data_dir,
+                project=is_project,
+                project_dir=project_dir,
+            )
+            console.print(f"[green]Created[/green] {escape(str(path))}")
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            sys.exit(1)
 
 
 def _run_artifact_check(config: object, args: object, db: object, console: object) -> None:
@@ -797,7 +858,7 @@ def _run_pack(config: object, args: object) -> None:
 
     action = getattr(args, "pack_action", None)
     if not action:
-        print("Usage: aroom pack {list,install,show,remove,update,sources,refresh}")
+        print("Usage: aroom pack {list,install,show,remove,update,sources,refresh,attach,detach}")
         return
 
     db = get_db(config.app.data_dir / "anteroom.db")
@@ -977,6 +1038,52 @@ def _run_pack(config: object, args: object) -> None:
                 console.print(f"[green]OK[/green] {escape(r.url)} — {status}")
             else:
                 console.print(f"[red]FAIL[/red] {escape(r.url)} — {escape(r.error)}")
+
+    elif action == "attach":
+        from .services.pack_attachments import attach_pack, resolve_pack_id
+
+        ref = args.ref
+        parts = ref.split("/", 1)
+        if len(parts) != 2:
+            console.print("[red]Invalid pack reference. Use namespace/name format.[/red]")
+            sys.exit(1)
+        namespace, name = parts
+        pack_id = resolve_pack_id(db, namespace, name)
+        if not pack_id:
+            console.print(f"[red]Pack not found:[/red] {escape(ref)}")
+            sys.exit(1)
+
+        project_path = str(Path.cwd()) if getattr(args, "project", False) else None
+        try:
+            attach_pack(db, pack_id, project_path=project_path)
+        except ValueError as e:
+            console.print(f"[red]Attach failed:[/red] {e}")
+            sys.exit(1)
+
+        scope = "project" if project_path else "global"
+        console.print(f"[green]Attached[/green] {escape(ref)} ({scope})")
+
+    elif action == "detach":
+        from .services.pack_attachments import detach_pack, resolve_pack_id
+
+        ref = args.ref
+        parts = ref.split("/", 1)
+        if len(parts) != 2:
+            console.print("[red]Invalid pack reference. Use namespace/name format.[/red]")
+            sys.exit(1)
+        namespace, name = parts
+        pack_id = resolve_pack_id(db, namespace, name)
+        if not pack_id:
+            console.print(f"[red]Pack not found:[/red] {escape(ref)}")
+            sys.exit(1)
+
+        project_path = str(Path.cwd()) if getattr(args, "project", False) else None
+        removed = detach_pack(db, pack_id, project_path=project_path)
+        if removed:
+            scope = "project" if project_path else "global"
+            console.print(f"[green]Detached[/green] {escape(ref)} ({scope})")
+        else:
+            console.print(f"[yellow]Not attached:[/yellow] {escape(ref)}")
 
 
 def _run_chat(
@@ -1366,6 +1473,24 @@ def main() -> None:
     )
     pack_subparsers.add_parser("sources", help="List configured pack sources and cache status")
     pack_subparsers.add_parser("refresh", help="Pull all configured pack sources and update packs")
+    pack_attach_parser = pack_subparsers.add_parser("attach", help="Attach a pack to global or project scope")
+    pack_attach_parser.add_argument("ref", help="Pack reference as namespace/name")
+    pack_attach_parser.add_argument("--project", action="store_true", help="Attach to current project only")
+    pack_detach_parser = pack_subparsers.add_parser("detach", help="Detach a pack from global or project scope")
+    pack_detach_parser.add_argument("ref", help="Pack reference as namespace/name")
+    pack_detach_parser.add_argument("--project", action="store_true", help="Detach from current project only")
+
+    # `aroom artifact import` subcommand
+    art_import_parser = artifact_subparsers.add_parser("import", help="Import skills/instructions into artifacts")
+    art_import_parser.add_argument("--skills", action="store_true", help="Import skills from ~/.anteroom/skills/")
+    art_import_parser.add_argument("--instructions", action="store_true", help="Import ANTEROOM.md as artifacts")
+    art_import_parser.add_argument("--all", action="store_true", dest="import_all", help="Import everything")
+
+    # `aroom artifact create` subcommand
+    art_create_parser = artifact_subparsers.add_parser("create", help="Create a new local artifact from template")
+    art_create_parser.add_argument("type", choices=_art_types, help="Artifact type")
+    art_create_parser.add_argument("name", help="Artifact name")
+    art_create_parser.add_argument("--project", action="store_true", help="Create in project .anteroom/local/")
 
     args = parser.parse_args()
 

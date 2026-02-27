@@ -497,6 +497,9 @@ def run_init_wizard(force: bool = False, team_config_path: str | None = None) ->
 
         _write_config(config_data, config_path)
 
+        # Starter packs
+        _offer_starter_packs(config_path)
+
         # Identity warning
         console.print(
             Panel(
@@ -537,6 +540,46 @@ def run_init_wizard(force: bool = False, team_config_path: str | None = None) ->
     except (KeyboardInterrupt, EOFError):
         console.print("\n\nSetup cancelled.")
         return False
+
+
+def _offer_starter_packs(config_path: Path) -> None:
+    """Offer to install starter packs after config is written."""
+    try:
+        from ..services.starter_packs import list_starter_packs
+
+        available = list_starter_packs()
+        if not available:
+            return
+
+        console.print(f"\n[{GOLD}]Starter Packs[/]")
+        console.print(f"  [{SLATE}]Anteroom includes optional starter packs with common rules and skills.[/]")
+        for pack in available:
+            console.print(f"  [{BLUE}]{pack['name']}[/] — {pack['description']}")
+
+        choice = Prompt.ask(
+            f"\n[{SLATE}]Install starter packs?[/]",
+            choices=["all", "none"] + [p["name"] for p in available],
+            default="all",
+        )
+
+        if choice == "none":
+            return
+
+        from ..db import get_db
+        from ..services.starter_packs import install_starter_packs
+
+        db = get_db(config_path.parent / "anteroom.db")
+        if choice == "all":
+            results = install_starter_packs(db)
+        else:
+            results = install_starter_packs(db, names=[choice])
+
+        installed = [r for r in results if r["status"] == "installed"]
+        if installed:
+            for r in installed:
+                console.print(f"  [green]Installed[/] {r['namespace']}/{r['name']}")
+    except Exception as e:
+        console.print(f"  [{SLATE}]Could not install starter packs: {e}[/]")
 
 
 def run_config_editor() -> bool:

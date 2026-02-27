@@ -331,6 +331,98 @@ class TestRunPackSources:
         assert "abc123def456" in captured.out
 
 
+class TestRunPackAttach:
+    def test_attach_success(self, tmp_path: Path, db: ThreadSafeConnection, capsys: pytest.CaptureFixture[str]) -> None:
+        pack_dir = _create_pack_dir(tmp_path)
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        install_pack(db, manifest, pack_dir)
+
+        config = _make_config()
+        args = MagicMock()
+        args.pack_action = "attach"
+        args.ref = "test-ns/test-pack"
+        args.project = False
+
+        from anteroom.__main__ import _run_pack
+
+        with patch("anteroom.db.get_db", return_value=db):
+            _run_pack(config, args)
+
+        captured = capsys.readouterr()
+        assert "Attached" in captured.out
+        assert "global" in captured.out
+
+    def test_attach_not_found(self, db: ThreadSafeConnection) -> None:
+        config = _make_config()
+        args = MagicMock()
+        args.pack_action = "attach"
+        args.ref = "no/such-pack"
+        args.project = False
+
+        from anteroom.__main__ import _run_pack
+
+        with patch("anteroom.db.get_db", return_value=db), pytest.raises(SystemExit):
+            _run_pack(config, args)
+
+    def test_attach_invalid_ref(self) -> None:
+        config = _make_config()
+        args = MagicMock()
+        args.pack_action = "attach"
+        args.ref = "noslash"
+        args.project = False
+
+        from anteroom.__main__ import _run_pack
+
+        with patch("anteroom.db.get_db", return_value=MagicMock()), pytest.raises(SystemExit):
+            _run_pack(config, args)
+
+
+class TestRunPackDetach:
+    def test_detach_success(self, tmp_path: Path, db: ThreadSafeConnection, capsys: pytest.CaptureFixture[str]) -> None:
+        from anteroom.services.pack_attachments import attach_pack, resolve_pack_id
+
+        pack_dir = _create_pack_dir(tmp_path)
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        install_pack(db, manifest, pack_dir)
+        pack_id = resolve_pack_id(db, "test-ns", "test-pack")
+        attach_pack(db, pack_id)
+
+        config = _make_config()
+        args = MagicMock()
+        args.pack_action = "detach"
+        args.ref = "test-ns/test-pack"
+        args.project = False
+
+        from anteroom.__main__ import _run_pack
+
+        with patch("anteroom.db.get_db", return_value=db):
+            _run_pack(config, args)
+
+        captured = capsys.readouterr()
+        assert "Detached" in captured.out
+
+    def test_detach_not_attached(
+        self, tmp_path: Path, db: ThreadSafeConnection, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pack_dir = _create_pack_dir(tmp_path)
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        install_pack(db, manifest, pack_dir)
+
+        config = _make_config()
+        args = MagicMock()
+        args.pack_action = "detach"
+        args.ref = "test-ns/test-pack"
+        args.project = False
+
+        from anteroom.__main__ import _run_pack
+
+        with patch("anteroom.db.get_db", return_value=db):
+            _run_pack(config, args)
+
+        captured = capsys.readouterr()
+        assert "Not attached" in captured.out
+
+
 class TestRunPackRefresh:
     def test_refresh_no_config(self, capsys: pytest.CaptureFixture[str]) -> None:
         config = _make_config()

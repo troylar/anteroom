@@ -191,6 +191,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.retention_worker = retention_worker
         logger.info("Retention worker started (retention_days=%d)", config.storage.retention_days)
 
+    # Install/update built-in starter packs
+    try:
+        from .services.starter_packs import install_starter_packs
+
+        starter_results = install_starter_packs(app.state.db)
+        installed = [r for r in starter_results if r["status"] == "installed"]
+        updated = [r for r in starter_results if r["status"] == "updated"]
+        if installed or updated:
+            logger.info(
+                "Starter packs: %d installed, %d updated",
+                len(installed),
+                len(updated),
+            )
+    except Exception:
+        logger.warning("Failed to install starter packs", exc_info=True)
+
     # Start pack refresh worker if configured
     app.state.pack_refresh_worker = None
     if config.pack_sources:
