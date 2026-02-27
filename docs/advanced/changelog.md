@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 27, 2026
 
+### v1.79.1
+
+**Improved:**
+
+- Removed duplicate `space-setup` skill; `new-space` is the canonical space creation skill (#571)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.79.1)
+
 ### v1.79.0
 
 **New:**
