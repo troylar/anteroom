@@ -139,6 +139,22 @@ nav:
       - packs/tutorials/manage-conflicts.md
       - packs/tutorials/health-check-diagnosis.md
       - packs/tutorials/ci-cd-integration.md
+  - Spaces:
+    - spaces/index.md
+    - spaces/concepts.md
+    - spaces/quickstart.md
+    - spaces/space-file-format.md
+    - spaces/commands.md
+    - spaces/api-reference.md
+    - spaces/config-overlay.md
+    - spaces/config-reference.md
+    - spaces/repo-management.md
+    - spaces/hot-reload.md
+    - spaces/troubleshooting.md
+    - Space Tutorials:
+      - spaces/tutorials/team-space.md
+      - spaces/tutorials/multi-repo.md
+      - spaces/tutorials/custom-config.md
   - Tutorials:
     - tutorials/connect-to-ollama.md
     - tutorials/connect-to-azure.md
