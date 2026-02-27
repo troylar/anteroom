@@ -354,19 +354,19 @@ def check_bloat(db: sqlite3.Connection) -> list[HealthIssue]:
 
 def check_orphaned_artifacts(db: sqlite3.Connection) -> list[HealthIssue]:
     """Find artifacts not linked to any pack and not from built_in/local/inline sources."""
-    pack_count = db.execute("SELECT COUNT(*) AS cnt FROM packs").fetchone()
+    pack_count = db.execute_fetchone("SELECT COUNT(*) AS cnt FROM packs")
     pack_count_val = pack_count[0] if isinstance(pack_count, (tuple, list)) else pack_count["cnt"]
     if pack_count_val == 0:
         return []
 
     excluded_sources = ("built_in", "local", "inline")
     placeholders = ",".join("?" for _ in excluded_sources)
-    rows = db.execute(
+    rows = db.execute_fetchall(
         f"""SELECT a.fqn, a.source FROM artifacts a
            WHERE a.id NOT IN (SELECT artifact_id FROM pack_artifacts)
            AND a.source NOT IN ({placeholders})""",
         excluded_sources,
-    ).fetchall()
+    )
 
     issues: list[HealthIssue] = []
     for r in rows:
@@ -432,7 +432,7 @@ def fix_duplicate_content(db: sqlite3.Connection) -> int:
             by_hash[chash].append(a)
 
     # Collect IDs referenced by packs so we never delete them
-    pack_ref_rows = db.execute("SELECT DISTINCT artifact_id FROM pack_artifacts").fetchall()
+    pack_ref_rows = db.execute_fetchall("SELECT DISTINCT artifact_id FROM pack_artifacts")
     pack_artifact_ids: set[str] = {r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in pack_ref_rows}
 
     deleted = 0
@@ -468,7 +468,7 @@ def run_health_check(
     report.total_size_bytes = sum(len(a.get("content", "")) for a in all_artifacts)
     report.estimated_tokens = report.total_size_bytes // 4
 
-    pack_count = db.execute("SELECT COUNT(*) AS cnt FROM packs").fetchone()
+    pack_count = db.execute_fetchone("SELECT COUNT(*) AS cnt FROM packs")
     report.pack_count = pack_count[0] if isinstance(pack_count, (tuple, list)) else pack_count["cnt"]
 
     # Run all diagnostic checks first

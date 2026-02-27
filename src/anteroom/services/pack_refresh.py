@@ -219,6 +219,12 @@ def install_from_source(db: sqlite3.Connection, source_dir: Path) -> tuple[int, 
 
         existing = packs.get_pack(db, manifest.namespace, manifest.name)
         if existing:
+            if existing.get("version") == manifest.version:
+                logger.debug(
+                    "Pack %s/%s already at v%s, skipping",
+                    manifest.namespace, manifest.name, manifest.version,
+                )
+                continue
             try:
                 packs.update_pack(db, manifest, pack_dir)
                 updated += 1

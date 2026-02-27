@@ -155,6 +155,9 @@ def validate_lock(db: sqlite3.Connection, project_dir: Path) -> list[str]:
     if not isinstance(lock_packs, list):
         return ["Lock file has invalid format: 'packs' is not a list"]
 
+    # Build set of lock-file pack keys for reverse check
+    lock_pack_keys: set[tuple[str, str]] = set()
+
     for pack_entry in lock_packs:
         if not isinstance(pack_entry, dict):
             warnings.append("Lock file has invalid pack entry (not a mapping)")
@@ -162,6 +165,7 @@ def validate_lock(db: sqlite3.Connection, project_dir: Path) -> list[str]:
 
         ns = pack_entry.get("namespace", "")
         name = pack_entry.get("name", "")
+        lock_pack_keys.add((ns, name))
 
         # Check pack exists in DB
         pack_row = db.execute(
@@ -194,5 +198,13 @@ def validate_lock(db: sqlite3.Connection, project_dir: Path) -> list[str]:
                     warnings.append(
                         f"Content hash mismatch for {fqn}: lock={expected_hash[:12]}... db={actual_hash[:12]}..."
                     )
+
+    # Reverse check: packs in DB but not in lock file
+    db_packs = db.execute("SELECT namespace, name FROM packs ORDER BY namespace, name").fetchall()
+    for row in db_packs:
+        db_ns = row[0] if isinstance(row, (tuple, list)) else row["namespace"]
+        db_name = row[1] if isinstance(row, (tuple, list)) else row["name"]
+        if (db_ns, db_name) not in lock_pack_keys:
+            warnings.append(f"Pack {db_ns}/{db_name} installed but not in lock file")
 
     return warnings
