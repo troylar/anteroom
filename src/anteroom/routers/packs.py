@@ -132,7 +132,8 @@ async def list_pack_attachments(request: Request, namespace: str, name: str) -> 
         (pack_id,),
     ).fetchall()
     return [
-        dict(r) if hasattr(r, "keys")
+        dict(r)
+        if hasattr(r, "keys")
         else {"id": r[0], "pack_id": r[1], "project_path": r[2], "scope": r[3], "created_at": r[4]}
         for r in rows
     ]

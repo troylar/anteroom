@@ -332,9 +332,7 @@ class TestRunPackSources:
 
 
 class TestRunPackAttach:
-    def test_attach_success(
-        self, tmp_path: Path, db: ThreadSafeConnection, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_attach_success(self, tmp_path: Path, db: ThreadSafeConnection, capsys: pytest.CaptureFixture[str]) -> None:
         pack_dir = _create_pack_dir(tmp_path)
         manifest = parse_manifest(pack_dir / "pack.yaml")
         install_pack(db, manifest, pack_dir)
@@ -380,9 +378,7 @@ class TestRunPackAttach:
 
 
 class TestRunPackDetach:
-    def test_detach_success(
-        self, tmp_path: Path, db: ThreadSafeConnection, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_detach_success(self, tmp_path: Path, db: ThreadSafeConnection, capsys: pytest.CaptureFixture[str]) -> None:
         from anteroom.services.pack_attachments import attach_pack, resolve_pack_id
 
         pack_dir = _create_pack_dir(tmp_path)

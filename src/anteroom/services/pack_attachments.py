@@ -119,9 +119,7 @@ def get_active_pack_ids(
             (project_path,),
         ).fetchall()
     else:
-        rows = db.execute(
-            "SELECT DISTINCT pack_id FROM pack_attachments WHERE project_path IS NULL"
-        ).fetchall()
+        rows = db.execute("SELECT DISTINCT pack_id FROM pack_attachments WHERE project_path IS NULL").fetchall()
 
     return [r[0] if isinstance(r, (tuple, list)) else r["pack_id"] for r in rows]
 

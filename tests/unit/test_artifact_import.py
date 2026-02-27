@@ -136,7 +136,10 @@ class TestImportInstructions:
 
 class TestImportAll:
     def test_imports_skills_and_instructions(
-        self, db: ThreadSafeConnection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        db: ThreadSafeConnection,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         skills = tmp_path / "skills"
         skills.mkdir()
