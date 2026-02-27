@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 from anteroom.db import _FTS_SCHEMA, _FTS_TRIGGERS, _SCHEMA, _create_indexes
 from anteroom.services.space_storage import (
     count_space_conversations,
     create_space,
     delete_space,
+    discover_space_file,
     get_space,
     get_space_by_name,
     get_space_paths,
@@ -171,3 +173,62 @@ class TestConversationSpace:
     def test_resolve_by_cwd_no_match(self) -> None:
         db = _make_db()
         assert resolve_space_by_cwd(db, "/nonexistent") is None
+
+
+class TestDiscoverSpaceFile:
+    def test_finds_space_yaml(self, tmp_path: Path) -> None:
+        d = tmp_path / ".anteroom"
+        d.mkdir()
+        f = d / "space.yaml"
+        f.write_text("name: test\n")
+        assert discover_space_file(str(tmp_path)) == f
+
+    def test_finds_named_yaml(self, tmp_path: Path) -> None:
+        d = tmp_path / ".anteroom"
+        d.mkdir()
+        f = d / "my-project.yaml"
+        f.write_text("name: my-project\n")
+        assert discover_space_file(str(tmp_path)) == f
+
+    def test_walks_up(self, tmp_path: Path) -> None:
+        d = tmp_path / ".anteroom"
+        d.mkdir()
+        f = d / "space.yaml"
+        f.write_text("name: test\n")
+        nested = tmp_path / "src" / "subdir"
+        nested.mkdir(parents=True)
+        assert discover_space_file(str(nested)) == f
+
+    def test_skips_local_yaml(self, tmp_path: Path) -> None:
+        d = tmp_path / ".anteroom"
+        d.mkdir()
+        (d / "test.local.yaml").write_text("name: test\n")
+        assert discover_space_file(str(tmp_path)) is None
+
+    def test_returns_none_when_absent(self, tmp_path: Path) -> None:
+        assert discover_space_file(str(tmp_path)) is None
+
+    def test_prefers_space_yaml(self, tmp_path: Path) -> None:
+        d = tmp_path / ".anteroom"
+        d.mkdir()
+        canonical = d / "space.yaml"
+        canonical.write_text("name: canonical\n")
+        (d / "other.yaml").write_text("name: other\n")
+        assert discover_space_file(str(tmp_path)) == canonical
+
+    def test_checks_claude_dir(self, tmp_path: Path) -> None:
+        d = tmp_path / ".claude"
+        d.mkdir()
+        f = d / "space.yaml"
+        f.write_text("name: test\n")
+        assert discover_space_file(str(tmp_path)) == f
+
+    def test_anteroom_preferred_over_claude(self, tmp_path: Path) -> None:
+        ad = tmp_path / ".anteroom"
+        ad.mkdir()
+        af = ad / "space.yaml"
+        af.write_text("name: anteroom\n")
+        cd = tmp_path / ".claude"
+        cd.mkdir()
+        (cd / "space.yaml").write_text("name: claude\n")
+        assert discover_space_file(str(tmp_path)) == af
