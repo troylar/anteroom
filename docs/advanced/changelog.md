@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 27, 2026
 
+### v1.81.0
+
+**New:**
+
+- Live elapsed timer during tool execution — CLI and web UI now show an updating counter instead of silence during long-running tools (#581)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.81.0)
+
 ### v1.80.0
 
 **New:**
