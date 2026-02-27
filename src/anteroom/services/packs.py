@@ -359,7 +359,7 @@ def update_pack(
     *,
     project_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Update a pack by removing the old version and reinstalling.
+    """Update a pack by removing the old version and reinstalling atomically.
 
     Raises ``ValueError`` if the pack is not currently installed.
     """
@@ -368,15 +368,110 @@ def update_pack(
         msg = f"Pack {manifest.namespace}/{manifest.name} is not installed"
         raise ValueError(msg)
 
-    remove_pack(db, manifest.namespace, manifest.name)
-    return install_pack(db, manifest, pack_dir, project_dir=project_dir)
+    old_pack_id = existing[0] if isinstance(existing, (tuple, list)) else existing["id"]
+
+    # Find artifacts that belong ONLY to the old pack (not shared with others)
+    orphan_rows = db.execute(
+        """SELECT pa.artifact_id FROM pack_artifacts pa
+           WHERE pa.pack_id = ?
+           AND pa.artifact_id NOT IN (
+               SELECT artifact_id FROM pack_artifacts WHERE pack_id != ?
+           )""",
+        (old_pack_id, old_pack_id),
+    ).fetchall()
+    orphan_ids = [r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in orphan_rows]
+
+    # Read all new artifact content (I/O outside the transaction)
+    now = datetime.now(timezone.utc).isoformat()
+    new_pack_id = uuid.uuid4().hex
+    artifact_data: list[tuple[str, str, str, str, dict[str, Any]]] = []
+    skipped: list[str] = []
+    for art in manifest.artifacts:
+        art_path = _resolve_artifact_file(art, pack_dir)
+        if art_path is None:
+            skipped.append(f"{art.type}/{art.name}")
+            logger.warning("Skipping %s/%s: file not found", art.type, art.name)
+            continue
+        content, metadata = _read_artifact_content(art_path)
+        fqn = build_fqn(manifest.namespace, art.type, art.name)
+        artifact_data.append((fqn, art.type, art.name, content, metadata))
+
+    # Atomic remove-and-reinstall in a single transaction
+    artifact_ids: list[str] = []
+    with db.transaction():
+        # Remove old pack
+        db.execute("DELETE FROM packs WHERE id = ?", (old_pack_id,))
+        for art_id in orphan_ids:
+            delete_artifact(db, art_id, commit=False)
+
+        # Install new artifacts
+        for fqn, art_type, art_name, content, metadata in artifact_data:
+            row = upsert_artifact(
+                db,
+                fqn=fqn,
+                artifact_type=art_type,
+                namespace=manifest.namespace,
+                name=art_name,
+                content=content,
+                source=ArtifactSource.PROJECT,
+                metadata=metadata,
+                commit=False,
+            )
+            if row:
+                artifact_ids.append(row["id"])
+
+        # Insert new pack row
+        source_path = str(pack_dir.resolve())
+        db.execute(
+            """INSERT INTO packs (id, name, namespace, version, description,
+               source_path, installed_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                new_pack_id,
+                manifest.name,
+                manifest.namespace,
+                manifest.version,
+                manifest.description,
+                source_path,
+                now,
+                now,
+            ),
+        )
+
+        # Link artifacts to new pack
+        for art_id in artifact_ids:
+            db.execute(
+                "INSERT INTO pack_artifacts (pack_id, artifact_id) VALUES (?, ?)",
+                (new_pack_id, art_id),
+            )
+
+    # Copy to project if requested (outside transaction — file I/O)
+    if project_dir is not None:
+        _copy_to_project(pack_dir, manifest, project_dir)
+
+    logger.info(
+        "Updated pack %s/%s to v%s (%d artifacts)",
+        manifest.namespace,
+        manifest.name,
+        manifest.version,
+        len(artifact_ids),
+    )
+
+    return {
+        "id": new_pack_id,
+        "name": manifest.name,
+        "namespace": manifest.namespace,
+        "version": manifest.version,
+        "artifact_count": len(artifact_ids),
+        "skipped_artifacts": skipped,
+    }
 
 
 def list_packs(db: sqlite3.Connection) -> list[dict[str, Any]]:
     """List all installed packs with artifact counts."""
     rows = db.execute(
         """SELECT p.id, p.name, p.namespace, p.version, p.description,
-                  p.installed_at, p.updated_at,
+                  p.source_path, p.installed_at, p.updated_at,
                   COUNT(pa.artifact_id) AS artifact_count
            FROM packs p
            LEFT JOIN pack_artifacts pa ON p.id = pa.pack_id
@@ -448,15 +543,33 @@ def load_project_packs(db: sqlite3.Connection, project_dir: Path) -> list[dict[s
 
 
 def _copy_to_project(pack_dir: Path, manifest: PackManifest, project_dir: Path) -> None:
-    """Copy pack directory into the project's ``.anteroom/packs/`` tree."""
+    """Copy only manifest-referenced files (+ pack.yaml) into the project's ``.anteroom/packs/`` tree.
+
+    Avoids copying unrelated files that may exist in the pack source directory.
+    """
     dest = project_dir / _ANTEROOM_DIR / _PACKS_DIR / manifest.namespace / manifest.name
     if dest.exists() or _is_symlink(dest):
         if _is_symlink(dest):
             dest.unlink()
         else:
             shutil.rmtree(dest)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(pack_dir, dest)
+    dest.mkdir(parents=True, exist_ok=True)
+
+    # Always copy the manifest
+    manifest_src = pack_dir / _MANIFEST_FILE
+    if manifest_src.is_file():
+        shutil.copy2(manifest_src, dest / _MANIFEST_FILE)
+
+    # Copy only files referenced by manifest artifacts
+    for art in manifest.artifacts:
+        art_path = _resolve_artifact_file(art, pack_dir)
+        if art_path is None or not art_path.is_file():
+            continue
+        rel = art_path.relative_to(pack_dir)
+        dest_file = dest / rel
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(art_path, dest_file)
+
     logger.info("Copied pack to project: %s", dest)
 
 

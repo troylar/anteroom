@@ -845,6 +845,28 @@ def _run_artifact_check(config: object, args: object, db: object, console: objec
     console.print()
 
 
+def _validate_pack_ref(ref: str) -> tuple[str, str]:
+    """Parse and validate a pack reference (namespace/name).
+
+    Returns (namespace, name) or raises SystemExit on invalid input.
+    """
+    import re
+
+    parts = ref.split("/", 1)
+    if len(parts) != 2:
+        print(f"Invalid pack reference: {ref!r}. Use namespace/name format.", file=sys.stderr)
+        sys.exit(1)
+    namespace, name = parts
+    safe_re = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
+    if not safe_re.match(namespace):
+        print(f"Invalid namespace: {namespace!r}. Must match [a-zA-Z0-9][a-zA-Z0-9._-]{{0,63}}", file=sys.stderr)
+        sys.exit(1)
+    if not safe_re.match(name):
+        print(f"Invalid pack name: {name!r}. Must match [a-zA-Z0-9][a-zA-Z0-9._-]{{0,63}}", file=sys.stderr)
+        sys.exit(1)
+    return namespace, name
+
+
 def _run_pack(config: object, args: object) -> None:
     """Handle `aroom pack` subcommands."""
     from pathlib import Path
@@ -914,15 +936,10 @@ def _run_pack(config: object, args: object) -> None:
         )
 
     elif action == "show":
-        ref = args.ref
-        parts = ref.split("/", 1)
-        if len(parts) != 2:
-            console.print("[red]Invalid pack reference. Use namespace/name format.[/red]")
-            sys.exit(1)
-        namespace, name = parts
+        namespace, name = _validate_pack_ref(args.ref)
         pack_info = packs.get_pack(db, namespace, name)
         if not pack_info:
-            console.print(f"[red]Pack not found:[/red] {escape(ref)}")
+            console.print(f"[red]Pack not found:[/red] {escape(args.ref)}")
             sys.exit(1)
 
         console.print(f"[bold]Name:[/bold]        {escape(pack_info['namespace'])}/{escape(pack_info['name'])}")
@@ -944,17 +961,12 @@ def _run_pack(config: object, args: object) -> None:
             console.print(table)
 
     elif action == "remove":
-        ref = args.ref
-        parts = ref.split("/", 1)
-        if len(parts) != 2:
-            console.print("[red]Invalid pack reference. Use namespace/name format.[/red]")
-            sys.exit(1)
-        namespace, name = parts
+        namespace, name = _validate_pack_ref(args.ref)
         removed = packs.remove_pack(db, namespace, name)
         if removed:
-            console.print(f"[green]Removed[/green] {escape(ref)}")
+            console.print(f"[green]Removed[/green] {escape(args.ref)}")
         else:
-            console.print(f"[red]Pack not found:[/red] {escape(ref)}")
+            console.print(f"[red]Pack not found:[/red] {escape(args.ref)}")
             sys.exit(1)
 
     elif action == "update":
@@ -1042,15 +1054,10 @@ def _run_pack(config: object, args: object) -> None:
     elif action == "attach":
         from .services.pack_attachments import attach_pack, resolve_pack_id
 
-        ref = args.ref
-        parts = ref.split("/", 1)
-        if len(parts) != 2:
-            console.print("[red]Invalid pack reference. Use namespace/name format.[/red]")
-            sys.exit(1)
-        namespace, name = parts
+        namespace, name = _validate_pack_ref(args.ref)
         pack_id = resolve_pack_id(db, namespace, name)
         if not pack_id:
-            console.print(f"[red]Pack not found:[/red] {escape(ref)}")
+            console.print(f"[red]Pack not found:[/red] {escape(args.ref)}")
             sys.exit(1)
 
         project_path = str(Path.cwd()) if getattr(args, "project", False) else None
@@ -1061,29 +1068,24 @@ def _run_pack(config: object, args: object) -> None:
             sys.exit(1)
 
         scope = "project" if project_path else "global"
-        console.print(f"[green]Attached[/green] {escape(ref)} ({scope})")
+        console.print(f"[green]Attached[/green] {escape(args.ref)} ({scope})")
 
     elif action == "detach":
         from .services.pack_attachments import detach_pack, resolve_pack_id
 
-        ref = args.ref
-        parts = ref.split("/", 1)
-        if len(parts) != 2:
-            console.print("[red]Invalid pack reference. Use namespace/name format.[/red]")
-            sys.exit(1)
-        namespace, name = parts
+        namespace, name = _validate_pack_ref(args.ref)
         pack_id = resolve_pack_id(db, namespace, name)
         if not pack_id:
-            console.print(f"[red]Pack not found:[/red] {escape(ref)}")
+            console.print(f"[red]Pack not found:[/red] {escape(args.ref)}")
             sys.exit(1)
 
         project_path = str(Path.cwd()) if getattr(args, "project", False) else None
         removed = detach_pack(db, pack_id, project_path=project_path)
         if removed:
             scope = "project" if project_path else "global"
-            console.print(f"[green]Detached[/green] {escape(ref)} ({scope})")
+            console.print(f"[green]Detached[/green] {escape(args.ref)} ({scope})")
         else:
-            console.print(f"[yellow]Not attached:[/yellow] {escape(ref)}")
+            console.print(f"[yellow]Not attached:[/yellow] {escape(args.ref)}")
 
 
 def _run_chat(

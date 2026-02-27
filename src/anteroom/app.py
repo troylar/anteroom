@@ -689,9 +689,11 @@ def create_app(config: AppConfig | None = None, enforced_fields: list[str] | Non
     app.include_router(sources.router, prefix="/api")
     app.include_router(usage.router, prefix="/api")
     app.include_router(plan.router, prefix="/api")
+    # Order matters: artifact_health must precede artifacts because
+    # artifacts uses {fqn:path} which would shadow /artifacts/check.
+    app.include_router(artifact_health_router.router, prefix="/api")
     app.include_router(artifacts.router, prefix="/api")
     app.include_router(packs_router.router, prefix="/api")
-    app.include_router(artifact_health_router.router, prefix="/api")
 
     if config.proxy.enabled:
         from .routers import proxy

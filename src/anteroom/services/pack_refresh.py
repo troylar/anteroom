@@ -132,7 +132,7 @@ class PackRefreshWorker:
             if not self._is_due(state):
                 continue
             try:
-                r = self.refresh_source(state.config)
+                r = await asyncio.to_thread(self.refresh_source, state.config)
                 results.append(r)
                 state.last_refreshed = time.monotonic()
                 if r.success:
@@ -219,6 +219,14 @@ def install_from_source(db: sqlite3.Connection, source_dir: Path) -> tuple[int, 
 
         existing = packs.get_pack(db, manifest.namespace, manifest.name)
         if existing:
+            if existing.get("version") == manifest.version:
+                logger.debug(
+                    "Pack %s/%s already at v%s, skipping",
+                    manifest.namespace,
+                    manifest.name,
+                    manifest.version,
+                )
+                continue
             try:
                 packs.update_pack(db, manifest, pack_dir)
                 updated += 1
