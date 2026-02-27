@@ -2938,6 +2938,39 @@ async def _run_repl(
                             f"[{CHROME}]Usage: /project [list|create|select|edit|delete|clear|sources][/{CHROME}]\n"
                         )
                     continue
+                elif cmd == "/artifact-check":
+                    from .services import artifact_health
+
+                    _ahc_report = artifact_health.run_health_check(db, project_dir=working_dir)
+                    renderer.console.print()
+                    renderer.console.print("[bold]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold]")
+                    renderer.console.print("[bold]  🏥 Artifact Health Check[/bold]")
+                    renderer.console.print("[bold]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold]")
+                    renderer.console.print()
+                    renderer.console.print(
+                        f"  📊 Loaded: {_ahc_report.artifact_count} artifacts from {_ahc_report.pack_count} packs"
+                    )
+                    renderer.console.print(
+                        f"  📏 Total size: {_ahc_report.total_size_bytes:,} bytes"
+                        f" (~{_ahc_report.estimated_tokens:,} tokens)"
+                    )
+                    renderer.console.print()
+                    if not _ahc_report.issues:
+                        renderer.console.print("[green]  ✅ No issues found[/green]\n")
+                    else:
+                        for _ahc_issue in _ahc_report.issues:
+                            _icon = {"error": "❌", "warn": "⚠️", "info": "💡"}.get(_ahc_issue.severity.value, "•")
+                            renderer.console.print(f"  {_icon} {_ahc_issue.message}")
+                        renderer.console.print()
+                        _parts_summary = []
+                        if _ahc_report.error_count:
+                            _parts_summary.append(f"❌ {_ahc_report.error_count} errors")
+                        if _ahc_report.warn_count:
+                            _parts_summary.append(f"⚠️ {_ahc_report.warn_count} warnings")
+                        if _ahc_report.info_count:
+                            _parts_summary.append(f"💡 {_ahc_report.info_count} suggestions")
+                        renderer.console.print(f"  {' '.join(_parts_summary)}\n")
+                    continue
                 elif cmd == "/mcp":
                     parts = user_input.split()
                     if len(parts) == 1:
