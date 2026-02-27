@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -156,6 +157,38 @@ def get_space_local_dirs(db: sqlite3.Connection, space_id: str) -> list[str]:
     return [r["local_path"] if hasattr(r, "keys") else r[0] for r in rows]
 
 
+def discover_space_file(cwd: str) -> Path | None:
+    """Walk up from *cwd* looking for a space YAML file in a project directory.
+
+    Checks ``.anteroom/``, ``.claude/``, and ``.parlor/`` at each level.
+    Prefers ``space.yaml`` over other ``*.yaml`` files.  Skips ``.local.yaml``
+    files (machine-specific overrides).
+
+    Returns the first matching path, or ``None``.
+    """
+    project_dirs = (".anteroom", ".claude", ".parlor")
+    current = Path(cwd).resolve()
+    while True:
+        for dirname in project_dirs:
+            candidate_dir = current / dirname
+            if not candidate_dir.is_dir():
+                continue
+            # Prefer the canonical name first
+            canonical = candidate_dir / "space.yaml"
+            if canonical.is_file():
+                return canonical
+            # Then any other *.yaml (excluding .local.yaml overrides)
+            for p in sorted(candidate_dir.glob("*.yaml")):
+                if p.name.endswith(".local.yaml"):
+                    continue
+                return p
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return None
+
+
 def resolve_space_by_cwd(db: sqlite3.Connection, cwd: str) -> dict[str, Any] | None:
     """Resolve a space by working directory (exact match or subdirectory).
 
@@ -173,8 +206,6 @@ def resolve_space_by_cwd(db: sqlite3.Connection, cwd: str) -> dict[str, Any] | N
         return dict(row)
 
     # Walk up parent directories
-    from pathlib import Path
-
     current = Path(cwd)
     for parent in current.parents:
         row = db.execute(

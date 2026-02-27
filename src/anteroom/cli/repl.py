@@ -919,6 +919,29 @@ async def run_cli(
         if _space:
             space_id = _space["id"]
             renderer.console.print(f"[dim]Space (auto):[/dim] {_space['name']}")
+    if not _space:
+        from ..services.space_storage import discover_space_file
+
+        _discovered_path = discover_space_file(working_dir)
+        if _discovered_path:
+            try:
+                from ..services.spaces import file_hash, parse_space_file, validate_space
+
+                _disc_cfg = parse_space_file(_discovered_path)
+                _disc_errors = validate_space(_disc_cfg)
+                if not _disc_errors:
+                    from ..services.space_storage import get_space_by_name
+
+                    if not get_space_by_name(db, _disc_cfg.name):
+                        from ..services.space_storage import create_space as _cs_disc
+
+                        _space = _cs_disc(db, _disc_cfg.name, str(_discovered_path), file_hash(_discovered_path))
+                        space_id = _space["id"]
+                        renderer.console.print(f"[dim]Space (discovered):[/dim] {_disc_cfg.name}")
+                else:
+                    logger.debug("Discovered space file %s has errors: %s", _discovered_path, _disc_errors)
+            except Exception:
+                logger.debug("Failed to load discovered space file %s", _discovered_path, exc_info=True)
     if _space:
         # Load space instructions from the space YAML file
         try:
