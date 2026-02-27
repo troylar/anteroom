@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from ..services import packs
 from ..services.pack_sources import list_cached_sources
@@ -73,6 +74,78 @@ async def refresh_sources(request: Request) -> list[dict[str, Any]]:
         }
         for r in results
     ]
+
+
+class AttachRequest(BaseModel):
+    project_path: str | None = None
+
+
+@router.post("/packs/{namespace}/{name}/attach")
+async def attach_pack(request: Request, namespace: str, name: str, body: AttachRequest) -> dict[str, Any]:
+    """Attach a pack to global or project scope."""
+    from ..services.pack_attachments import attach_pack as do_attach
+    from ..services.pack_attachments import resolve_pack_id
+
+    db = request.app.state.db
+    pack_id = resolve_pack_id(db, namespace, name)
+    if not pack_id:
+        raise HTTPException(status_code=404, detail="Pack not found")
+
+    try:
+        result = do_attach(db, pack_id, project_path=body.project_path)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return result
+
+
+@router.delete("/packs/{namespace}/{name}/attach")
+async def detach_pack(request: Request, namespace: str, name: str, body: AttachRequest) -> dict[str, str]:
+    """Detach a pack from global or project scope."""
+    from ..services.pack_attachments import detach_pack as do_detach
+    from ..services.pack_attachments import resolve_pack_id
+
+    db = request.app.state.db
+    pack_id = resolve_pack_id(db, namespace, name)
+    if not pack_id:
+        raise HTTPException(status_code=404, detail="Pack not found")
+
+    removed = do_detach(db, pack_id, project_path=body.project_path)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    return {"status": "detached"}
+
+
+@router.get("/packs/{namespace}/{name}/attachments")
+async def list_pack_attachments(request: Request, namespace: str, name: str) -> list[dict[str, Any]]:
+    """List attachments for a specific pack."""
+    from ..services.pack_attachments import resolve_pack_id
+
+    db = request.app.state.db
+    pack_id = resolve_pack_id(db, namespace, name)
+    if not pack_id:
+        raise HTTPException(status_code=404, detail="Pack not found")
+
+    rows = db.execute(
+        """SELECT id, pack_id, project_path, scope, created_at
+           FROM pack_attachments WHERE pack_id = ?
+           ORDER BY scope, project_path""",
+        (pack_id,),
+    ).fetchall()
+    return [
+        dict(r) if hasattr(r, "keys")
+        else {"id": r[0], "pack_id": r[1], "project_path": r[2], "scope": r[3], "created_at": r[4]}
+        for r in rows
+    ]
+
+
+@router.delete("/packs/{namespace}/{name}")
+async def remove_pack(request: Request, namespace: str, name: str) -> dict[str, str]:
+    """Remove an installed pack."""
+    db = request.app.state.db
+    removed = packs.remove_pack(db, namespace, name)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Pack not found")
+    return {"status": "removed"}
 
 
 @router.get("/packs/{namespace}/{name}")
