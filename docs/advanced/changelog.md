@@ -7,6 +7,18 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 27, 2026
 
+### v1.73.2
+
+**Fixed:**
+
+- Pack install copies only manifest-referenced files; updates are atomic with rollback (#546)
+- Health check no longer deletes pack-referenced artifacts or produces false orphan positives (#541, #545)
+- CLI pack inputs validated against injection; API strips internal paths from responses (#545, #546)
+- Lock file validation is now bidirectional — catches installed packs missing from lock (#546)
+- Credential sanitization, `SELECT *` removal, and duplicate registry init cleaned up (#542, #543, #544)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.73.2)
+
 ### v1.73.1
 
 **Fixed:**
