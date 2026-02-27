@@ -265,8 +265,6 @@ class TestPackRefreshWorkerRunOnce:
 class TestPackRefreshWorkerBackoff:
     def test_is_due_applies_backoff_on_failures(self, tmp_path: Path) -> None:
         """After failures, _is_due should require longer intervals."""
-        from anteroom.services.pack_refresh import _SourceState
-
         source = PackSourceConfig(url="https://a.com/repo.git", refresh_interval=5)
         worker = PackRefreshWorker(db=MagicMock(), data_dir=tmp_path, sources=[source])
         state = worker._sources[0]

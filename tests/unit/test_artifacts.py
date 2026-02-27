@@ -584,22 +584,6 @@ class TestRowToDictMalformedJson:
     def test_valid_json_metadata(self) -> None:
         """Normal case: valid JSON metadata is deserialized."""
 
-        class FakeRow:
-            def __init__(self, data: dict) -> None:
-                self._data = data
-
-            def keys(self) -> list:
-                return list(self._data.keys())
-
-            def __iter__(self):
-                return iter(self._data.values())
-
-            def __getitem__(self, key: str) -> object:
-                return self._data[key]
-
-        # Use a real DB row instead
-        row_dict = {"id": "123", "fqn": "@a/skill/x", "metadata": '{"key": "value"}'}
-        # _row_to_dict expects sqlite3.Row, but we can test via the DB
         db_conn = sqlite3.connect(":memory:")
         db_conn.row_factory = sqlite3.Row
         db_conn.execute("CREATE TABLE t (id TEXT, fqn TEXT, metadata TEXT)")
