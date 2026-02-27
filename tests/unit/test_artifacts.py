@@ -406,19 +406,19 @@ class TestArtifactRegistry:
         reg = ArtifactRegistry()
         reg.register(Artifact(fqn="@a/skill/x", type=ArtifactType.SKILL, namespace="a", name="x", content="1"))
         reg.register(Artifact(fqn="@a/rule/y", type=ArtifactType.RULE, namespace="a", name="y", content="2"))
-        assert len(reg.list()) == 2
+        assert len(reg.list_all()) == 2
 
     def test_list_filter_type(self) -> None:
         reg = ArtifactRegistry()
         reg.register(Artifact(fqn="@a/skill/x", type=ArtifactType.SKILL, namespace="a", name="x", content="1"))
         reg.register(Artifact(fqn="@a/rule/y", type=ArtifactType.RULE, namespace="a", name="y", content="2"))
-        assert len(reg.list(artifact_type=ArtifactType.SKILL)) == 1
+        assert len(reg.list_all(artifact_type=ArtifactType.SKILL)) == 1
 
     def test_list_filter_namespace(self) -> None:
         reg = ArtifactRegistry()
         reg.register(Artifact(fqn="@a/skill/x", type=ArtifactType.SKILL, namespace="a", name="x", content="1"))
         reg.register(Artifact(fqn="@b/skill/y", type=ArtifactType.SKILL, namespace="b", name="y", content="2"))
-        assert len(reg.list(namespace="a")) == 1
+        assert len(reg.list_all(namespace="a")) == 1
 
     def test_list_filter_source(self) -> None:
         reg = ArtifactRegistry()
@@ -442,7 +442,7 @@ class TestArtifactRegistry:
                 source=ArtifactSource.LOCAL,
             )
         )
-        assert len(reg.list(source=ArtifactSource.BUILT_IN)) == 1
+        assert len(reg.list_all(source=ArtifactSource.BUILT_IN)) == 1
 
     def test_search(self) -> None:
         reg = ArtifactRegistry()

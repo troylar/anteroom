@@ -91,21 +91,21 @@ class ArtifactRegistry:
         """Look up an artifact by its fully-qualified name."""
         return self._artifacts.get(fqn)
 
-    def list(
+    def list_all(
         self,
         artifact_type: ArtifactType | None = None,
         namespace: str | None = None,
         source: ArtifactSource | None = None,
     ) -> list[Artifact]:
         """List artifacts with optional filtering."""
-        results = self._artifacts.values()
+        filtered: list[Artifact] = [*self._artifacts.values()]
         if artifact_type is not None:
-            results = [a for a in results if a.type == artifact_type]
+            filtered = [a for a in filtered if a.type == artifact_type]
         if namespace is not None:
-            results = [a for a in results if a.namespace == namespace]
+            filtered = [a for a in filtered if a.namespace == namespace]
         if source is not None:
-            results = [a for a in results if a.source == source]
-        return list(results)
+            filtered = [a for a in filtered if a.source == source]
+        return filtered
 
     def search(self, name_pattern: str) -> list[Artifact]:
         """Find artifacts whose name contains the given substring (case-insensitive)."""

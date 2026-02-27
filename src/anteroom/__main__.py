@@ -649,6 +649,7 @@ def _run_projects(config: object) -> None:
 def _run_artifact(config: object, args: object) -> None:
     """Handle `aroom artifact` subcommands."""
     from rich.console import Console
+    from rich.markup import escape
     from rich.table import Table
 
     from .db import get_db
@@ -692,20 +693,20 @@ def _run_artifact(config: object, args: object) -> None:
         fqn = args.fqn
         art = artifact_storage.get_artifact_by_fqn(db, fqn)
         if not art:
-            console.print(f"[red]Artifact not found:[/red] {fqn}")
+            console.print(f"[red]Artifact not found:[/red] {escape(fqn)}")
             sys.exit(1)
-        console.print(f"[bold]FQN:[/bold]       {art['fqn']}")
-        console.print(f"[bold]Type:[/bold]      {art['type']}")
-        console.print(f"[bold]Namespace:[/bold] {art['namespace']}")
-        console.print(f"[bold]Name:[/bold]      {art['name']}")
-        console.print(f"[bold]Source:[/bold]    {art['source']}")
-        console.print(f"[bold]Hash:[/bold]      {art['content_hash']}")
-        console.print(f"[bold]Updated:[/bold]   {art['updated_at']}")
+        console.print(f"[bold]FQN:[/bold]       {escape(art['fqn'])}")
+        console.print(f"[bold]Type:[/bold]      {escape(art['type'])}")
+        console.print(f"[bold]Namespace:[/bold] {escape(art['namespace'])}")
+        console.print(f"[bold]Name:[/bold]      {escape(art['name'])}")
+        console.print(f"[bold]Source:[/bold]    {escape(art['source'])}")
+        console.print(f"[bold]Hash:[/bold]      {escape(art['content_hash'])}")
+        console.print(f"[bold]Updated:[/bold]   {escape(art['updated_at'])}")
         versions = artifact_storage.list_artifact_versions(db, art["id"])
         console.print(f"[bold]Versions:[/bold]  {len(versions)}")
         console.print()
         console.print("[bold]Content:[/bold]")
-        console.print(art["content"])
+        console.print(escape(art["content"]))
 
 
 def _run_chat(

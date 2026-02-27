@@ -209,10 +209,11 @@ def upsert_artifact(
     metadata: dict[str, Any] | None = None,
     user_id: str | None = None,
     user_display_name: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     """Create or update an artifact by FQN.
 
     If the FQN already exists, updates content/metadata and bumps version.
+    Returns None only if the artifact was deleted between lookup and update.
     """
     existing = get_artifact_by_fqn(db, fqn)
     if existing:
