@@ -3085,3 +3085,29 @@ class TestToolTicker:
             r._tool_start = 0
             r._repl_mode = False
             r._stdout = None
+
+    @pytest.mark.asyncio
+    async def test_ask_user_stops_existing_ticker(self) -> None:
+        """ask_user should stop any existing ticker from a prior tool call."""
+        import anteroom.cli.renderer as r
+
+        r._repl_mode = True
+        r._stdout = io.StringIO()
+        try:
+            set_verbosity(Verbosity.COMPACT)
+            # Start a ticker for a normal tool
+            render_tool_call_start("bash", {"command": "sleep 10"})
+            assert r._tool_ticker_task is not None
+            prior_task = r._tool_ticker_task
+
+            # Now ask_user starts — should cancel the prior ticker
+            render_tool_call_start("ask_user", {"question": "Continue?"})
+            assert r._tool_ticker_task is None
+            # Let the event loop process the cancellation
+            await asyncio.sleep(0)
+            assert prior_task.cancelled()
+        finally:
+            stop_tool_ticker_sync()
+            r._tool_start = 0
+            r._repl_mode = False
+            r._stdout = None
