@@ -82,7 +82,7 @@ class PackRefreshWorker:
         base_interval = state.config.refresh_interval * 60
         if state.consecutive_failures > 0:
             interval = min(
-                base_interval * (BACKOFF_MULTIPLIER ** state.consecutive_failures),
+                base_interval * (BACKOFF_MULTIPLIER**state.consecutive_failures),
                 MAX_INTERVAL,
             )
         else:
