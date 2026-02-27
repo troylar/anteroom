@@ -1,0 +1,159 @@
+name: new-space
+description: Create a new space YAML file with guided setup
+prompt: |
+  Help the user create a new Anteroom space — a named workspace that bundles repos,
+  packs, instructions, and config overrides into a single portable YAML file.
+
+  ## Space File Schema
+
+  ```yaml
+  name: my-space              # lowercase alphanumeric, hyphens, underscores (1-64 chars)
+  version: "1"                # schema version (always "1")
+
+  repos:                      # git repositories to clone
+    - https://github.com/org/repo-one.git
+    - https://github.com/org/repo-two.git
+
+  pack_sources:               # git repos containing pack definitions
+    - url: https://github.com/org/packs.git
+      branch: main            # optional, defaults to "main"
+
+  packs:                      # packs to install (namespace/name format)
+    - my-team/python-standards
+    - my-team/security-baseline
+
+  sources:                    # knowledge sources for RAG
+    - path: ./docs/api-spec.md
+    - url: https://example.com/reference.md
+
+  instructions: |             # custom system prompt text
+    You are working on the ACME platform.
+    Follow our coding standards and conventions.
+
+  config:                     # config overrides (merged between personal and project)
+    ai:
+      model: gpt-4o
+      temperature: 0.3
+    safety:
+      approval_mode: ask_for_writes
+  ```
+
+  ### Name Rules
+
+  - Pattern: `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`
+  - Keep lowercase for consistency
+  - Hyphens preferred over underscores
+
+  ### URL Rules
+
+  - Allowed schemes: https://, git://, ssh://, git@host:path
+  - Rejected: file://, ext:: (security risk)
+
+  ### Config Override Keys
+
+  Common config sections that can be overridden per-space:
+  - `ai.model`, `ai.temperature`, `ai.top_p`
+  - `safety.approval_mode`, `safety.read_only`, `safety.denied_tools`
+  - `planning.auto_mode`
+  - `subagent.max_total`, `subagent.max_concurrency`
+  - `rag.max_chunks`, `rag.max_tokens`, `rag.similarity_threshold`
+
+  ## Workflow
+
+  The user's request: {args}
+
+  1. **Understand intent.** If no request was provided above, ask the user:
+     - What is this workspace for? (project name, team name, or use case)
+     - Which git repos should be included?
+     - Do you already have repos cloned locally, or should Anteroom clone them?
+     - Any specific coding standards or conventions? (becomes instructions)
+     - Should it use a particular AI model or config?
+
+     If a request was provided, extract these answers from it — do NOT re-ask
+     questions that are already answered.
+
+  2. **Choose the space name.**
+     - Derive from the project or team name
+     - Must be lowercase, alphanumeric with hyphens
+     - Examples: `backend-team`, `acme-platform`, `production-debug`
+
+  3. **Choose the file location.** Two options:
+
+     **Option A — Personal config (default):**
+     `~/.anteroom/spaces/<name>.yaml`
+     Best for: personal workspaces, local-only use.
+
+     **Option B — Inside a git repo:**
+     `<repo-root>/.anteroom/space.yaml` or `<repo-root>/spaces/<name>.yaml`
+     Best for: team-shared spaces versioned with the project. Changes are committed
+     and shared via git pull. Ask which repo if the space spans multiple repos.
+
+     If the user mentions a team, sharing, or version control, suggest Option B.
+     Otherwise default to Option A.
+
+  4. **Design the space file.** Based on user input:
+     - Add repos if mentioned (validate URL schemes)
+     - Add packs if the user has team packs
+     - Write clear, actionable instructions
+     - Add config overrides only if the user has specific needs
+     - Omit empty sections — keep it minimal
+
+  5. **Write the space file.** Use `write_file` to create the file at the chosen location.
+     Write the YAML with clear comments explaining each section.
+
+  6. **Validate the space file.** Run with `bash`:
+
+     ```
+     python3 -c "
+     from pathlib import Path
+     from anteroom.services.spaces import parse_space_file, validate_space
+     config = parse_space_file(Path('<space-file-path>'))
+     errors = validate_space(config)
+     if errors:
+         for e in errors:
+             print(f'ERROR: {e}')
+     else:
+         print(f'Valid space: {config.name} ({len(config.repos)} repos, {len(config.packs)} packs)')
+     "
+     ```
+
+     If validation reports errors, fix them and re-validate. Do not declare
+     success until validation passes.
+
+  7. **Register the space.** Run with `bash`:
+
+     ```
+     aroom space create <space-file-path>
+     ```
+
+  8. **Map existing repos (if applicable).** If the user mentioned they already have
+     repos cloned locally, map each one:
+
+     ```
+     aroom space map <name> <local-path>
+     ```
+
+     For each local path, verify it exists: `test -d <path>`
+
+  9. **Handle git commit (if in a repo).** If the space file was written inside a git
+     repo (Option B), ask if the user wants to commit it:
+     - Show what will be committed: `git status <space-file-path>`
+     - Suggest: `git add <path> && git commit -m "chore: add <name> space definition"`
+     - Note: the `.local.yaml` file should be in `.gitignore` — it is machine-specific
+
+  10. **Report what was created and next steps.** Show:
+      - Space file location
+      - If repos need cloning: `aroom space clone <name>`
+      - If repos already mapped: list the mappings
+      - How to activate: `/space switch <name>` in REPL
+      - If in a git repo: remind to add `<name>.local.yaml` to `.gitignore`
+
+  ## Constraints
+
+  - Do NOT guess the YAML schema — use the structure above exactly
+  - Do NOT add empty sections (e.g., empty repos list) — omit them
+  - Do NOT skip validation — always run the validation step
+  - Do NOT include machine-specific paths in the space file — those go in .local.yaml
+  - Do NOT commit .local.yaml files — they are machine-specific
+  - Keep instructions focused and actionable — no filler text
+  - Use YAML block scalar `instructions: |` for multi-line instructions

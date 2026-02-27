@@ -4,11 +4,13 @@ Create and use your first space in 5 minutes.
 
 ## 1. Create a Space File
 
-Create a YAML file in the spaces directory:
+Space files can live anywhere on the filesystem. The default personal location is `~/.anteroom/spaces/`:
 
 ```bash
 mkdir -p ~/.anteroom/spaces
 ```
+
+For team-shared spaces, place the file inside a git repo instead (e.g., `<repo>/.anteroom/space.yaml`). See [Concepts](concepts.md#space-file-location) for details.
 
 ```yaml title="~/.anteroom/spaces/my-project.yaml"
 name: my-project

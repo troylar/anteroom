@@ -13,6 +13,17 @@ Set up a `backend-team` space that:
 
 ## Step 1: Create the Space File
 
+You have two options for where to put the file:
+
+**Option A — Personal config (each team member copies the file):**
+`~/.anteroom/spaces/backend-team.yaml`
+
+**Option B — Inside a git repo (recommended for teams):**
+`<team-repo>/.anteroom/space.yaml`
+Changes are committed and shared via `git pull`.
+
+This tutorial uses Option A. For Option B, place the same YAML inside the repo and add `*.local.yaml` to `.gitignore`.
+
 ```yaml title="~/.anteroom/spaces/backend-team.yaml"
 name: backend-team
 version: "1"
@@ -49,9 +60,15 @@ config:
 
 ## Step 2: Share the File
 
-Commit the space file to a team repo or shared drive. Each team member copies it to their `~/.anteroom/spaces/` directory.
+**If using Option A (personal config):** Commit the space file to a team repo or shared drive. Each team member copies it to their `~/.anteroom/spaces/` directory.
 
-The space file is portable — it contains no machine-specific paths. Each developer's local config handles the differences.
+**If using Option B (git-versioned):** The file is already in the repo. Team members get it via `git pull`. Make sure `*.local.yaml` is in `.gitignore`:
+
+```bash
+echo "*.local.yaml" >> .gitignore
+```
+
+The space file is portable — it contains no machine-specific paths. Each developer's `.local.yaml` handles machine-specific differences (repos root, local paths).
 
 ## Step 3: Register and Clone
 
@@ -101,10 +118,11 @@ This is machine-local — it doesn't affect other team members.
 
 ## Updating the Space
 
-When the team updates the space file (new repo, changed instructions), each member:
+When the team updates the space file (new repo, changed instructions):
 
-1. Copies the updated file to `~/.anteroom/spaces/backend-team.yaml`
-2. Runs `/space refresh` in an active REPL session, or `aroom space refresh backend-team` from the terminal
+**If using Option A (personal config):** Each member copies the updated file to `~/.anteroom/spaces/backend-team.yaml` and runs `/space refresh`.
+
+**If using Option B (git-versioned):** Members run `git pull` to get the updated file. Anteroom's hot-reload file watcher auto-detects the change within 5 seconds, or members can run `/space refresh` immediately.
 
 The local config (`.local.yaml`) is untouched — only the shared space file changes.
 

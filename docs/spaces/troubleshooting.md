@@ -166,6 +166,20 @@ This lists tables and row counts. Check that `spaces`, `space_paths`, and `pack_
 
 4. **Network filesystems** — NFS and other network filesystems may have stale mtime caching. Use `/space refresh` for manual reload.
 
+## Local Config Committed to Git
+
+**Symptom:** Team members see your machine-specific paths after pulling.
+
+**Fix:** The `.local.yaml` file must never be committed. Add it to `.gitignore`:
+
+```bash
+echo "*.local.yaml" >> .gitignore
+git rm --cached <name>.local.yaml  # if already tracked
+git commit -m "chore: gitignore local space config"
+```
+
+The `.local.yaml` stores machine-specific data (repos root, local paths). Each team member's file is different.
+
 ## Next Steps
 
 - [Concepts](concepts.md) — understand the mental model

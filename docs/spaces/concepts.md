@@ -4,7 +4,12 @@ Spaces organize your Anteroom experience into named workspaces. Each space bundl
 
 ## Spaces
 
-A space is defined by a single YAML file stored in `~/.anteroom/spaces/`. The file name (minus `.yaml`) is the space name. When a space is active, Anteroom loads its configuration and injects its context into every conversation.
+A space is defined by a single YAML file that can live anywhere on the filesystem. The most common locations are:
+
+- **Personal config:** `~/.anteroom/spaces/<name>.yaml` — for personal workspaces
+- **Inside a git repo:** `<repo-root>/.anteroom/space.yaml` — for team-shared spaces versioned with the project
+
+When a space is registered and activated, Anteroom loads its configuration and injects its context into every conversation. The space file is portable — it contains no machine-specific paths.
 
 ```yaml title="~/.anteroom/spaces/backend-api.yaml"
 name: backend-api
@@ -35,17 +40,29 @@ Space names must match `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`:
 
 **Invalid names:** `-starts-with-dash`, `has spaces`, `a` (valid — 1 char minimum)
 
+## Space File Location
+
+Space files are portable and can live anywhere:
+
+| Location | Best For | Example |
+|----------|----------|---------|
+| `~/.anteroom/spaces/` | Personal workspaces | `~/.anteroom/spaces/backend-api.yaml` |
+| Inside a git repo | Team-shared spaces | `<repo>/.anteroom/space.yaml` |
+| Any filesystem path | Custom workflows | `/opt/spaces/production.yaml` |
+
+When a space file lives inside a git repo, changes to the space can be committed and shared via `git pull`. The companion `.local.yaml` file (machine-specific) should be added to `.gitignore`.
+
 ## Local Config
 
-Each space can have a companion `.local.yaml` file for machine-specific settings that should not be shared (e.g., where repos are cloned on your filesystem):
+Each space has a companion `.local.yaml` file for machine-specific settings that should not be shared (e.g., where repos are cloned on your filesystem). The local file is placed next to the space file:
 
-```yaml title="~/.anteroom/spaces/backend-api.local.yaml"
+```yaml title="backend-api.local.yaml"
 repos_root: /home/dev/projects/acme/repos
 paths:
   api-server: /home/dev/projects/acme/repos/api-server
 ```
 
-The local config is never committed to version control. It stores:
+The local config must **never** be committed to version control. If the space file is in a git repo, add `*.local.yaml` to `.gitignore`. It stores:
 
 | Field | Purpose |
 |-------|---------|

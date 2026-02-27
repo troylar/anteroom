@@ -28,11 +28,15 @@ No spaces found. Create one with: aroom space create <path>
 
 ### `aroom space create <path>`
 
-Register a space from a YAML file.
+Register a space from a YAML file. The file can be at any path — personal config, inside a git repo, or elsewhere.
 
 ```bash
 $ aroom space create ~/.anteroom/spaces/backend-api.yaml
 Created space: backend-api (id: a1b2c3d4...)
+
+# Or from a git-versioned space file:
+$ aroom space create ~/projects/acme/.anteroom/space.yaml
+Created space: acme-platform (id: e5f6a7b8...)
 ```
 
 **What happens:**
@@ -100,6 +104,8 @@ If the file hasn't changed:
 ```
 Space file unchanged — nothing to refresh.
 ```
+
+Note: When a space is active in a REPL session, Anteroom automatically monitors the space file via mtime polling (default 5-second interval). Manual refresh is only needed outside of an active session or to force an immediate reload. See [Hot Reload](hot-reload.md) for details.
 
 ### `aroom space clone <name>`
 

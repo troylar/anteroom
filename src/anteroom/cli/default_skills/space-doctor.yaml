@@ -1,0 +1,150 @@
+name: space-doctor
+description: Diagnose space health issues with guided remediation
+prompt: |
+  Run a comprehensive diagnostic on an Anteroom space. Go beyond listing issues —
+  interpret each one, explain why it matters, and offer to fix what can be fixed.
+
+  ## Target
+
+  The space to diagnose: {args}
+
+  If no space name was provided above, check if there is an active space in the
+  current REPL session. If not, list available spaces with `aroom space list` and
+  ask the user which one to diagnose.
+
+  ## Diagnostic Steps
+
+  1. **Check space registration.** Run with `bash`:
+
+     ```
+     aroom space list
+     ```
+
+     Verify the target space exists and note its file path.
+
+  2. **Validate the space file.** Run with `bash`:
+
+     ```
+     python3 -c "
+     from pathlib import Path
+     from anteroom.services.spaces import parse_space_file, validate_space
+     config = parse_space_file(Path('<space-file-path>'))
+     errors = validate_space(config)
+     if errors:
+         for e in errors:
+             print(f'VALIDATION ERROR: {e}')
+     else:
+         print(f'Schema OK: {config.name}')
+         print(f'  Repos: {len(config.repos)}')
+         print(f'  Packs: {len(config.packs)}')
+         print(f'  Pack sources: {len(config.pack_sources)}')
+         print(f'  Instructions: {len(config.instructions)} chars' if config.instructions else '  Instructions: (none)')
+         print(f'  Config overrides: {len(config.config)} keys' if config.config else '  Config overrides: (none)')
+     "
+     ```
+
+  3. **Check space file location.** Determine where the file lives:
+     - Is it in `~/.anteroom/spaces/`? (personal config)
+     - Is it inside a git repo? (`git -C $(dirname <path>) rev-parse --is-inside-work-tree`)
+     - If in a git repo, is the `.local.yaml` in `.gitignore`?
+
+  4. **Check repo health.** Run with `bash`:
+
+     ```
+     aroom space show <name>
+     ```
+
+     For each repo path listed:
+     - Does the local directory exist? (`test -d <path>`)
+     - If it exists, is it a git repo? (`git -C <path> rev-parse --is-inside-work-tree`)
+     - Does the remote URL match the space file? (`git -C <path> remote get-url origin`)
+     - Are there uncommitted changes? (`git -C <path> status --short | head -5`)
+     - Is it on the expected branch? (`git -C <path> branch --show-current`)
+
+  5. **Check hash freshness.** Compare the stored hash with the current file:
+
+     ```
+     python3 -c "
+     import hashlib
+     from pathlib import Path
+     content = Path('<space-file-path>').read_bytes()
+     current_hash = hashlib.sha256(content).hexdigest()
+     print(f'Current file hash: {current_hash}')
+     "
+     ```
+
+     Compare with the hash shown by `aroom space show`. If they differ, the space
+     needs a refresh.
+
+  6. **Check hot-reload status.** The SpaceFileWatcher auto-detects file changes via
+     mtime polling. If the hash is stale, it means either:
+     - The watcher is not running (no active REPL session)
+     - The file changed very recently and the watcher hasn't polled yet
+     - The file is on a filesystem where mtime is unreliable (e.g., some network mounts)
+
+  7. **Check pack status.** For each pack listed in the space file:
+     - Is it installed? (`aroom pack list` and check for the pack name)
+     - If not installed, note it as an issue
+
+  8. **Check local override file.** Look for a `.local.yaml` companion file:
+     - Does it exist?
+     - Does `repos_root` point to a valid directory?
+     - Are there any custom path mappings?
+
+  9. **Interpret issues.** For every problem found, explain:
+
+     | Issue | What it means | Why it matters | How to fix |
+     |-------|--------------|----------------|------------|
+     | Missing repo directory | Cloned repo no longer exists at expected path | Space context incomplete | Clone or map: `aroom space clone <name>` or `aroom space map <name> <dir>` |
+     | Remote URL mismatch | Local repo points to different remote than space file | Wrong codebase linked | Update space file or re-clone |
+     | Stale hash | Space file changed since last load | Instructions and config may be outdated | Refresh: `aroom space refresh <name>` |
+     | Missing packs | Packs listed in space file not installed | Expected artifacts unavailable | Install: `aroom pack install <namespace>/<name>` |
+     | Missing local file | No .local.yaml for machine-specific overrides | Clone may fail without repos_root | Created automatically on first clone |
+     | Validation errors | Space YAML has schema issues | Space may not load correctly | Fix the YAML errors |
+     | .local.yaml not gitignored | Machine-specific file may be committed | Breaks portability | Add to .gitignore |
+
+  10. **Offer to fix.** After listing all issues, ask the user:
+
+      "I found N issues. Want me to fix what I can?"
+
+      Auto-fixable issues:
+      - Stale hash → run `aroom space refresh <name>`
+      - Missing packs → run `aroom pack install` for each
+      - Missing repos → run `aroom space clone <name>`
+      - .local.yaml not gitignored → add to .gitignore
+
+      NOT auto-fixable (require user decision):
+      - Remote URL mismatch (which URL is correct?)
+      - Validation errors (depends on the error)
+      - Uncommitted changes in repos (user must decide what to do)
+
+  11. **Provide a summary.** Format as:
+
+      ```
+      Space Health: <name>
+      =====================
+
+      File:    <path> (personal config / git-versioned in <repo>)
+      Repos:   <N> defined, <M> healthy, <K> issues
+      Packs:   <N> defined, <M> installed
+      Hash:    fresh / stale
+      Schema:  valid / <N> errors
+      Reload:  hot-reload active / manual refresh needed
+
+      Issues:
+        <severity> <description>
+        Fix: <specific command or action>
+        ...
+
+      Next Steps:
+        1. <most important action>
+        2. <second action>
+        ...
+      ```
+
+  ## Constraints
+
+  - Do NOT modify files or database state without asking the user first
+  - Do NOT auto-fix if the user did not agree to it
+  - Report ALL findings, even minor ones — let the user prioritize
+  - If a command fails, explain what the failure means and suggest alternatives

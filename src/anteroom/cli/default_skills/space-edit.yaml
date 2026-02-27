@@ -1,0 +1,157 @@
+name: space-edit
+description: Edit an existing space — add repos, change instructions, update config
+prompt: |
+  Help the user modify an existing Anteroom space. Read the current space file,
+  apply the requested changes, validate, refresh, and execute any follow-up actions.
+
+  ## Target
+
+  The user's request: {args}
+
+  If no specific change was requested, ask the user what they want to modify:
+  - Add or remove repos?
+  - Change instructions?
+  - Add or remove packs?
+  - Update config overrides?
+  - Map an existing local directory to this space?
+  - Delete the space entirely?
+
+  If no space was specified, check for an active space in the current session.
+  If none, list spaces with `aroom space list` and ask which one to edit.
+
+  ## Workflow
+
+  1. **Load the current space file.** Get the file path:
+
+     ```
+     aroom space show <name>
+     ```
+
+     Read the space file using `read_file`.
+
+  2. **Detect if space file is in a git repo.** Check:
+
+     ```
+     git -C $(dirname <space-file-path>) rev-parse --is-inside-work-tree 2>/dev/null
+     ```
+
+     If yes, note this — edits should be committed after saving.
+
+  3. **Show current state.** Before making changes, display:
+     - Current repos (with local path mappings if available)
+     - Current packs
+     - Current instructions (first 200 chars if long)
+     - Current config overrides
+
+  4. **Apply the requested changes.** Common operations:
+
+     **Add a repo:**
+     - Validate URL scheme (https, git, ssh, git@host only)
+     - Check for duplicates
+     - Append to repos list
+     - After saving: ask if the user wants to clone it now or map an existing dir
+
+     **Remove a repo:**
+     - Remove from repos list
+     - Warn that the local clone is NOT deleted (manual cleanup)
+     - Warn that the space_paths mapping will be removed on next refresh
+
+     **Map an existing local directory:**
+     - Ask for the local path
+     - Verify the directory exists: `test -d <path>`
+     - Run: `aroom space map <name> <path>`
+     - This does NOT require the repo to be in the space YAML repos list
+
+     **Change instructions:**
+     - Replace the instructions block
+     - Keep them actionable and focused
+     - Warn if very long (>10,000 chars)
+
+     **Add a pack:**
+     - Validate namespace/name format
+     - Check for duplicates
+     - Append to packs list
+
+     **Remove a pack:**
+     - Remove from packs list
+     - Note: the pack is not uninstalled — just no longer part of this space
+
+     **Update config:**
+     - Merge new values into existing config
+     - Validate keys are known config sections:
+       `ai`, `safety`, `planning`, `subagent`, `rag`, `embeddings`, `cli`
+     - Show before/after for config changes
+
+     **Delete the space:**
+     - Confirm with the user first — this cannot be undone
+     - Run: `aroom space delete <name>`
+     - Note: local repos are NOT deleted, only the space registration
+     - Note: conversations linked to this space remain but lose their space binding
+     - If space file is in a git repo, note the file itself is not deleted from disk
+
+  5. **Write the updated file.** Use `write_file` to save the modified space YAML.
+     Preserve any comments from the original file where possible.
+
+  6. **Validate.** Run with `bash`:
+
+     ```
+     python3 -c "
+     from pathlib import Path
+     from anteroom.services.spaces import parse_space_file, validate_space
+     config = parse_space_file(Path('<path>'))
+     errors = validate_space(config)
+     if errors:
+         for e in errors: print(f'ERROR: {e}')
+     else:
+         print(f'Valid: {config.name} ({len(config.repos)} repos, {len(config.packs)} packs)')
+     "
+     ```
+
+     If validation fails, revert the change and help fix the issue.
+
+  7. **Refresh the space.** Apply changes to the running session:
+
+     ```
+     aroom space refresh <name>
+     ```
+
+  8. **Execute follow-up actions.** Do these automatically, not as suggestions:
+
+     | Change | Action to take |
+     |--------|---------------|
+     | Added repo | Ask: "Clone now, or map an existing directory?" Then execute: `aroom space clone <name>` or `aroom space map <name> <dir>` |
+     | Added pack | Install it: `aroom pack install <namespace>/<name>` |
+     | Changed instructions | Already applied by refresh — confirm to user |
+     | Changed config | Note which settings require a session restart vs take effect immediately |
+
+  9. **Handle git commit (if applicable).** If the space file is inside a git repo:
+     - Show the diff: `git diff <space-file-path>`
+     - Ask if the user wants to commit the change
+     - Suggest: `git add <path> && git commit -m "chore: update <name> space definition"`
+     - If the team shares this repo, remind them to push
+
+  10. **Show diff.** Summarize what changed:
+
+      ```
+      Space Updated: <name>
+      ======================
+
+      Changes:
+        + Added repo: https://github.com/org/new-repo.git → cloned to ~/projects/org/new-repo
+        - Removed pack: old-team/legacy-rules
+        ~ Updated instructions (was 150 chars, now 280 chars)
+        + Installed pack: my-team/new-standards
+
+      Active: /space refresh applied
+      Git: committed to <repo> (push to share with team)
+      ```
+
+  ## Constraints
+
+  - Do NOT modify the .local.yaml file directly — use `aroom space map` and `aroom space move-root`
+  - Always show the user what will change before writing
+  - Always validate after editing — do not save invalid YAML
+  - Always refresh after saving — do not leave stale state
+  - If the edit breaks something, revert and explain what went wrong
+  - For destructive operations (delete), always confirm first
+  - Do NOT commit .local.yaml files — they are machine-specific
