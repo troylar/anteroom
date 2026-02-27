@@ -7,6 +7,18 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 27, 2026
 
+### v1.73.1
+
+**Fixed:**
+
+- ArtifactRegistry now wired into runtime — 6-layer precedence is no longer dead code (#528)
+- Pack install/remove operations wrapped in atomic transactions with proper rollback (#529)
+- FQN regex rejects leading hyphens/dots and enforces 63-char segment limits (#530)
+- Symlink rejection in pack manifest validation prevents TOCTOU attacks (#531)
+- Credential sanitization extended to ssh:// and git:// URLs in error messages (#531)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.73.1)
+
 ### v1.73.0
 
 **New:**
