@@ -156,8 +156,11 @@ async def api_link_space_source(request: Request, space_id: str, body: SpaceSour
 
     try:
         return link_source_to_space(
-            db, space_id,
-            source_id=body.source_id, group_id=body.group_id, tag_filter=body.tag_filter,
+            db,
+            space_id,
+            source_id=body.source_id,
+            group_id=body.group_id,
+            tag_filter=body.tag_filter,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -195,8 +198,13 @@ async def api_get_space_packs(request: Request, space_id: str) -> list[dict[str,
             if hasattr(row, "keys"):
                 packs.append(dict(row))
             else:
-                packs.append({
-                    "id": row[0], "namespace": row[1], "name": row[2],
-                    "version": row[3], "description": row[4],
-                })
+                packs.append(
+                    {
+                        "id": row[0],
+                        "namespace": row[1],
+                        "name": row[2],
+                        "version": row[3],
+                        "description": row[4],
+                    }
+                )
     return packs

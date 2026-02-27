@@ -28,16 +28,12 @@ def _make_db() -> ThreadSafeConnection:
         "CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT UNIQUE, color TEXT DEFAULT '#3b82f6', "
         "user_id TEXT, user_display_name TEXT, created_at TEXT)"
     )
-    conn.execute(
-        "CREATE TABLE source_tags (source_id TEXT, tag_id TEXT, PRIMARY KEY (source_id, tag_id))"
-    )
+    conn.execute("CREATE TABLE source_tags (source_id TEXT, tag_id TEXT, PRIMARY KEY (source_id, tag_id))")
     conn.execute(
         "CREATE TABLE source_groups (id TEXT PRIMARY KEY, name TEXT, description TEXT DEFAULT '', "
         "user_id TEXT, user_display_name TEXT, created_at TEXT, updated_at TEXT)"
     )
-    conn.execute(
-        "CREATE TABLE source_group_members (group_id TEXT, source_id TEXT, PRIMARY KEY (group_id, source_id))"
-    )
+    conn.execute("CREATE TABLE source_group_members (group_id TEXT, source_id TEXT, PRIMARY KEY (group_id, source_id))")
     conn.execute(
         "CREATE TABLE space_sources ("
         "space_id TEXT NOT NULL, source_id TEXT, group_id TEXT, tag_filter TEXT, "

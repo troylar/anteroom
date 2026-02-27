@@ -384,7 +384,7 @@ async def _build_chat_system_prompt(
     # Space instructions (before project, lower precedence)
     if space_instructions:
         safe_instr = sanitize_trust_tags(space_instructions)
-        extra += '\n\n<space_instructions>\n' + safe_instr + '\n</space_instructions>'
+        extra += "\n\n<space_instructions>\n" + safe_instr + "\n</space_instructions>"
 
     if project_instructions:
         extra += "\n\n" + project_instructions

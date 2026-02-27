@@ -16,13 +16,7 @@ def test_inject_space_instructions_adds_xml_tags() -> None:
 
     safe_name = sanitize_trust_tags(space["name"]).replace('"', "&quot;")
     safe_instr = sanitize_trust_tags(instructions)
-    result = prompt + (
-        '\n\n<space_instructions space="'
-        + safe_name
-        + '">\n'
-        + safe_instr
-        + "\n</space_instructions>"
-    )
+    result = prompt + ('\n\n<space_instructions space="' + safe_name + '">\n' + safe_instr + "\n</space_instructions>")
 
     assert "<space_instructions" in result
     assert "myspace" in result
@@ -31,10 +25,7 @@ def test_inject_space_instructions_adds_xml_tags() -> None:
 
 def test_strip_space_instructions_removes_xml_tags() -> None:
     """Strip function removes space instructions from prompt."""
-    prompt = (
-        'base prompt\n\n<space_instructions space="myspace">\n'
-        "Some instructions\n</space_instructions>"
-    )
+    prompt = 'base prompt\n\n<space_instructions space="myspace">\nSome instructions\n</space_instructions>'
     stripped = re.sub(
         r"\n*<space_instructions[^>]*>.*?</space_instructions>",
         "",
@@ -77,12 +68,8 @@ def test_autodetect_space_by_cwd() -> None:
         "repo_url TEXT DEFAULT '', local_path TEXT, created_at TEXT, "
         "FOREIGN KEY (space_id) REFERENCES spaces(id))"
     )
-    db.execute(
-        "INSERT INTO spaces VALUES ('s1', 'devspace', '/test.yaml', '', '', '', '')"
-    )
-    db.execute(
-        "INSERT INTO space_paths VALUES ('p1', 's1', '', '/home/user/project', '')"
-    )
+    db.execute("INSERT INTO spaces VALUES ('s1', 'devspace', '/test.yaml', '', '', '', '')")
+    db.execute("INSERT INTO space_paths VALUES ('p1', 's1', '', '/home/user/project', '')")
     db.commit()
 
     result = resolve_space_by_cwd(db, "/home/user/project")

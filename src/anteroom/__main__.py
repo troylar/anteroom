@@ -1250,9 +1250,7 @@ def _run_space(config: object, args: object) -> None:
         from .services.space_storage import sync_space_paths
 
         new_paths = [
-            {"repo_url": r.url, "local_path": str(r.local_path)}
-            for r in results
-            if r.success and r.local_path
+            {"repo_url": r.url, "local_path": str(r.local_path)} for r in results if r.success and r.local_path
         ]
         if new_paths:
             sync_space_paths(db, space["id"], new_paths)

@@ -86,18 +86,10 @@ def test_get_space_local_dirs_returns_paths() -> None:
         "repo_url TEXT DEFAULT '', local_path TEXT, created_at TEXT, "
         "FOREIGN KEY (space_id) REFERENCES spaces(id))"
     )
-    db.execute(
-        "INSERT INTO spaces VALUES ('s1', 'test', '/p', '', '', '', '')"
-    )
-    db.execute(
-        "INSERT INTO space_paths VALUES ('p1', 's1', 'https://example.com/repo', '/home/user/repo', '')"
-    )
-    db.execute(
-        "INSERT INTO space_paths VALUES ('p2', 's1', '', '/home/user/local', '')"
-    )
-    db.execute(
-        "INSERT INTO space_paths VALUES ('p3', 's1', '', '', '')"
-    )
+    db.execute("INSERT INTO spaces VALUES ('s1', 'test', '/p', '', '', '', '')")
+    db.execute("INSERT INTO space_paths VALUES ('p1', 's1', 'https://example.com/repo', '/home/user/repo', '')")
+    db.execute("INSERT INTO space_paths VALUES ('p2', 's1', '', '/home/user/local', '')")
+    db.execute("INSERT INTO space_paths VALUES ('p3', 's1', '', '', '')")
     db.commit()
 
     dirs = get_space_local_dirs(db, "s1")

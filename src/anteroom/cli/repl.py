@@ -2466,11 +2466,7 @@ async def _run_repl(
                 safe_name = sanitize_trust_tags(sp["name"]).replace('"', "&quot;")
                 safe_instr = sanitize_trust_tags(instr)
                 extra_system_prompt += (
-                    '\n\n<space_instructions space="'
-                    + safe_name
-                    + '">\n'
-                    + safe_instr
-                    + "\n</space_instructions>"
+                    '\n\n<space_instructions space="' + safe_name + '">\n' + safe_instr + "\n</space_instructions>"
                 )
 
         def _strip_space_instructions(prompt: str) -> str:
@@ -3120,8 +3116,7 @@ async def _run_repl(
                                 else ""
                             )
                             renderer.console.print(
-                                f"  {s['name']} — {cnt} conversations{active}"
-                                f" [{MUTED}]{s['id'][:8]}...[/{MUTED}]"
+                                f"  {s['name']} — {cnt} conversations{active} [{MUTED}]{s['id'][:8]}...[/{MUTED}]"
                             )
                         renderer.console.print()
 
@@ -3132,9 +3127,7 @@ async def _run_repl(
                             continue
                         sp = _resolve_space(target)
                         if not sp:
-                            renderer.render_error(
-                                f"Space '{target}' not found. Run /spaces to list available spaces."
-                            )
+                            renderer.render_error(f"Space '{target}' not found. Run /spaces to list available spaces.")
                             continue
                         _active_space[0] = sp
                         _update_conv_space(db, conv["id"], sp["id"])

@@ -35,18 +35,10 @@ def _make_db() -> sqlite3.Connection:
         "FOREIGN KEY(pack_id) REFERENCES packs(id) ON DELETE CASCADE, "
         "FOREIGN KEY(space_id) REFERENCES spaces(id) ON DELETE CASCADE)"
     )
-    db.execute(
-        "INSERT INTO spaces VALUES ('sp1', 'myspace', '/tmp/s.yaml', '', '', '', '')"
-    )
-    db.execute(
-        "INSERT INTO packs VALUES ('pk1', 'core', 'ns', '1.0.0', '', '', '', '')"
-    )
-    db.execute(
-        "INSERT INTO packs VALUES ('pk2', 'extra', 'ns', '1.0.0', '', '', '', '')"
-    )
-    db.execute(
-        "INSERT INTO packs VALUES ('pk3', 'proj-only', 'ns', '1.0.0', '', '', '', '')"
-    )
+    db.execute("INSERT INTO spaces VALUES ('sp1', 'myspace', '/tmp/s.yaml', '', '', '', '')")
+    db.execute("INSERT INTO packs VALUES ('pk1', 'core', 'ns', '1.0.0', '', '', '', '')")
+    db.execute("INSERT INTO packs VALUES ('pk2', 'extra', 'ns', '1.0.0', '', '', '', '')")
+    db.execute("INSERT INTO packs VALUES ('pk3', 'proj-only', 'ns', '1.0.0', '', '', '', '')")
     db.commit()
     return db
 
@@ -87,10 +79,7 @@ def test_detach_pack_from_space_not_found() -> None:
 def test_active_ids_include_global_and_space() -> None:
     db = _make_db()
     # Global attachment
-    db.execute(
-        "INSERT INTO pack_attachments (id, pack_id, scope, created_at) "
-        "VALUES ('a1', 'pk1', 'global', '')"
-    )
+    db.execute("INSERT INTO pack_attachments (id, pack_id, scope, created_at) VALUES ('a1', 'pk1', 'global', '')")
     # Space attachment
     attach_pack_to_space(db, "pk2", "sp1")
     db.commit()
@@ -103,10 +92,7 @@ def test_active_ids_include_global_and_space() -> None:
 def test_active_ids_three_scope_union() -> None:
     db = _make_db()
     # Global
-    db.execute(
-        "INSERT INTO pack_attachments (id, pack_id, scope, created_at) "
-        "VALUES ('a1', 'pk1', 'global', '')"
-    )
+    db.execute("INSERT INTO pack_attachments (id, pack_id, scope, created_at) VALUES ('a1', 'pk1', 'global', '')")
     # Space
     attach_pack_to_space(db, "pk2", "sp1")
     # Project
@@ -123,10 +109,7 @@ def test_active_ids_three_scope_union() -> None:
 def test_active_ids_without_project_excludes_project_packs() -> None:
     db = _make_db()
     # Global
-    db.execute(
-        "INSERT INTO pack_attachments (id, pack_id, scope, created_at) "
-        "VALUES ('a1', 'pk1', 'global', '')"
-    )
+    db.execute("INSERT INTO pack_attachments (id, pack_id, scope, created_at) VALUES ('a1', 'pk1', 'global', '')")
     # Project-only
     db.execute(
         "INSERT INTO pack_attachments (id, pack_id, project_path, scope, created_at) "
