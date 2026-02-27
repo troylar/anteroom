@@ -7,6 +7,25 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 27, 2026
 
+### v1.77.2
+
+**New:**
+
+- Spaces: project-scoped workspaces combining packs, sources, repos, and config overlays into reusable YAML definitions (#532)
+- Space CLI commands (`aroom space clone/map/move-root`), REPL commands (`/space`), and web API integration (#551, #552, #554)
+
+**Fixed:**
+
+- UnicodeEncodeError from arrow character in space commands on non-UTF-8 terminals (#568)
+- Latent bug where `idx_conversations_slug` was never created on fresh installs (#564)
+
+**Improved:**
+
+- All database index creation moved to dedicated function running after migrations, preventing schema ordering bugs by design (#564)
+- Migration-path test fixtures with 3 historical schema baselines ensure upgrade safety (#565)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.77.2)
+
 ### v1.77.1
 
 **Fixed:**
