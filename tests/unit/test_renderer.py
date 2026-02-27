@@ -3067,3 +3067,21 @@ class TestToolTicker:
         r._tool_ticker_task = None
         r._tool_spinner = None
         stop_tool_ticker_sync()  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_ask_user_skips_ticker(self) -> None:
+        """ask_user tool should not start a ticker (it clobbers the input prompt)."""
+        import anteroom.cli.renderer as r
+
+        r._repl_mode = True
+        r._stdout = io.StringIO()
+        try:
+            set_verbosity(Verbosity.COMPACT)
+            render_tool_call_start("ask_user", {"question": "Continue?"})
+            assert r._tool_ticker_task is None
+            assert r._tool_spinner is None
+        finally:
+            stop_tool_ticker_sync()
+            r._tool_start = 0
+            r._repl_mode = False
+            r._stdout = None

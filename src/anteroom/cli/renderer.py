@@ -1189,8 +1189,9 @@ def render_tool_call_start(tool_name: str, arguments: dict[str, Any]) -> None:
             args_str = args_str[:200] + "..."
         console.print(f"  [{CHROME}]> {escape(tool_name)}({escape(args_str)})[/{CHROME}]")
 
-    # Start live elapsed timer for this tool call
-    start_tool_ticker(summary)
+    # Start live elapsed timer — skip for interactive tools that use the terminal
+    if tool_name not in ("ask_user", "ask_human"):
+        start_tool_ticker(summary)
 
 
 def render_tool_call_end(tool_name: str, status: str, output: Any) -> None:
