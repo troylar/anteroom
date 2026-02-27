@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 27, 2026
 
+### v1.76.0
+
+**New:**
+
+- Five built-in space management skills: `/new-space`, `/space-doctor`, `/space-edit`, `/space-lint`, `/space-setup` (#558)
+- Space files can now live anywhere on the filesystem, including inside git repos for team sharing (#558)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.76.0)
+
 ### v1.75.0
 
 **New:**
