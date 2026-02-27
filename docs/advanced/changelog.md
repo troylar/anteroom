@@ -7,6 +7,19 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 27, 2026
 
+### v1.75.0
+
+**New:**
+
+- Five AI-guided pack workflow skills: `/pack-lint`, `/pack-publish`, `/pack-doctor`, `/pack-update` (#555)
+- `/new-pack` renamed from `/pack-create` for consistency with `/new-skill` naming (#555)
+
+**Improved:**
+
+- Skill tab completion now appends a trailing space, ready for arguments immediately (#555)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.75.0)
+
 ### v1.74.0
 
 **New:**
