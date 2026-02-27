@@ -422,7 +422,10 @@ def _copy_to_project(pack_dir: Path, manifest: PackManifest, project_dir: Path) 
     """Copy pack directory into the project's ``.anteroom/packs/`` tree."""
     dest = project_dir / _ANTEROOM_DIR / _PACKS_DIR / manifest.namespace / manifest.name
     if dest.exists():
-        shutil.rmtree(dest)
+        if dest.is_symlink():
+            dest.unlink()
+        else:
+            shutil.rmtree(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(pack_dir, dest)
     logger.info("Copied pack to project: %s", dest)
@@ -461,10 +464,14 @@ def _art_row_to_dict(row: Any) -> dict[str, Any]:
     """Convert an artifact DB row to a dict."""
     if isinstance(row, sqlite3.Row):
         d = dict(row)
-        if "metadata" in d and isinstance(d["metadata"], str):
-            try:
-                d["metadata"] = json.loads(d["metadata"])
-            except (json.JSONDecodeError, TypeError):
-                d["metadata"] = {}
-        return d
-    return dict(row)
+    elif isinstance(row, (tuple, list)):
+        keys = ("id", "fqn", "type", "namespace", "name", "content", "content_hash")
+        d = {k: v for k, v in zip(keys, row)}
+    else:
+        d = dict(row)
+    if "metadata" in d and isinstance(d["metadata"], str):
+        try:
+            d["metadata"] = json.loads(d["metadata"])
+        except (json.JSONDecodeError, TypeError):
+            d["metadata"] = {}
+    return d

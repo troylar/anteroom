@@ -36,6 +36,7 @@ class TestListPacksEndpoint:
                     "name": "test-pack",
                     "version": "1.0.0",
                     "artifact_count": 3,
+                    "source_path": "/secret/path/to/pack",
                 }
             ]
             client = TestClient(app)
@@ -45,6 +46,7 @@ class TestListPacksEndpoint:
             assert len(data) == 1
             assert data[0]["name"] == "test-pack"
             assert data[0]["artifact_count"] == 3
+            assert "source_path" not in data[0]
 
     def test_list_calls_service_with_db(self) -> None:
         app = _make_app()
@@ -63,8 +65,14 @@ class TestGetPackEndpoint:
                 "namespace": "test-ns",
                 "name": "test-pack",
                 "version": "1.0.0",
+                "source_path": "/secret/internal/path",
                 "artifacts": [
-                    {"fqn": "@test-ns/skill/greet", "type": "skill", "content_hash": "abc123"},
+                    {
+                        "fqn": "@test-ns/skill/greet",
+                        "type": "skill",
+                        "content_hash": "abc123",
+                        "content": "sensitive system instructions",
+                    },
                 ],
             }
             client = TestClient(app)
@@ -73,6 +81,8 @@ class TestGetPackEndpoint:
             data = resp.json()
             assert data["name"] == "test-pack"
             assert len(data["artifacts"]) == 1
+            assert "source_path" not in data
+            assert "content" not in data["artifacts"][0]
 
     def test_get_not_found(self) -> None:
         app = _make_app()

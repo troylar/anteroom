@@ -15,7 +15,10 @@ router = APIRouter(tags=["packs"])
 async def list_packs(request: Request) -> list[dict[str, Any]]:
     """List all installed packs with artifact counts."""
     db = request.app.state.db
-    return packs.list_packs(db)
+    result = packs.list_packs(db)
+    for p in result:
+        p.pop("source_path", None)
+    return result
 
 
 @router.get("/packs/{namespace}/{name}")
@@ -26,4 +29,6 @@ async def get_pack(request: Request, namespace: str, name: str) -> dict[str, Any
     if not result:
         raise HTTPException(status_code=404, detail="Pack not found")
     result.pop("source_path", None)
+    for art in result.get("artifacts", []):
+        art.pop("content", None)
     return result
