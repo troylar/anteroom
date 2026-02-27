@@ -147,6 +147,43 @@ class TestPackRemove:
 # ---------------------------------------------------------------------------
 
 
+class TestPackAddSourceValidation:
+    """URL scheme validation — security gate before config write."""
+
+    def test_rejects_ext_scheme(self) -> None:
+        from anteroom.services.pack_sources import _validate_url_scheme
+
+        err = _validate_url_scheme("ext::sh -c 'echo pwned'")
+        assert err is not None
+        assert "not allowed" in err
+
+    def test_rejects_file_scheme(self) -> None:
+        from anteroom.services.pack_sources import _validate_url_scheme
+
+        err = _validate_url_scheme("file:///etc/passwd")
+        assert err is not None
+        assert "not allowed" in err
+
+    def test_allows_https(self) -> None:
+        from anteroom.services.pack_sources import _validate_url_scheme
+
+        assert _validate_url_scheme("https://github.com/org/repo.git") is None
+
+    def test_allows_ssh_shorthand(self) -> None:
+        from anteroom.services.pack_sources import _validate_url_scheme
+
+        assert _validate_url_scheme("git@github.com:org/repo.git") is None
+
+    def test_http_returns_none_but_repl_rejects(self) -> None:
+        """_validate_url_scheme allows http:// (with warning), but the REPL handler
+        explicitly rejects it for pack sources to prevent MITM attacks."""
+        from anteroom.services.pack_sources import _validate_url_scheme
+
+        # The low-level validator allows http with a warning
+        assert _validate_url_scheme("http://example.com/repo.git") is None
+        # The REPL handler adds a second gate: url.startswith("http://") → reject
+
+
 class TestPackAddSource:
     def test_adds_source_to_config(self, tmp_path: Path) -> None:
         config_path = tmp_path / "config.yaml"

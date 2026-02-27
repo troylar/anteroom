@@ -504,6 +504,8 @@ prompt: |
   | /tools         | Show available tools with tier assignments       |
   | /project       | Manage projects (list/create/select/edit/delete) |
   | /projects      | List all projects (shortcut for /project list)   |
+  | /pack          | Manage packs (list/show/install/remove/sources/refresh/add-source) |
+  | /packs         | List installed packs (shortcut for /pack list)   |
   | /mcp           | Show MCP server status and tools                 |
   | /conventions   | Display project conventions (ANTEROOM.md)        |
   | /plan          | Enter/exit planning mode                         |

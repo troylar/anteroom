@@ -3025,9 +3025,7 @@ async def _run_repl(
                         pack_path = Path(target).expanduser().resolve()
                         manifest_path = pack_path / "pack.yaml"
                         if not manifest_path.exists():
-                            renderer.console.print(
-                                f"[{CHROME}]No pack.yaml found in {pack_path}[/{CHROME}]\n"
-                            )
+                            renderer.console.print(f"[{CHROME}]No pack.yaml found in {pack_path}[/{CHROME}]\n")
                             continue
                         try:
                             manifest = packs_service.parse_manifest(manifest_path)
@@ -3065,8 +3063,7 @@ async def _run_repl(
                         sources_cfg = getattr(config, "pack_sources", []) or []
                         if not sources_cfg:
                             renderer.console.print(
-                                f"\n[{CHROME}]No pack sources configured."
-                                f" Add one: /pack add-source <url>[/{CHROME}]\n"
+                                f"\n[{CHROME}]No pack sources configured. Add one: /pack add-source <url>[/{CHROME}]\n"
                             )
                             continue
                         data_dir = config.app.data_dir
@@ -3087,8 +3084,7 @@ async def _run_repl(
                         sources_cfg = getattr(config, "pack_sources", []) or []
                         if not sources_cfg:
                             renderer.console.print(
-                                f"[{CHROME}]No pack sources configured."
-                                f" Add one: /pack add-source <url>[/{CHROME}]\n"
+                                f"[{CHROME}]No pack sources configured. Add one: /pack add-source <url>[/{CHROME}]\n"
                             )
                             continue
                         data_dir = config.app.data_dir
@@ -3115,10 +3111,22 @@ async def _run_repl(
                     elif sub == "add-source":
                         url = parts[2].strip() if len(parts) >= 3 else ""
                         if not url:
+                            renderer.console.print(f"[{CHROME}]Usage: /pack add-source <git-url>[/{CHROME}]\n")
+                            continue
+
+                        from ..services.pack_sources import _validate_url_scheme
+
+                        url_err = _validate_url_scheme(url)
+                        if url_err:
+                            renderer.console.print(f"[red]{url_err}[/red]\n")
+                            continue
+                        if url.startswith("http://"):
                             renderer.console.print(
-                                f"[{CHROME}]Usage: /pack add-source <git-url>[/{CHROME}]\n"
+                                "[red]Plaintext HTTP is not allowed for pack sources (MITM risk)."
+                                " Use https:// instead.[/red]\n"
                             )
                             continue
+
                         import stat
 
                         import yaml
@@ -3144,14 +3152,11 @@ async def _run_repl(
                         except OSError:
                             pass
                         renderer.console.print(f"[green]Added pack source:[/green] {url}")
-                        renderer.console.print(
-                            f"[{MUTED}]Run /pack refresh to clone and install packs.[/{MUTED}]\n"
-                        )
+                        renderer.console.print(f"[{MUTED}]Run /pack refresh to clone and install packs.[/{MUTED}]\n")
 
                     else:
                         renderer.console.print(
-                            f"[{CHROME}]Usage: /pack"
-                            f" [list|show|install|remove|sources|refresh|add-source][/{CHROME}]\n"
+                            f"[{CHROME}]Usage: /pack [list|show|install|remove|sources|refresh|add-source][/{CHROME}]\n"
                         )
                     continue
                 elif cmd == "/artifact-check":
