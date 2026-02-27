@@ -7,6 +7,18 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 27, 2026
 
+### v1.77.0
+
+**New:**
+
+- Full pack management parity between CLI and REPL: `/pack attach`, `/pack detach`, `/pack update` in REPL; `aroom pack add-source` in CLI (#559)
+
+**Improved:**
+
+- Hardened URL validation and Rich markup escaping for pack source management (#559)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.77.0)
+
 ### v1.76.0
 
 **New:**
