@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 27, 2026
 
+### v1.78.1
+
+*Maintenance release — see GitHub Release for details.*
+
+**Improved:**
+
+- Removed 4 thin stub skills from built-in defaults; built-in count drops from 17 to 13 with zero capability loss (#570)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.78.1)
+
 ### v1.78.0
 
 **New:**
