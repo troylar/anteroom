@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 27, 2026
 
+### v1.79.0
+
+**New:**
+
+- Auto-discover and activate spaces from `.anteroom/space.yaml` when starting a CLI session — no manual `aroom space load` needed (#572)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.79.0)
+
 ### v1.78.2
 
 **Fixed:**
