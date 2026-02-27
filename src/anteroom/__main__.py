@@ -1287,7 +1287,7 @@ def _run_space(config: object, args: object) -> None:
         results = clone_repos(space_cfg.repos, repos_root)
         for r in results:
             if r.success:
-                console.print(f"  [green]OK[/green]   {r.url} → {r.local_path}")
+                console.print(f"  [green]OK[/green]   {r.url} -> {r.local_path}")
             else:
                 console.print(f"  [red]FAIL[/red] {r.url}: {r.error}")
 
@@ -1320,7 +1320,7 @@ def _run_space(config: object, args: object) -> None:
             return
         all_paths.append(new_entry)
         sync_space_paths(db, space["id"], all_paths)
-        console.print(f"[green]Mapped:[/green] {dir_path} → {escape(args.name)}")
+        console.print(f"[green]Mapped:[/green] {dir_path} -> {escape(args.name)}")
 
     elif action == "move-root":
         space = get_space_by_name(db, args.name)

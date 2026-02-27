@@ -2605,7 +2605,7 @@ async def _run_repl(
                             else None,
                         )
                         renderer.console.print(
-                            f"[{CHROME}]Uploaded {upload_path.name} → source {source['id'][:8]}…[/{CHROME}]"
+                            f"[{CHROME}]Uploaded {upload_path.name} -> source {source['id'][:8]}...[/{CHROME}]"
                         )
                         if source.get("content"):
                             renderer.console.print(
@@ -3156,7 +3156,7 @@ async def _run_repl(
                             renderer.console.print("  Paths:")
                             for p in paths:
                                 label = p.get("repo_url") or "(mapped)"
-                                renderer.console.print(f"    {label} → {p['local_path']}")
+                                renderer.console.print(f"    {label} -> {p['local_path']}")
                         renderer.console.print()
 
                     elif sub == "refresh":
