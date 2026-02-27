@@ -239,6 +239,103 @@ class TestPackSources:
 
 
 # ---------------------------------------------------------------------------
+# /pack attach + /pack detach — service-level tests (#559)
+# ---------------------------------------------------------------------------
+
+
+class TestPackAttachRepl:
+    def test_attach_global(self, db: ThreadSafeConnection, pack_dir: Path) -> None:
+        from anteroom.services.pack_attachments import attach_pack, list_attachments, resolve_pack_id
+
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        install_pack(db, manifest, pack_dir)
+        pack_id = resolve_pack_id(db, "myteam", "test-pack")
+        assert pack_id is not None
+        attach_pack(db, pack_id, project_path=None)
+        attachments = list_attachments(db, project_path=None)
+        assert len(attachments) == 1
+        assert attachments[0]["scope"] == "global"
+
+    def test_attach_project(self, db: ThreadSafeConnection, pack_dir: Path) -> None:
+        from anteroom.services.pack_attachments import attach_pack, list_attachments, resolve_pack_id
+
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        install_pack(db, manifest, pack_dir)
+        pack_id = resolve_pack_id(db, "myteam", "test-pack")
+        assert pack_id is not None
+        attach_pack(db, pack_id, project_path="/tmp/my-project")
+        attachments = list_attachments(db, project_path="/tmp/my-project")
+        assert any(a["scope"] == "project" for a in attachments)
+
+    def test_attach_not_found(self, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_attachments import resolve_pack_id
+
+        assert resolve_pack_id(db, "no", "such-pack") is None
+
+    def test_attach_already_attached(self, db: ThreadSafeConnection, pack_dir: Path) -> None:
+        from anteroom.services.pack_attachments import attach_pack, resolve_pack_id
+
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        install_pack(db, manifest, pack_dir)
+        pack_id = resolve_pack_id(db, "myteam", "test-pack")
+        assert pack_id is not None
+        attach_pack(db, pack_id, project_path=None)
+        with pytest.raises(ValueError, match="already attached"):
+            attach_pack(db, pack_id, project_path=None)
+
+
+class TestPackDetachRepl:
+    def test_detach_success(self, db: ThreadSafeConnection, pack_dir: Path) -> None:
+        from anteroom.services.pack_attachments import attach_pack, detach_pack, resolve_pack_id
+
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        install_pack(db, manifest, pack_dir)
+        pack_id = resolve_pack_id(db, "myteam", "test-pack")
+        assert pack_id is not None
+        attach_pack(db, pack_id, project_path=None)
+        assert detach_pack(db, pack_id, project_path=None) is True
+
+    def test_detach_not_attached(self, db: ThreadSafeConnection, pack_dir: Path) -> None:
+        from anteroom.services.pack_attachments import detach_pack, resolve_pack_id
+
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        install_pack(db, manifest, pack_dir)
+        pack_id = resolve_pack_id(db, "myteam", "test-pack")
+        assert pack_id is not None
+        assert detach_pack(db, pack_id, project_path=None) is False
+
+    def test_detach_project(self, db: ThreadSafeConnection, pack_dir: Path) -> None:
+        from anteroom.services.pack_attachments import attach_pack, detach_pack, resolve_pack_id
+
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        install_pack(db, manifest, pack_dir)
+        pack_id = resolve_pack_id(db, "myteam", "test-pack")
+        assert pack_id is not None
+        attach_pack(db, pack_id, project_path="/tmp/proj")
+        assert detach_pack(db, pack_id, project_path="/tmp/proj") is True
+
+
+# ---------------------------------------------------------------------------
+# /pack update — service-level tests (#559)
+# ---------------------------------------------------------------------------
+
+
+class TestPackUpdateRepl:
+    def test_update_success(self, db: ThreadSafeConnection, pack_dir: Path) -> None:
+        from anteroom.services.packs import update_pack
+
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        install_pack(db, manifest, pack_dir)
+        result = update_pack(db, manifest, pack_dir)
+        assert result["name"] == "test-pack"
+        assert result["namespace"] == "myteam"
+
+    def test_update_missing_pack_yaml(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError):
+            parse_manifest(tmp_path / "nonexistent" / "pack.yaml")
+
+
+# ---------------------------------------------------------------------------
 # Built-in command registration
 # ---------------------------------------------------------------------------
 

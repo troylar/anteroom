@@ -3416,9 +3416,88 @@ async def _run_repl(
                         renderer.console.print(f"[green]Added pack source:[/green] {url}")
                         renderer.console.print(f"[{MUTED}]Run /pack refresh to clone and install packs.[/{MUTED}]\n")
 
+                    elif sub == "attach":
+                        ref = parts[2].strip() if len(parts) >= 3 else ""
+                        if not ref:
+                            renderer.console.print(
+                                f"[{CHROME}]Usage: /pack attach <namespace/name> [--project][/{CHROME}]\n"
+                            )
+                            continue
+                        ns, _, name = ref.rpartition("/")
+                        if not ns:
+                            ns = "default"
+
+                        from ..services.pack_attachments import attach_pack, resolve_pack_id
+
+                        pack_id = resolve_pack_id(db, ns, name)
+                        if not pack_id:
+                            renderer.console.print(f"[{CHROME}]Pack @{ns}/{name} not found.[/{CHROME}]\n")
+                            continue
+                        project_path = str(Path(working_dir)) if "--project" in user_input else None
+                        try:
+                            attach_pack(db, pack_id, project_path=project_path)
+                        except ValueError as exc:
+                            renderer.console.print(f"[red]{exc}[/red]\n")
+                            continue
+                        scope = "project" if project_path else "global"
+                        renderer.console.print(f"[green]Attached[/green] @{ns}/{name} ({scope})\n")
+
+                    elif sub == "detach":
+                        ref = parts[2].strip() if len(parts) >= 3 else ""
+                        if not ref:
+                            renderer.console.print(
+                                f"[{CHROME}]Usage: /pack detach <namespace/name> [--project][/{CHROME}]\n"
+                            )
+                            continue
+                        ns, _, name = ref.rpartition("/")
+                        if not ns:
+                            ns = "default"
+
+                        from ..services.pack_attachments import detach_pack
+                        from ..services.pack_attachments import resolve_pack_id as _resolve_id
+
+                        pack_id = _resolve_id(db, ns, name)
+                        if not pack_id:
+                            renderer.console.print(f"[{CHROME}]Pack @{ns}/{name} not found.[/{CHROME}]\n")
+                            continue
+                        project_path = str(Path(working_dir)) if "--project" in user_input else None
+                        removed = detach_pack(db, pack_id, project_path=project_path)
+                        if removed:
+                            scope = "project" if project_path else "global"
+                            renderer.console.print(f"[green]Detached[/green] @{ns}/{name} ({scope})\n")
+                        else:
+                            renderer.console.print(f"[yellow]Not attached:[/yellow] @{ns}/{name}\n")
+
+                    elif sub == "update":
+                        target = parts[2].strip() if len(parts) >= 3 else ""
+                        if not target:
+                            renderer.console.print(f"[{CHROME}]Usage: /pack update <path>[/{CHROME}]\n")
+                            continue
+                        pack_path = Path(target).expanduser().resolve()
+                        manifest_path = pack_path / "pack.yaml"
+                        if not manifest_path.exists():
+                            renderer.console.print(f"[{CHROME}]No pack.yaml found in {pack_path}[/{CHROME}]\n")
+                            continue
+                        try:
+                            manifest = packs_service.parse_manifest(manifest_path)
+                            errors = packs_service.validate_manifest(manifest, pack_path)
+                            if errors:
+                                for e in errors:
+                                    renderer.console.print(f"[red]  {e}[/red]")
+                                continue
+                            result = packs_service.update_pack(db, manifest, pack_path)
+                            renderer.console.print(
+                                f"[green]Updated[/green] @{manifest.namespace}/{manifest.name}"
+                                f" v{manifest.version} ({result.get('artifact_count', 0)} artifacts)"
+                            )
+                        except ValueError as exc:
+                            renderer.console.print(f"[red]{exc}[/red]")
+                        renderer.console.print()
+
                     else:
                         renderer.console.print(
-                            f"[{CHROME}]Usage: /pack [list|show|install|remove|sources|refresh|add-source][/{CHROME}]\n"
+                            f"[{CHROME}]Usage: /pack"
+                            f" [list|show|install|update|remove|attach|detach|sources|refresh|add-source][/{CHROME}]\n"
                         )
                     continue
                 elif cmd == "/artifact-check":

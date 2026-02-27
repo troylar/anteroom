@@ -894,7 +894,51 @@ def _run_pack(config: object, args: object) -> None:
 
     action = getattr(args, "pack_action", None)
     if not action:
-        print("Usage: aroom pack {list,install,show,remove,update,sources,refresh,attach,detach}")
+        print("Usage: aroom pack {list,install,show,remove,update,sources,refresh,attach,detach,add-source}")
+        return
+
+    if action == "add-source":
+        import stat
+
+        import yaml
+
+        from .config import _get_config_path
+        from .services.pack_sources import _validate_url_scheme
+
+        url = args.url.strip()
+        url_err = _validate_url_scheme(url)
+        if url_err:
+            console = Console()
+            console.print(f"[red]{url_err}[/red]")
+            sys.exit(1)
+        if url.startswith("http://"):
+            console = Console()
+            console.print(
+                "[red]Plaintext HTTP is not allowed for pack sources (MITM risk). Use https:// instead.[/red]"
+            )
+            sys.exit(1)
+
+        console = Console()
+        config_path = _get_config_path()
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        raw: dict[str, object] = {}
+        if config_path.exists():
+            with open(config_path) as f:
+                raw = yaml.safe_load(f) or {}
+        sources_list: list[dict[str, object]] = raw.setdefault("pack_sources", [])
+        existing_urls = [s.get("url") for s in sources_list if isinstance(s, dict)]
+        if url in existing_urls:
+            console.print(f"[yellow]Source already configured:[/yellow] {escape(url)}")
+            return
+        sources_list.append({"url": url, "branch": "main", "refresh_interval": 30})
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+        try:
+            config_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
+        console.print(f"[green]Added pack source:[/green] {escape(url)}")
+        console.print("Run [bold]aroom pack refresh[/bold] to clone and install packs.")
         return
 
     db = get_db(config.app.data_dir / "anteroom.db")
@@ -1698,6 +1742,8 @@ def main() -> None:
     pack_detach_parser = pack_subparsers.add_parser("detach", help="Detach a pack from global or project scope")
     pack_detach_parser.add_argument("ref", help="Pack reference as namespace/name")
     pack_detach_parser.add_argument("--project", action="store_true", help="Detach from current project only")
+    pack_add_source_parser = pack_subparsers.add_parser("add-source", help="Add a git pack source to config")
+    pack_add_source_parser.add_argument("url", help="Git repository URL (https:// or ssh://)")
 
     # `aroom space` subcommand
     space_parser = subparsers.add_parser("space", help="Manage spaces")
