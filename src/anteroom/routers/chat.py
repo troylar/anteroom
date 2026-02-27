@@ -389,7 +389,8 @@ async def _build_chat_system_prompt(
         for _atype in ("instruction", "rule", "context"):
             for _art in artifact_registry.list(artifact_type=_atype):
                 if _art.content:
-                    _artifact_parts.append(f"<artifact type=\"{_atype}\" fqn=\"{_art.fqn}\">\n{_art.content}\n</artifact>")
+                    tag = f'<artifact type="{_atype}" fqn="{_art.fqn}">'
+                    _artifact_parts.append(f"{tag}\n{_art.content}\n</artifact>")
         if _artifact_parts:
             extra += "\n\n" + "\n".join(_artifact_parts)
 

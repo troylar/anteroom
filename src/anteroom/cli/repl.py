@@ -1221,6 +1221,7 @@ async def run_cli(
     _artifact_registry = None
     try:
         from ..services.artifact_registry import ArtifactRegistry
+
         _artifact_registry = ArtifactRegistry()
         _artifact_registry.load_from_db(db)
     except Exception:
