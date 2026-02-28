@@ -61,6 +61,11 @@ _fullscreen_layout: Any = None  # AnteroomLayout instance (avoid circular import
 _fullscreen_invalidate: Any = None  # Callable[[], None]
 
 
+def get_fullscreen_layout() -> Any:
+    """Return the current fullscreen layout, or ``None`` if not in fullscreen mode."""
+    return _fullscreen_layout
+
+
 def use_fullscreen_output(layout: Any, invalidate_fn: Any) -> None:
     """Switch renderer to full-screen mode.
 

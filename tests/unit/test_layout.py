@@ -1067,8 +1067,8 @@ class TestDialogAskUserFlow:
 
     @pytest.mark.asyncio
     async def test_fullscreen_layout_none_guard(self):
-        """When renderer._fullscreen_layout is None, callbacks should fall through."""
-        # The guard: `renderer.is_fullscreen() and renderer._fullscreen_layout is not None`
+        """When renderer.get_fullscreen_layout() is None, callbacks should fall through."""
+        # The guard: `renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None`
         # We can't test the repl callbacks directly, but verify hide_dialog is safe
         # when called on a layout that was never shown.
         al = self._make_layout()

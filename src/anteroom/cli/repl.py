@@ -727,7 +727,7 @@ async def _check_project_trust(
     renderer.console.print(f"  Path: [{MUTED}]{file_path}[/{MUTED}]")
     renderer.console.print(f"  Size: [{MUTED}]{file_size:,} bytes[/{MUTED}]")
 
-    if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+    if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
         while True:
             body: list[tuple[str, str]] = [
                 ("class:dialog.body", f"  Path: {file_path}\n"),
@@ -741,7 +741,7 @@ async def _check_project_trust(
                 ("class:dialog.option.key", "[n]"),
                 ("class:dialog.option", " Skip"),
             ]
-            answer = await renderer._fullscreen_layout.show_dialog(
+            answer = await renderer.get_fullscreen_layout().show_dialog(
                 title="Project Trust — ANTEROOM.md",
                 body_fragments=body,
             )
@@ -1074,7 +1074,7 @@ async def run_cli(
             return False
 
         async with _approval_lock:
-            if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
                 body: list[tuple[str, str]] = [
                     ("class:dialog.body", f"  {verdict.reason}\n"),
                 ]
@@ -1098,7 +1098,7 @@ async def run_cli(
                         ("class:dialog.option", " Deny"),
                     ]
                 )
-                answer = await renderer._fullscreen_layout.show_dialog(
+                answer = await renderer.get_fullscreen_layout().show_dialog(
                     title="Approval Required",
                     body_fragments=body,
                 )
@@ -1148,13 +1148,13 @@ async def run_cli(
 
         await renderer.stop_thinking()
 
-        if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+        if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
             body: list[tuple[str, str]] = [("class:dialog.body", f"  {question}\n\n")]
             if options:
                 for i, opt in enumerate(options, 1):
                     body.append(("class:dialog.option.key", f"  {i}. "))
                     body.append(("class:dialog.option", f"{opt}\n"))
-            answer = await renderer._fullscreen_layout.show_dialog(
+            answer = await renderer.get_fullscreen_layout().show_dialog(
                 title="Question",
                 body_fragments=body,
             )
@@ -2884,13 +2884,13 @@ async def _run_repl(
             if match:
                 return match
             if candidates:
-                if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
                     _sp_lines: list[tuple[str, str]] = [
                         ("class:dialog.body", f"  Multiple spaces match '{name_or_id}':\n\n"),
                     ]
                     for i, c in enumerate(candidates, 1):
                         _sp_lines.append(("class:dialog.body", f"  [{i}] {c['name']} [{c['id'][:8]}...]\n"))
-                    _sp_ans = await renderer._fullscreen_layout.show_dialog(
+                    _sp_ans = await renderer.get_fullscreen_layout().show_dialog(
                         title="Select Space",
                         body_fragments=_sp_lines,
                     )
@@ -3138,7 +3138,7 @@ async def _run_repl(
                         renderer.render_error(f"Conversation not found: {target}. Use /list to see conversations.")
                         continue
                     title = to_delete.get("title", "Untitled")
-                    if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                    if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
                         _del_body: list[tuple[str, str]] = [
                             ("class:dialog.body", f'  Delete "{title}"?\n\n'),
                             ("class:dialog.option.key", "  [y]"),
@@ -3146,7 +3146,7 @@ async def _run_repl(
                             ("class:dialog.option.key", "[n]"),
                             ("class:dialog.option", " No"),
                         ]
-                        answer = await renderer._fullscreen_layout.show_dialog(
+                        answer = await renderer.get_fullscreen_layout().show_dialog(
                             title="Delete Conversation",
                             body_fragments=_del_body,
                         )
@@ -3777,7 +3777,7 @@ async def _run_repl(
                             ns = "default"
                         _pm, _pc = packs_service.resolve_pack(db, ns, name)
                         if not _pm and _pc:
-                            if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
                                 _pk_body: list[tuple[str, str]] = [
                                     ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
                                 ]
@@ -3789,7 +3789,7 @@ async def _run_repl(
                                             f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
                                         )
                                     )
-                                _pk_ans = await renderer._fullscreen_layout.show_dialog(
+                                _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
                                     title="Select Pack",
                                     body_fragments=_pk_body,
                                 )
@@ -3864,7 +3864,7 @@ async def _run_repl(
                             ns = "default"
                         _pm, _pc = packs_service.resolve_pack(db, ns, name)
                         if not _pm and _pc:
-                            if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
                                 _pk_body: list[tuple[str, str]] = [
                                     ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
                                 ]
@@ -3876,7 +3876,7 @@ async def _run_repl(
                                             f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
                                         )
                                     )
-                                _pk_ans = await renderer._fullscreen_layout.show_dialog(
+                                _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
                                     title="Select Pack",
                                     body_fragments=_pk_body,
                                 )
@@ -3998,7 +3998,7 @@ async def _run_repl(
 
                         _pm, _pc = packs_service.resolve_pack(db, ns, name)
                         if not _pm and _pc:
-                            if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
                                 _pk_body: list[tuple[str, str]] = [
                                     ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
                                 ]
@@ -4010,7 +4010,7 @@ async def _run_repl(
                                             f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
                                         )
                                     )
-                                _pk_ans = await renderer._fullscreen_layout.show_dialog(
+                                _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
                                     title="Select Pack",
                                     body_fragments=_pk_body,
                                 )
@@ -4070,7 +4070,7 @@ async def _run_repl(
 
                         _pm, _pc = packs_service.resolve_pack(db, ns, name)
                         if not _pm and _pc:
-                            if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
                                 _pk_body: list[tuple[str, str]] = [
                                     ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
                                 ]
@@ -4082,7 +4082,7 @@ async def _run_repl(
                                             f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
                                         )
                                     )
-                                _pk_ans = await renderer._fullscreen_layout.show_dialog(
+                                _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
                                     title="Select Pack",
                                     body_fragments=_pk_body,
                                 )
@@ -4393,7 +4393,7 @@ async def _run_repl(
                 elif cmd == "/resume":
                     parts = user_input.split(maxsplit=1)
                     if len(parts) < 2:
-                        if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                        if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
                             convs = storage.list_conversations(db, limit=20)
                             if not convs:
                                 renderer.render_info("No conversations found.")
@@ -4416,7 +4416,8 @@ async def _run_repl(
                                     preview_cache[cid] = _picker_format_preview(msgs)
                                 return preview_cache[cid]
 
-                            picked = await renderer._fullscreen_layout.show_picker(items=convs, preview_fn=_preview)
+                            _fs_layout = renderer.get_fullscreen_layout()
+                            picked = await _fs_layout.show_picker(items=convs, preview_fn=_preview)
                         else:
                             picked = await _show_resume_picker()
                         if picked is None:
@@ -4448,12 +4449,12 @@ async def _run_repl(
                             preview += "..."
                         renderer.console.print(f"  {msg['position']}. [{role_label}] {preview}")
 
-                    if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                    if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
                         _rw_body: list[tuple[str, str]] = [
                             ("class:dialog.body", "  Enter position to rewind to\n"),
                             ("class:dialog.body", "  (keep that message, delete after)\n"),
                         ]
-                        pos_input_raw = await renderer._fullscreen_layout.show_dialog(
+                        pos_input_raw = await renderer.get_fullscreen_layout().show_dialog(
                             title="Rewind Conversation",
                             body_fragments=_rw_body,
                         )
@@ -4492,7 +4493,7 @@ async def _run_repl(
                         )
                         for fp in sorted(file_paths):
                             renderer.console.print(f"  - {fp}")
-                        if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                        if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
                             _undo_body: list[tuple[str, str]] = [
                                 (
                                     "class:dialog.body",
@@ -4503,7 +4504,7 @@ async def _run_repl(
                                 ("class:dialog.option.key", "[n]"),
                                 ("class:dialog.option", " No"),
                             ]
-                            _undo_ans = await renderer._fullscreen_layout.show_dialog(
+                            _undo_ans = await renderer.get_fullscreen_layout().show_dialog(
                                 title="Undo File Changes",
                                 body_fragments=_undo_body,
                             )
