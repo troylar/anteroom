@@ -41,6 +41,7 @@ AVAILABLE = _BACKEND is not None
 _MAX_OUTPUT = 100_000
 _MAX_CONTENT_BLOCKS = 200
 _MAX_SLIDES = 100
+_MAX_EDIT_OPS = 500
 
 # English Metric Units per inch (used by COM backend for position/size)
 _EMU_PER_INCH = 914400
@@ -124,6 +125,98 @@ DEFINITION: dict[str, Any] = {
             "replacements": {
                 "type": "array",
                 "description": "List of {old: str, new: str} for find/replace in edit action.",
+                "items": {"type": "object"},
+            },
+            "table_edits": {
+                "type": "array",
+                "description": (
+                    "Edit cells in existing tables. Each entry: "
+                    "{slide_index: int (1-based), table_index?: int (1-based, default 1), "
+                    "row: int (0-based), col: int (0-based), value: str}. "
+                    "Use action='read' first to discover table positions."
+                ),
+                "items": {"type": "object"},
+            },
+            "shape_edits": {
+                "type": "array",
+                "description": (
+                    "Edit text/formatting on specific shapes. Each entry: "
+                    "{slide_index: int (1-based), shape_index: int (1-based), "
+                    "text?: str, font_size?: number, font_bold?: bool, "
+                    "font_color?: str (hex), font_name?: str}."
+                ),
+                "items": {"type": "object"},
+            },
+            "notes_edits": {
+                "type": "array",
+                "description": (
+                    "Set speaker notes on specific slides. Each entry: {slide_index: int (1-based), text: str}."
+                ),
+                "items": {"type": "object"},
+            },
+            "delete_slides": {
+                "type": "array",
+                "description": "List of 1-based slide indices to delete. Processed in descending order.",
+                "items": {"type": "integer"},
+            },
+            "duplicate_slides": {
+                "type": "array",
+                "description": (
+                    "List of 1-based slide indices to duplicate. "
+                    "Each duplicate is inserted immediately after the original."
+                ),
+                "items": {"type": "integer"},
+            },
+            "template_fill": {
+                "type": "object",
+                "description": (
+                    "Key-value pairs for {{key}} token replacement throughout the entire presentation. "
+                    "Replaces {{key}} with value in all text frames, tables, and notes. "
+                    'Example: {"company": "Acme", "date": "2025-01-01"} replaces '
+                    "{{company}} and {{date}} everywhere."
+                ),
+            },
+            "table_format": {
+                "type": "array",
+                "description": (
+                    "Format cells in existing tables. Each entry: "
+                    "{slide_index: int (1-based), table_index?: int (1-based, default 1), "
+                    "row: int (0-based), col: int (0-based), "
+                    "bg_color?: str (hex), font_size?: number, font_bold?: bool, "
+                    "font_color?: str (hex), font_name?: str, "
+                    "alignment?: str ('left'|'center'|'right')}."
+                ),
+                "items": {"type": "object"},
+            },
+            "paragraph_edits": {
+                "type": "array",
+                "description": (
+                    "Set multi-paragraph text on a shape with per-paragraph formatting. Each entry: "
+                    "{slide_index: int (1-based), shape_index: int (1-based), "
+                    "paragraphs: [{text: str, level?: int (0-8), font_size?: number, "
+                    "font_bold?: bool, font_color?: str (hex), font_name?: str, "
+                    "alignment?: str ('left'|'center'|'right')}]}."
+                ),
+                "items": {"type": "object"},
+            },
+            "placeholder_edits": {
+                "type": "array",
+                "description": (
+                    "Edit placeholders by type name instead of index. Each entry: "
+                    "{slide_index: int (1-based), placeholder_type: str "
+                    "('title'|'body'|'subtitle'|'center_title'|'slide_number'|'date'|'footer'), "
+                    "text?: str, font_size?: number, font_bold?: bool, "
+                    "font_color?: str (hex), font_name?: str}."
+                ),
+                "items": {"type": "object"},
+            },
+            "image_replacements": {
+                "type": "array",
+                "description": (
+                    "Replace image shapes with new images, preserving position and size. Each entry: "
+                    "{slide_index: int (1-based), shape_index: int (1-based), "
+                    "image_path: str}. The shape at shape_index must be a picture."
+                ),
                 "items": {"type": "object"},
             },
             "slide_index": {
@@ -486,13 +579,24 @@ def _read_com(manager: Any, resolved: str, display_path: str, **kwargs: Any) -> 
 
         for i in range(1, slide_count + 1):
             slide = prs.Slides(i)
-            output_parts.append(f"--- Slide {i} ---")
+            output_parts.append(f"--- Slide {i} ({slide.Shapes.Count} shapes) ---")
+            table_idx = 0
             for j in range(1, slide.Shapes.Count + 1):
                 shape = slide.Shapes(j)
-                if shape.HasTextFrame:
+                if shape.HasTable:
+                    table_idx += 1
+                    tbl = shape.Table
+                    output_parts.append(f"[Table {table_idx}: {tbl.Rows.Count} rows x {tbl.Columns.Count} cols]")
+                    for r in range(1, min(tbl.Rows.Count + 1, 51)):
+                        row_vals: list[str] = []
+                        for c in range(1, tbl.Columns.Count + 1):
+                            cell_text = tbl.Cell(r, c).Shape.TextFrame.TextRange.Text.strip()
+                            row_vals.append(cell_text)
+                        output_parts.append(f"  Row {r - 1}: {row_vals}")
+                elif shape.HasTextFrame:
                     text = shape.TextFrame.TextRange.Text.strip()
                     if text:
-                        output_parts.append(text)
+                        output_parts.append(f"[Shape {j}] {text}")
             if slide.HasNotesPage:
                 try:
                     notes = slide.NotesPage.Shapes(2).TextFrame.TextRange.Text.strip()
@@ -520,14 +624,64 @@ def _edit_com(manager: Any, resolved: str, display_path: str, **kwargs: Any) -> 
 
     replacements: list[dict[str, str]] = kwargs.get("replacements") or []
     slides: list[dict[str, Any]] = kwargs.get("slides") or []
+    table_edits: list[dict[str, Any]] = kwargs.get("table_edits") or []
+    shape_edits: list[dict[str, Any]] = kwargs.get("shape_edits") or []
+    notes_edits: list[dict[str, Any]] = kwargs.get("notes_edits") or []
+    delete_slides: list[int] = kwargs.get("delete_slides") or []
+    duplicate_slides: list[int] = kwargs.get("duplicate_slides") or []
+    template_fill: dict[str, str] = kwargs.get("template_fill") or {}
+    table_format: list[dict[str, Any]] = kwargs.get("table_format") or []
+    paragraph_edits: list[dict[str, Any]] = kwargs.get("paragraph_edits") or []
+    placeholder_edits: list[dict[str, Any]] = kwargs.get("placeholder_edits") or []
+    image_replacements: list[dict[str, Any]] = kwargs.get("image_replacements") or []
 
-    if not replacements and not slides:
+    has_work = (
+        replacements
+        or slides
+        or table_edits
+        or shape_edits
+        or notes_edits
+        or delete_slides
+        or duplicate_slides
+        or template_fill
+        or table_format
+        or paragraph_edits
+        or placeholder_edits
+        or image_replacements
+    )
+    if not has_work:
         prs.Close()
-        return {"error": "Provide 'replacements' and/or 'slides' for edit action"}
+        return {
+            "error": (
+                "Provide at least one of: 'replacements', 'slides', 'table_edits', "
+                "'shape_edits', 'notes_edits', 'delete_slides', 'duplicate_slides', "
+                "'template_fill', 'table_format', 'paragraph_edits', "
+                "'placeholder_edits', 'image_replacements'"
+            )
+        }
 
     if slides and len(slides) > _MAX_SLIDES:
         prs.Close()
         return {"error": f"Too many slides to append (max {_MAX_SLIDES})"}
+
+    for _arr_name, _arr in [
+        ("table_edits", table_edits),
+        ("table_format", table_format),
+        ("shape_edits", shape_edits),
+        ("notes_edits", notes_edits),
+        ("paragraph_edits", paragraph_edits),
+        ("placeholder_edits", placeholder_edits),
+        ("image_replacements", image_replacements),
+        ("delete_slides", delete_slides),
+        ("duplicate_slides", duplicate_slides),
+    ]:
+        if len(_arr) > _MAX_EDIT_OPS:
+            prs.Close()
+            return {"error": f"Too many {_arr_name} entries (max {_MAX_EDIT_OPS})"}
+
+    if len(template_fill) > _MAX_EDIT_OPS:
+        prs.Close()
+        return {"error": f"Too many template_fill keys (max {_MAX_EDIT_OPS})"}
 
     current_count = prs.Slides.Count
     if slides and current_count + len(slides) > _MAX_SLIDES:
@@ -535,6 +689,48 @@ def _edit_com(manager: Any, resolved: str, display_path: str, **kwargs: Any) -> 
         return {"error": f"Total slides would exceed limit (max {_MAX_SLIDES})"}
 
     try:
+        result: dict[str, Any] = {"result": f"Edited {display_path}", "path": display_path}
+
+        # Template fill — {{key}} replacement throughout entire presentation
+        tokens_replaced = 0
+        if template_fill:
+            for key, value in template_fill.items():
+                token = "{{" + str(key) + "}}"
+                val_str = str(value)
+                for i in range(1, prs.Slides.Count + 1):
+                    slide = prs.Slides(i)
+                    for j in range(1, slide.Shapes.Count + 1):
+                        shape = slide.Shapes(j)
+                        if shape.HasTextFrame:
+                            tr = shape.TextFrame.TextRange
+                            find = tr.Find(token)
+                            while find is not None:
+                                find.Text = val_str
+                                tokens_replaced += 1
+                                find = tr.Find(token)
+                        if shape.HasTable:
+                            tbl = shape.Table
+                            for r in range(1, tbl.Rows.Count + 1):
+                                for c in range(1, tbl.Columns.Count + 1):
+                                    cell_tr = tbl.Cell(r, c).Shape.TextFrame.TextRange
+                                    find = cell_tr.Find(token)
+                                    while find is not None:
+                                        find.Text = val_str
+                                        tokens_replaced += 1
+                                        find = cell_tr.Find(token)
+                    if slide.HasNotesPage:
+                        try:
+                            notes_tr = slide.NotesPage.Shapes(2).TextFrame.TextRange
+                            find = notes_tr.Find(token)
+                            while find is not None:
+                                find.Text = val_str
+                                tokens_replaced += 1
+                                find = notes_tr.Find(token)
+                        except Exception:
+                            pass
+            result["tokens_replaced"] = tokens_replaced
+
+        # Find/replace
         replacements_made = 0
         for rep in replacements:
             old = rep.get("old", "")
@@ -552,20 +748,302 @@ def _edit_com(manager: Any, resolved: str, display_path: str, **kwargs: Any) -> 
                             find.Text = new
                             replacements_made += 1
                             find = tr.Find(old)
+        if replacements:
+            result["replacements_made"] = replacements_made
 
+        # Table cell edits
+        table_cells_edited = 0
+        for te in table_edits:
+            si = te.get("slide_index")
+            if si is None or si < 1 or si > prs.Slides.Count:
+                continue
+            slide = prs.Slides(si)
+            ti = te.get("table_index", 1)
+            row = te.get("row")
+            col = te.get("col")
+            value = te.get("value", "")
+            if row is None or col is None:
+                continue
+            table_count = 0
+            for j in range(1, slide.Shapes.Count + 1):
+                shape = slide.Shapes(j)
+                if shape.HasTable:
+                    table_count += 1
+                    if table_count == ti:
+                        tbl = shape.Table
+                        if 0 <= row < tbl.Rows.Count and 0 <= col < tbl.Columns.Count:
+                            tbl.Cell(row + 1, col + 1).Shape.TextFrame.TextRange.Text = str(value)
+                            table_cells_edited += 1
+                        break
+        if table_edits:
+            result["table_cells_edited"] = table_cells_edited
+
+        # Table cell formatting
+        table_cells_formatted = 0
+        for tf_entry in table_format:
+            si = tf_entry.get("slide_index")
+            if si is None or si < 1 or si > prs.Slides.Count:
+                continue
+            slide = prs.Slides(si)
+            ti = tf_entry.get("table_index", 1)
+            row = tf_entry.get("row")
+            col = tf_entry.get("col")
+            if row is None or col is None:
+                continue
+            table_count = 0
+            for j in range(1, slide.Shapes.Count + 1):
+                shape = slide.Shapes(j)
+                if shape.HasTable:
+                    table_count += 1
+                    if table_count == ti:
+                        tbl = shape.Table
+                        if 0 <= row < tbl.Rows.Count and 0 <= col < tbl.Columns.Count:
+                            cell = tbl.Cell(row + 1, col + 1)
+                            bg_color = tf_entry.get("bg_color")
+                            if bg_color:
+                                cell.Shape.Fill.Visible = True
+                                cell.Shape.Fill.ForeColor.RGB = _parse_color_int(bg_color)
+                            alignment = tf_entry.get("alignment")
+                            if alignment:
+                                align_map = {"left": 1, "center": 2, "right": 3}
+                                align_val = align_map.get(alignment.lower())
+                                if align_val is not None:
+                                    cell.Shape.TextFrame.TextRange.ParagraphFormat.Alignment = align_val
+                            font_size = tf_entry.get("font_size")
+                            if font_size is not None:
+                                cell.Shape.TextFrame.TextRange.Font.Size = font_size
+                            font_bold = tf_entry.get("font_bold")
+                            if font_bold is not None:
+                                cell.Shape.TextFrame.TextRange.Font.Bold = bool(font_bold)
+                            font_color = tf_entry.get("font_color")
+                            if font_color:
+                                cell.Shape.TextFrame.TextRange.Font.Color.RGB = _parse_color_int(font_color)
+                            font_name = tf_entry.get("font_name")
+                            if font_name is not None:
+                                cell.Shape.TextFrame.TextRange.Font.Name = str(font_name)
+                            table_cells_formatted += 1
+                        break
+        if table_format:
+            result["table_cells_formatted"] = table_cells_formatted
+
+        # Paragraph edits — multi-paragraph text with per-paragraph formatting
+        paragraphs_edited = 0
+        for pe in paragraph_edits:
+            si = pe.get("slide_index")
+            shi = pe.get("shape_index")
+            paras = pe.get("paragraphs")
+            if si is None or shi is None or not paras:
+                continue
+            if si < 1 or si > prs.Slides.Count:
+                continue
+            slide = prs.Slides(si)
+            if shi < 1 or shi > slide.Shapes.Count:
+                continue
+            shape = slide.Shapes(shi)
+            if not shape.HasTextFrame:
+                continue
+            shape.TextFrame.TextRange.Text = ""
+            for p_idx, p_def in enumerate(paras):
+                text = p_def.get("text", "")
+                tr = shape.TextFrame.TextRange
+                if p_idx == 0:
+                    tr.Text = str(text)
+                else:
+                    tr.InsertAfter("\r" + str(text))
+                para_range = shape.TextFrame.TextRange.Paragraphs(p_idx + 1)
+                level = p_def.get("level")
+                if level is not None:
+                    para_range.IndentLevel = max(1, min(9, int(level) + 1))
+                alignment = p_def.get("alignment")
+                if alignment:
+                    align_map = {"left": 1, "center": 2, "right": 3}
+                    align_val = align_map.get(alignment.lower())
+                    if align_val is not None:
+                        para_range.ParagraphFormat.Alignment = align_val
+                font_size = p_def.get("font_size")
+                if font_size is not None:
+                    para_range.Font.Size = font_size
+                font_bold = p_def.get("font_bold")
+                if font_bold is not None:
+                    para_range.Font.Bold = bool(font_bold)
+                font_color = p_def.get("font_color")
+                if font_color:
+                    para_range.Font.Color.RGB = _parse_color_int(font_color)
+                font_name = p_def.get("font_name")
+                if font_name is not None:
+                    para_range.Font.Name = str(font_name)
+            paragraphs_edited += 1
+        if paragraph_edits:
+            result["paragraphs_edited"] = paragraphs_edited
+
+        # Placeholder edits — target by type name
+        _com_placeholder_type_map = {
+            "title": 1,
+            "center_title": 3,
+            "subtitle": 2,
+            "body": 2,
+            "slide_number": 12,
+            "date": 10,
+            "footer": 11,
+        }
+        placeholders_edited = 0
+        for phe in placeholder_edits:
+            si = phe.get("slide_index")
+            ph_type = phe.get("placeholder_type")
+            if si is None or not ph_type:
+                continue
+            if si < 1 or si > prs.Slides.Count:
+                continue
+            slide = prs.Slides(si)
+            target_type = _com_placeholder_type_map.get(ph_type.lower())
+            if target_type is None:
+                continue
+            target_shape = None
+            for j in range(1, slide.Shapes.Count + 1):
+                shape = slide.Shapes(j)
+                try:
+                    if shape.PlaceholderFormat is not None and shape.PlaceholderFormat.Type == target_type:
+                        target_shape = shape
+                        break
+                except Exception:
+                    continue
+            if target_shape is None:
+                continue
+            text = phe.get("text")
+            if text is not None and target_shape.HasTextFrame:
+                target_shape.TextFrame.TextRange.Text = str(text)
+            if target_shape.HasTextFrame:
+                font_size = phe.get("font_size")
+                if font_size is not None:
+                    target_shape.TextFrame.TextRange.Font.Size = font_size
+                font_bold = phe.get("font_bold")
+                if font_bold is not None:
+                    target_shape.TextFrame.TextRange.Font.Bold = bool(font_bold)
+                font_color = phe.get("font_color")
+                if font_color:
+                    target_shape.TextFrame.TextRange.Font.Color.RGB = _parse_color_int(font_color)
+                font_name = phe.get("font_name")
+                if font_name is not None:
+                    target_shape.TextFrame.TextRange.Font.Name = str(font_name)
+            placeholders_edited += 1
+        if placeholder_edits:
+            result["placeholders_edited"] = placeholders_edited
+
+        # Image replacements — swap image shapes preserving position/size
+        images_replaced = 0
+        for ir in image_replacements:
+            si = ir.get("slide_index")
+            shi = ir.get("shape_index")
+            img_path = ir.get("image_path")
+            if si is None or shi is None or not img_path:
+                continue
+            if si < 1 or si > prs.Slides.Count:
+                continue
+            slide = prs.Slides(si)
+            if shi < 1 or shi > slide.Shapes.Count:
+                continue
+            shape = slide.Shapes(shi)
+            # Check if shape is a picture (msoShapeType = 13)
+            try:
+                if shape.Type != 13:
+                    continue
+            except Exception:
+                continue
+            img_resolved, img_err = validate_path(img_path, kwargs.get("working_dir", _get_working_dir()))
+            if img_err or not os.path.isfile(img_resolved):
+                continue
+            left = shape.Left
+            top = shape.Top
+            w = shape.Width
+            h = shape.Height
+            shape.Delete()
+            slide.Shapes.AddPicture(
+                FileName=os.path.abspath(img_resolved),
+                LinkToFile=False,
+                SaveWithDocument=True,
+                Left=left,
+                Top=top,
+                Width=w,
+                Height=h,
+            )
+            images_replaced += 1
+        if image_replacements:
+            result["images_replaced"] = images_replaced
+
+        # Shape text/formatting edits
+        shapes_edited = 0
+        for se in shape_edits:
+            si = se.get("slide_index")
+            shi = se.get("shape_index")
+            if si is None or shi is None or si < 1 or si > prs.Slides.Count:
+                continue
+            slide = prs.Slides(si)
+            if shi < 1 or shi > slide.Shapes.Count:
+                continue
+            shape = slide.Shapes(shi)
+            text = se.get("text")
+            if text is not None and shape.HasTextFrame:
+                shape.TextFrame.TextRange.Text = str(text)
+            font_size = se.get("font_size")
+            if font_size is not None and shape.HasTextFrame:
+                shape.TextFrame.TextRange.Font.Size = font_size
+            font_bold = se.get("font_bold")
+            if font_bold is not None and shape.HasTextFrame:
+                shape.TextFrame.TextRange.Font.Bold = bool(font_bold)
+            font_color = se.get("font_color")
+            if font_color is not None and shape.HasTextFrame:
+                shape.TextFrame.TextRange.Font.Color.RGB = _parse_color_int(font_color)
+            font_name = se.get("font_name")
+            if font_name is not None and shape.HasTextFrame:
+                shape.TextFrame.TextRange.Font.Name = str(font_name)
+            shapes_edited += 1
+        if shape_edits:
+            result["shapes_edited"] = shapes_edited
+
+        # Notes edits
+        notes_edited = 0
+        for ne in notes_edits:
+            si = ne.get("slide_index")
+            text = ne.get("text")
+            if si is None or text is None or si < 1 or si > prs.Slides.Count:
+                continue
+            slide = prs.Slides(si)
+            slide.NotesPage.Shapes(2).TextFrame.TextRange.Text = str(text)
+            notes_edited += 1
+        if notes_edits:
+            result["notes_edited"] = notes_edited
+
+        # Duplicate slides (before deletes, ascending order)
+        slides_duplicated = 0
+        for di in sorted(duplicate_slides):
+            if di < 1 or di > prs.Slides.Count:
+                continue
+            prs.Slides(di).Duplicate()
+            slides_duplicated += 1
+        if duplicate_slides:
+            result["slides_duplicated"] = slides_duplicated
+
+        # Delete slides (descending order to preserve indices)
+        slides_deleted = 0
+        for di in sorted(delete_slides, reverse=True):
+            if di < 1 or di > prs.Slides.Count:
+                continue
+            prs.Slides(di).Delete()
+            slides_deleted += 1
+        if delete_slides:
+            result["slides_deleted"] = slides_deleted
+
+        # Append new slides
         for slide_def in slides:
             _add_slide_com(prs, slide_def)
+        if slides:
+            result["slides_appended"] = len(slides)
 
         prs.Save()
     finally:
         prs.Close()
 
-    return {
-        "result": f"Edited {display_path}",
-        "path": display_path,
-        "replacements_made": replacements_made,
-        "slides_appended": len(slides),
-    }
+    return result
 
 
 # --- transitions ---
@@ -2228,13 +2706,24 @@ def _read_lib(resolved: str, display_path: str, **kwargs: Any) -> dict[str, Any]
     output_parts: list[str] = []
 
     for i, slide in enumerate(prs.slides, 1):
-        output_parts.append(f"--- Slide {i} ---")
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                for para in shape.text_frame.paragraphs:
-                    text = para.text.strip()
-                    if text:
-                        output_parts.append(text)
+        shape_list = list(slide.shapes)
+        output_parts.append(f"--- Slide {i} ({len(shape_list)} shapes) ---")
+        table_idx = 0
+        for j, shape in enumerate(shape_list, 1):
+            if shape.has_table:
+                table_idx += 1
+                tbl = shape.table
+                output_parts.append(f"[Table {table_idx}: {len(tbl.rows)} rows x {len(tbl.columns)} cols]")
+                for r, row in enumerate(tbl.rows):
+                    if r >= 50:
+                        output_parts.append("  ... (rows truncated)")
+                        break
+                    row_vals = [tbl.cell(r, c).text.strip() for c in range(len(tbl.columns))]
+                    output_parts.append(f"  Row {r}: {row_vals}")
+            elif shape.has_text_frame:
+                text = shape.text_frame.text.strip()
+                if text:
+                    output_parts.append(f"[Shape {j}] {text}")
         if slide.has_notes_slide:
             notes = slide.notes_slide.notes_text_frame.text.strip()
             if notes:
@@ -2252,6 +2741,7 @@ def _read_lib(resolved: str, display_path: str, **kwargs: Any) -> dict[str, Any]
 
 def _edit_lib(resolved: str, display_path: str, **kwargs: Any) -> dict[str, Any]:
     from pptx import Presentation as _Presentation
+    from pptx.util import Pt
 
     if not os.path.isfile(resolved):
         return {"error": f"File not found: {display_path}"}
@@ -2262,25 +2752,110 @@ def _edit_lib(resolved: str, display_path: str, **kwargs: Any) -> dict[str, Any]
         return {"error": f"Unable to read PPTX file: {display_path} ({type(exc).__name__}: {exc})"}
 
     replacements: list[dict[str, str]] = kwargs.get("replacements") or []
-    slides: list[dict[str, Any]] = kwargs.get("slides") or []
+    slides_to_add: list[dict[str, Any]] = kwargs.get("slides") or []
+    table_edits: list[dict[str, Any]] = kwargs.get("table_edits") or []
+    shape_edits: list[dict[str, Any]] = kwargs.get("shape_edits") or []
+    notes_edits: list[dict[str, Any]] = kwargs.get("notes_edits") or []
+    delete_slides: list[int] = kwargs.get("delete_slides") or []
+    duplicate_slides: list[int] = kwargs.get("duplicate_slides") or []
+    template_fill: dict[str, str] = kwargs.get("template_fill") or {}
+    table_format: list[dict[str, Any]] = kwargs.get("table_format") or []
+    paragraph_edits: list[dict[str, Any]] = kwargs.get("paragraph_edits") or []
+    placeholder_edits: list[dict[str, Any]] = kwargs.get("placeholder_edits") or []
+    image_replacements: list[dict[str, Any]] = kwargs.get("image_replacements") or []
 
-    if not replacements and not slides:
-        return {"error": "Provide 'replacements' and/or 'slides' for edit action"}
+    has_work = (
+        replacements
+        or slides_to_add
+        or table_edits
+        or shape_edits
+        or notes_edits
+        or delete_slides
+        or duplicate_slides
+        or template_fill
+        or table_format
+        or paragraph_edits
+        or placeholder_edits
+        or image_replacements
+    )
+    if not has_work:
+        return {
+            "error": (
+                "Provide at least one of: 'replacements', 'slides', 'table_edits', "
+                "'shape_edits', 'notes_edits', 'delete_slides', 'duplicate_slides', "
+                "'template_fill', 'table_format', 'paragraph_edits', "
+                "'placeholder_edits', 'image_replacements'"
+            )
+        }
 
-    if slides and len(slides) > _MAX_SLIDES:
+    if slides_to_add and len(slides_to_add) > _MAX_SLIDES:
         return {"error": f"Too many slides to append (max {_MAX_SLIDES})"}
 
+    for _arr_name, _arr in [
+        ("table_edits", table_edits),
+        ("table_format", table_format),
+        ("shape_edits", shape_edits),
+        ("notes_edits", notes_edits),
+        ("paragraph_edits", paragraph_edits),
+        ("placeholder_edits", placeholder_edits),
+        ("image_replacements", image_replacements),
+        ("delete_slides", delete_slides),
+        ("duplicate_slides", duplicate_slides),
+    ]:
+        if len(_arr) > _MAX_EDIT_OPS:
+            return {"error": f"Too many {_arr_name} entries (max {_MAX_EDIT_OPS})"}
+
+    if len(template_fill) > _MAX_EDIT_OPS:
+        return {"error": f"Too many template_fill keys (max {_MAX_EDIT_OPS})"}
+
     current_count = len(prs.slides)
-    if slides and current_count + len(slides) > _MAX_SLIDES:
+    if slides_to_add and current_count + len(slides_to_add) > _MAX_SLIDES:
         return {"error": f"Total slides would exceed limit (max {_MAX_SLIDES})"}
 
+    slide_list = list(prs.slides)
+    result: dict[str, Any] = {"result": f"Edited {display_path}", "path": display_path}
+
+    # Template fill — {{key}} replacement throughout entire presentation
+    tokens_replaced = 0
+    if template_fill:
+        for key, value in template_fill.items():
+            token = "{{" + str(key) + "}}"
+            val_str = str(value)
+            for slide in slide_list:
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        for para in shape.text_frame.paragraphs:
+                            for run in para.runs:
+                                if token in run.text:
+                                    run.text = run.text.replace(token, val_str)
+                                    tokens_replaced += 1
+                    if shape.has_table:
+                        tbl = shape.table
+                        for r in range(len(tbl.rows)):
+                            for c in range(len(tbl.columns)):
+                                cell = tbl.cell(r, c)
+                                if cell.text_frame:
+                                    for para in cell.text_frame.paragraphs:
+                                        for run in para.runs:
+                                            if token in run.text:
+                                                run.text = run.text.replace(token, val_str)
+                                                tokens_replaced += 1
+                if slide.has_notes_slide:
+                    for para in slide.notes_slide.notes_text_frame.paragraphs:
+                        for run in para.runs:
+                            if token in run.text:
+                                run.text = run.text.replace(token, val_str)
+                                tokens_replaced += 1
+        result["tokens_replaced"] = tokens_replaced
+
+    # Find/replace
     replacements_made = 0
     for rep in replacements:
         old = rep.get("old", "")
         new = rep.get("new", "")
         if not old:
             continue
-        for slide in prs.slides:
+        for slide in slide_list:
             for shape in slide.shapes:
                 if shape.has_text_frame:
                     for para in shape.text_frame.paragraphs:
@@ -2288,17 +2863,333 @@ def _edit_lib(resolved: str, display_path: str, **kwargs: Any) -> dict[str, Any]
                             if old in run.text:
                                 run.text = run.text.replace(old, new)
                                 replacements_made += 1
+    if replacements:
+        result["replacements_made"] = replacements_made
 
-    for slide_def in slides:
+    # Table cell edits
+    table_cells_edited = 0
+    for te in table_edits:
+        si = te.get("slide_index")
+        if si is None or si < 1 or si > len(slide_list):
+            continue
+        slide = slide_list[si - 1]
+        ti = te.get("table_index", 1)
+        row = te.get("row")
+        col = te.get("col")
+        value = te.get("value", "")
+        if row is None or col is None:
+            continue
+        table_count = 0
+        for shape in slide.shapes:
+            if shape.has_table:
+                table_count += 1
+                if table_count == ti:
+                    tbl = shape.table
+                    if 0 <= row < len(tbl.rows) and 0 <= col < len(tbl.columns):
+                        tbl.cell(row, col).text = str(value)
+                        table_cells_edited += 1
+                    break
+    if table_edits:
+        result["table_cells_edited"] = table_cells_edited
+
+    # Table cell formatting
+    table_cells_formatted = 0
+    for tf_entry in table_format:
+        si = tf_entry.get("slide_index")
+        if si is None or si < 1 or si > len(slide_list):
+            continue
+        slide = slide_list[si - 1]
+        ti = tf_entry.get("table_index", 1)
+        row = tf_entry.get("row")
+        col = tf_entry.get("col")
+        if row is None or col is None:
+            continue
+        table_count = 0
+        for shape in slide.shapes:
+            if shape.has_table:
+                table_count += 1
+                if table_count == ti:
+                    tbl = shape.table
+                    if 0 <= row < len(tbl.rows) and 0 <= col < len(tbl.columns):
+                        cell = tbl.cell(row, col)
+                        bg_color = tf_entry.get("bg_color")
+                        if bg_color:
+                            parsed_bg = _parse_rgb_color(bg_color)
+                            if parsed_bg is not None:
+                                cell.fill.solid()
+                                cell.fill.fore_color.rgb = parsed_bg
+                        alignment = tf_entry.get("alignment")
+                        if alignment:
+                            from pptx.enum.text import PP_ALIGN
+
+                            align_map = {
+                                "left": PP_ALIGN.LEFT,
+                                "center": PP_ALIGN.CENTER,
+                                "right": PP_ALIGN.RIGHT,
+                            }
+                            align_val = align_map.get(alignment.lower())
+                            if align_val is not None:
+                                for para in cell.text_frame.paragraphs:
+                                    para.alignment = align_val
+                        font_size = tf_entry.get("font_size")
+                        font_bold = tf_entry.get("font_bold")
+                        font_color = tf_entry.get("font_color")
+                        font_name = tf_entry.get("font_name")
+                        if font_size is not None or font_bold is not None or font_color or font_name:
+                            parsed_fc = _parse_rgb_color(font_color) if font_color else None
+                            for para in cell.text_frame.paragraphs:
+                                for run in para.runs:
+                                    if font_size is not None:
+                                        run.font.size = Pt(font_size)
+                                    if font_bold is not None:
+                                        run.font.bold = bool(font_bold)
+                                    if parsed_fc is not None:
+                                        run.font.color.rgb = parsed_fc
+                                    if font_name is not None:
+                                        run.font.name = str(font_name)
+                        table_cells_formatted += 1
+                    break
+    if table_format:
+        result["table_cells_formatted"] = table_cells_formatted
+
+    # Paragraph edits — multi-paragraph text with per-paragraph formatting
+    paragraphs_edited = 0
+    for pe in paragraph_edits:
+        si = pe.get("slide_index")
+        shi = pe.get("shape_index")
+        paras = pe.get("paragraphs")
+        if si is None or shi is None or not paras:
+            continue
+        if si < 1 or si > len(slide_list):
+            continue
+        slide = slide_list[si - 1]
+        shape_list_local = list(slide.shapes)
+        if shi < 1 or shi > len(shape_list_local):
+            continue
+        shape = shape_list_local[shi - 1]
+        if not shape.has_text_frame:
+            continue
+        from pptx.enum.text import PP_ALIGN
+
+        shape.text_frame.clear()
+        for p_idx, p_def in enumerate(paras):
+            if p_idx == 0:
+                p = shape.text_frame.paragraphs[0]
+            else:
+                p = shape.text_frame.add_paragraph()
+            text = p_def.get("text", "")
+            run = p.add_run()
+            run.text = str(text)
+            level = p_def.get("level")
+            if level is not None:
+                p.level = max(0, min(8, int(level)))
+            alignment = p_def.get("alignment")
+            if alignment:
+                align_map = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
+                align_val = align_map.get(alignment.lower())
+                if align_val is not None:
+                    p.alignment = align_val
+            font_size = p_def.get("font_size")
+            if font_size is not None:
+                run.font.size = Pt(font_size)
+            font_bold = p_def.get("font_bold")
+            if font_bold is not None:
+                run.font.bold = bool(font_bold)
+            font_color = p_def.get("font_color")
+            if font_color:
+                parsed = _parse_rgb_color(font_color)
+                if parsed is not None:
+                    run.font.color.rgb = parsed
+            font_name = p_def.get("font_name")
+            if font_name is not None:
+                run.font.name = str(font_name)
+        paragraphs_edited += 1
+    if paragraph_edits:
+        result["paragraphs_edited"] = paragraphs_edited
+
+    # Placeholder edits — target by type name
+    _placeholder_type_map = {
+        "title": 0,
+        "center_title": 3,
+        "subtitle": 1,
+        "body": 1,
+        "slide_number": 12,
+        "date": 10,
+        "footer": 11,
+    }
+    placeholders_edited = 0
+    for phe in placeholder_edits:
+        si = phe.get("slide_index")
+        ph_type = phe.get("placeholder_type")
+        if si is None or not ph_type:
+            continue
+        if si < 1 or si > len(slide_list):
+            continue
+        slide = slide_list[si - 1]
+        target_idx = _placeholder_type_map.get(ph_type.lower())
+        if target_idx is None:
+            continue
+        target_ph = None
+        for ph in slide.placeholders:
+            if ph.placeholder_format.idx == target_idx:
+                target_ph = ph
+                break
+        if target_ph is None:
+            continue
+        text = phe.get("text")
+        if text is not None and hasattr(target_ph, "text_frame"):
+            target_ph.text_frame.clear()
+            target_ph.text_frame.paragraphs[0].text = str(text)
+        if hasattr(target_ph, "text_frame"):
+            font_size = phe.get("font_size")
+            font_bold = phe.get("font_bold")
+            font_color = phe.get("font_color")
+            font_name = phe.get("font_name")
+            if font_size is not None or font_bold is not None or font_color or font_name:
+                parsed_fc = _parse_rgb_color(font_color) if font_color else None
+                for para in target_ph.text_frame.paragraphs:
+                    for run in para.runs:
+                        if font_size is not None:
+                            run.font.size = Pt(font_size)
+                        if font_bold is not None:
+                            run.font.bold = bool(font_bold)
+                        if parsed_fc is not None:
+                            run.font.color.rgb = parsed_fc
+                        if font_name is not None:
+                            run.font.name = str(font_name)
+        placeholders_edited += 1
+    if placeholder_edits:
+        result["placeholders_edited"] = placeholders_edited
+
+    # Image replacements — swap image shapes preserving position/size
+    images_replaced = 0
+    for ir in image_replacements:
+        si = ir.get("slide_index")
+        shi = ir.get("shape_index")
+        img_path = ir.get("image_path")
+        if si is None or shi is None or not img_path:
+            continue
+        if si < 1 or si > len(slide_list):
+            continue
+        slide = slide_list[si - 1]
+        shape_list_local = list(slide.shapes)
+        if shi < 1 or shi > len(shape_list_local):
+            continue
+        old_shape = shape_list_local[shi - 1]
+        if old_shape.shape_type != 13:  # MSO_SHAPE_TYPE.PICTURE = 13
+            continue
+        img_resolved, img_err = validate_path(img_path, kwargs.get("working_dir", _get_working_dir()))
+        if img_err or not os.path.isfile(img_resolved):
+            continue
+        left = old_shape.left
+        top = old_shape.top
+        w = old_shape.width
+        h = old_shape.height
+        sp_elem = old_shape._element
+        sp_elem.getparent().remove(sp_elem)
+        slide.shapes.add_picture(img_resolved, left, top, w, h)
+        images_replaced += 1
+    if image_replacements:
+        result["images_replaced"] = images_replaced
+
+    # Shape text/formatting edits
+    shapes_edited = 0
+    for se in shape_edits:
+        si = se.get("slide_index")
+        shi = se.get("shape_index")
+        if si is None or shi is None or si < 1 or si > len(slide_list):
+            continue
+        slide = slide_list[si - 1]
+        shape_list = list(slide.shapes)
+        if shi < 1 or shi > len(shape_list):
+            continue
+        shape = shape_list[shi - 1]
+        text = se.get("text")
+        if text is not None and shape.has_text_frame:
+            shape.text_frame.clear()
+            shape.text_frame.paragraphs[0].text = str(text)
+        font_size = se.get("font_size")
+        font_bold = se.get("font_bold")
+        font_color = se.get("font_color")
+        font_name = se.get("font_name")
+        if shape.has_text_frame:
+            for para in shape.text_frame.paragraphs:
+                for run in para.runs:
+                    if font_size is not None:
+                        run.font.size = Pt(font_size)
+                    if font_bold is not None:
+                        run.font.bold = bool(font_bold)
+                    if font_color is not None:
+                        rgb = _parse_rgb_color(font_color)
+                        if rgb is not None:
+                            run.font.color.rgb = rgb
+                    if font_name is not None:
+                        run.font.name = str(font_name)
+        shapes_edited += 1
+    if shape_edits:
+        result["shapes_edited"] = shapes_edited
+
+    # Notes edits
+    notes_edited = 0
+    for ne in notes_edits:
+        si = ne.get("slide_index")
+        text = ne.get("text")
+        if si is None or text is None or si < 1 or si > len(slide_list):
+            continue
+        slide = slide_list[si - 1]
+        if not slide.has_notes_slide:
+            slide.notes_slide  # creates it
+        slide.notes_slide.notes_text_frame.text = str(text)
+        notes_edited += 1
+    if notes_edits:
+        result["notes_edited"] = notes_edited
+
+    # Duplicate slides (before deletes)
+    slides_duplicated = 0
+    if duplicate_slides:
+        import copy
+
+        for di in sorted(duplicate_slides):
+            if di < 1 or di > len(slide_list):
+                continue
+            src_slide = slide_list[di - 1]
+            layout = src_slide.slide_layout
+            new_slide = prs.slides.add_slide(layout)
+            for elem in list(new_slide.shapes._spTree):
+                if elem.tag.endswith("}sp") or elem.tag.endswith("}pic") or elem.tag.endswith("}graphicFrame"):
+                    new_slide.shapes._spTree.remove(elem)
+            for elem in src_slide.shapes._spTree:
+                if elem.tag.endswith("}sp") or elem.tag.endswith("}pic") or elem.tag.endswith("}graphicFrame"):
+                    new_slide.shapes._spTree.append(copy.deepcopy(elem))
+            slides_duplicated += 1
+    if duplicate_slides:
+        result["slides_duplicated"] = slides_duplicated
+
+    # Delete slides (descending order to preserve indices)
+    slides_deleted = 0
+    if delete_slides:
+        slide_id_list = list(prs.slides._sldIdLst)
+        for di in sorted(delete_slides, reverse=True):
+            if di < 1 or di > len(slide_id_list):
+                continue
+            rel_id = slide_id_list[di - 1].get(
+                "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+            )
+            prs.slides._sldIdLst.remove(slide_id_list[di - 1])
+            if rel_id:
+                prs.part.drop_rel(rel_id)
+            slides_deleted += 1
+    if delete_slides:
+        result["slides_deleted"] = slides_deleted
+
+    # Append new slides
+    for slide_def in slides_to_add:
         _add_slide_lib(prs, slide_def)
+    if slides_to_add:
+        result["slides_appended"] = len(slides_to_add)
 
     prs.save(resolved)
-    return {
-        "result": f"Edited {display_path}",
-        "path": display_path,
-        "replacements_made": replacements_made,
-        "slides_appended": len(slides),
-    }
+    return result
 
 
 # ---------------------------------------------------------------------------
