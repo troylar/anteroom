@@ -248,6 +248,16 @@ class _DialogVisible(Filter):
         return self._layout._dialog_visible
 
 
+class _PickerVisible(Filter):
+    """Filter that returns True when the picker overlay is visible."""
+
+    def __init__(self, layout: "AnteroomLayout") -> None:
+        self._layout = layout
+
+    def __call__(self) -> bool:
+        return self._layout._picker_visible
+
+
 class AnteroomLayout:
     """Manages the full-screen HSplit layout and exposes the output pane."""
 
@@ -263,6 +273,14 @@ class AnteroomLayout:
         self._footer_fn = footer_fn
         self._input_buffer = input_buffer
         self._status_fragments: list[tuple[str, str]] = []
+
+        # Picker overlay state
+        self._picker_visible: bool = False
+        self._picker_items: list[dict[str, Any]] = []
+        self._picker_selected_idx: int = 0
+        self._picker_result: dict[str, Any] | None = None
+        self._picker_event: asyncio.Event | None = None
+        self._picker_preview_fn: Callable[[dict[str, Any]], list[tuple[str, str]]] | None = None
 
         # Dialog overlay state
         self._dialog_visible: bool = False
@@ -360,6 +378,45 @@ class AnteroomLayout:
             ]
         )
 
+        # Picker overlay containers (full-page)
+        picker_list_window = Window(
+            content=FormattedTextControl(self._get_picker_list),
+            width=55,
+            wrap_lines=False,
+            style="class:picker.list",
+        )
+        picker_preview_window = Window(
+            content=FormattedTextControl(self._get_picker_preview),
+            wrap_lines=True,
+            style="class:picker.preview",
+        )
+        picker_body = VSplit(
+            [
+                picker_list_window,
+                Window(width=1, char="\u2502", style="class:picker.separator"),
+                picker_preview_window,
+            ]
+        )
+        picker_fullpage = HSplit(
+            [
+                Window(
+                    content=FormattedTextControl(self._get_picker_title),
+                    height=1,
+                    style="class:picker.title",
+                ),
+                Window(height=1, char="\u2500", style="class:picker.border"),
+                picker_body,
+                Window(
+                    content=FormattedTextControl(
+                        lambda: [("class:picker.hint", "  \u2191\u2193/jk navigate  Enter select  Esc cancel")]
+                    ),
+                    height=1,
+                    style="class:picker.hint",
+                ),
+            ],
+            style="class:picker.frame",
+        )
+
         self._layout = Layout(
             FloatContainer(
                 content=HSplit(
@@ -385,6 +442,17 @@ class AnteroomLayout:
                             filter=_DialogVisible(self),
                         ),
                         transparent=False,
+                    ),
+                    Float(
+                        content=ConditionalContainer(
+                            picker_fullpage,
+                            filter=_PickerVisible(self),
+                        ),
+                        transparent=False,
+                        left=0,
+                        right=0,
+                        top=0,
+                        bottom=0,
                     ),
                 ],
             ),
@@ -466,6 +534,98 @@ class AnteroomLayout:
         self._dialog_result = None
         if self._dialog_event is not None:
             self._dialog_event.set()
+
+    # -- Picker overlay content methods ------------------------------------
+
+    def _get_picker_title(self) -> list[tuple[str, str]]:
+        return [("class:picker.title", "  Resume Conversation")]
+
+    def _get_picker_list(self) -> list[tuple[str, str]]:
+        fragments: list[tuple[str, str]] = []
+        for i, item in enumerate(self._picker_items):
+            is_sel = i == self._picker_selected_idx
+            label = item.get("_label", "")
+            meta = item.get("_meta", "")
+            if is_sel:
+                fragments.extend(
+                    [
+                        ("class:picker.list.selected", f" > {label}"),
+                        ("class:picker.list.selected-meta", f"  {meta}"),
+                        ("class:picker.list.selected", "\n"),
+                    ]
+                )
+            else:
+                fragments.extend(
+                    [
+                        ("class:picker.list.item", f"   {label}"),
+                        ("class:picker.list.meta", f"  {meta}"),
+                        ("class:picker.list.item", "\n"),
+                    ]
+                )
+        return fragments
+
+    def _get_picker_preview(self) -> list[tuple[str, str]]:
+        if not self._picker_items or self._picker_preview_fn is None:
+            return [("class:picker.preview.empty", "  No preview available")]
+        return self._picker_preview_fn(self._picker_items[self._picker_selected_idx])
+
+    # -- Picker overlay API ------------------------------------------------
+
+    async def show_picker(
+        self,
+        *,
+        items: list[dict[str, Any]],
+        preview_fn: Callable[[dict[str, Any]], list[tuple[str, str]]] | None = None,
+    ) -> dict[str, Any] | None:
+        """Show a full-page picker overlay and wait for the user to select an item.
+
+        Returns the selected item dict, or ``None`` if the user cancelled.
+        """
+        if not items:
+            return None
+        self._picker_items = items
+        self._picker_selected_idx = 0
+        self._picker_preview_fn = preview_fn
+        self._picker_result = None
+        self._picker_event = asyncio.Event()
+        self._picker_visible = True
+        try:
+            await self._picker_event.wait()
+        finally:
+            self.hide_picker()
+        return self._picker_result
+
+    def picker_move_up(self) -> None:
+        """Move the picker selection up by one."""
+        if self._picker_selected_idx > 0:
+            self._picker_selected_idx -= 1
+
+    def picker_move_down(self) -> None:
+        """Move the picker selection down by one."""
+        if self._picker_selected_idx < len(self._picker_items) - 1:
+            self._picker_selected_idx += 1
+
+    def accept_picker(self) -> None:
+        """Accept the current picker selection."""
+        if self._picker_items:
+            self._picker_result = self._picker_items[self._picker_selected_idx]
+        if self._picker_event is not None:
+            self._picker_event.set()
+
+    def cancel_picker(self) -> None:
+        """Cancel the picker (Escape pressed)."""
+        self._picker_result = None
+        if self._picker_event is not None:
+            self._picker_event.set()
+
+    def hide_picker(self) -> None:
+        """Dismiss the picker overlay and return focus to the main input."""
+        self._picker_visible = False
+        self._picker_items = []
+        self._picker_selected_idx = 0
+        self._picker_preview_fn = None
+        self._picker_event = None
+        self._layout.focus(self._input_window)
 
     def set_status(self, fragments: list[tuple[str, str]]) -> None:
         """Set the ephemeral status line (thinking indicator, tool ticker)."""
@@ -639,5 +799,23 @@ def create_anteroom_style() -> Style:
             "dialog.option": "bg:#1a1a2e #94A3B8",
             "dialog.option.key": "bg:#1a1a2e #C5A059 bold",
             "dialog.shadow": "bg:#0a0a15",
+            # Picker overlay
+            "picker.frame": "bg:#1a1a2e #e0e0e0",
+            "picker.title": "bg:#C5A059 #1a1a2e bold",
+            "picker.border": "#3a3a4e",
+            "picker.hint": "bg:#1a1a2e #6b7280",
+            "picker.separator": "#3a3a4e",
+            "picker.shadow": "bg:#0a0a15",
+            "picker.list": "bg:#1a1a2e",
+            "picker.list.selected": "bg:#2a2a3e #C5A059 bold",
+            "picker.list.selected-meta": "bg:#2a2a3e #94A3B8",
+            "picker.list.item": "#e0e0e0",
+            "picker.list.meta": "#6b7280",
+            "picker.list.badge": "#C5A059 italic",
+            "picker.preview": "bg:#1a1a2e #e0e0e0",
+            "picker.preview.role-user": "#C5A059 bold",
+            "picker.preview.role-ai": "#94A3B8 bold",
+            "picker.preview.content": "#e0e0e0",
+            "picker.preview.empty": "#6b7280 italic",
         }
     )

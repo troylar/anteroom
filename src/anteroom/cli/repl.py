@@ -2620,11 +2620,45 @@ async def _run_repl(
         if buf.complete_state:
             buf.complete_previous()
 
-    @kb.add("escape", filter=Condition(lambda: _anteroom_layout._dialog_visible))
+    _picker_filter = Condition(lambda: _anteroom_layout._picker_visible)
+
+    @kb.add("up", filter=_picker_filter)
+    @kb.add("k", filter=_picker_filter)
+    def _picker_up(event: Any) -> None:
+        _anteroom_layout.picker_move_up()
+        _fs_app.invalidate()
+
+    @kb.add("down", filter=_picker_filter)
+    @kb.add("j", filter=_picker_filter)
+    def _picker_down(event: Any) -> None:
+        _anteroom_layout.picker_move_down()
+        _fs_app.invalidate()
+
+    @kb.add("enter", filter=_picker_filter)
+    def _picker_accept(event: Any) -> None:
+        _anteroom_layout.accept_picker()
+
+    @kb.add("escape", filter=_picker_filter)
+    def _picker_cancel(event: Any) -> None:
+        _anteroom_layout.cancel_picker()
+
+    _dialog_esc_filter = Condition(
+        lambda: _anteroom_layout._dialog_visible and not _anteroom_layout._picker_visible
+    )
+
+    @kb.add("escape", filter=_dialog_esc_filter)
     def _dialog_cancel_on_escape(event: Any) -> None:
         _anteroom_layout.cancel_dialog()
 
-    @kb.add("escape", filter=Condition(lambda: agent_busy.is_set() and not _anteroom_layout._dialog_visible))
+    _agent_esc_filter = Condition(
+        lambda: (
+            agent_busy.is_set()
+            and not _anteroom_layout._dialog_visible
+            and not _anteroom_layout._picker_visible
+        )
+    )
+
+    @kb.add("escape", filter=_agent_esc_filter)
     def _cancel_on_escape(event: Any) -> None:
         ce = _current_cancel_event[0]
         if ce is not None:
@@ -4184,7 +4218,34 @@ async def _run_repl(
                 elif cmd == "/resume":
                     parts = user_input.split(maxsplit=1)
                     if len(parts) < 2:
-                        picked = await _show_resume_picker()
+                        if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                            convs = storage.list_conversations(db, limit=20)
+                            if not convs:
+                                renderer.render_info("No conversations found.")
+                                continue
+                            for c in convs:
+                                title = (c.get("title") or "Untitled")[:35]
+                                badge = _picker_type_badge(c.get("type") or "chat")
+                                ts = _picker_relative_time(c.get("updated_at") or "")
+                                count = c.get("message_count") or 0
+                                slug = (c.get("slug") or "")[:20]
+                                c["_label"] = f"{title}" + (f" {badge}" if badge else "")
+                                c["_meta"] = f"{slug}  {count}msg  {ts}"
+
+                            preview_cache: dict[str, list[tuple[str, str]]] = {}
+
+                            def _preview(item: dict[str, Any]) -> list[tuple[str, str]]:
+                                cid = item["id"]
+                                if cid not in preview_cache:
+                                    msgs = storage.list_messages(db, cid)
+                                    preview_cache[cid] = _picker_format_preview(msgs)
+                                return preview_cache[cid]
+
+                            picked = await renderer._fullscreen_layout.show_picker(
+                                items=convs, preview_fn=_preview
+                            )
+                        else:
+                            picked = await _show_resume_picker()
                         if picked is None:
                             continue
                         loaded = storage.get_conversation(db, picked["id"])

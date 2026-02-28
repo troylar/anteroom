@@ -12,6 +12,7 @@ from anteroom.cli.layout import (
     OutputControl,
     OutputPaneWriter,
     _DialogVisible,
+    _PickerVisible,
     _strip_bg,
     create_anteroom_style,
     format_header,
@@ -1074,3 +1075,285 @@ class TestDialogAskUserFlow:
         assert al._dialog_visible is False
         al.hide_dialog()
         assert al._dialog_visible is False
+
+
+# ---------------------------------------------------------------------------
+# Picker overlay
+# ---------------------------------------------------------------------------
+
+
+class TestPickerOverlay:
+    def _make_layout(self):
+        buf = Buffer(name="test-input")
+        return AnteroomLayout(
+            header_fn=lambda: [("class:header", " test ")],
+            footer_fn=lambda: [("class:footer", " status ")],
+            input_buffer=buf,
+        )
+
+    def _sample_items(self):
+        return [
+            {"id": "1", "_label": "Fix auth flow", "_meta": "fix-auth  3msg  2d ago"},
+            {"id": "2", "_label": "Canvas work", "_meta": "canvas  5msg  5d ago"},
+            {"id": "3", "_label": "Search refactor", "_meta": "search  2msg  1w ago"},
+        ]
+
+    def test_picker_initially_hidden(self):
+        al = self._make_layout()
+        assert al._picker_visible is False
+        filt = _PickerVisible(al)
+        assert not filt()
+
+    def test_picker_visible_filter_tracks_state(self):
+        al = self._make_layout()
+        filt = _PickerVisible(al)
+        assert not filt()
+        al._picker_visible = True
+        assert filt()
+        al._picker_visible = False
+        assert not filt()
+
+    @pytest.mark.asyncio
+    async def test_show_picker_returns_selected_item(self):
+        import asyncio
+
+        al = self._make_layout()
+        items = self._sample_items()
+
+        async def _select():
+            await asyncio.sleep(0.01)
+            assert al._picker_visible is True
+            al.accept_picker()
+
+        task = asyncio.create_task(_select())
+        result = await al.show_picker(items=items)
+        await task
+        assert result is not None
+        assert result["id"] == "1"
+        assert al._picker_visible is False
+
+    @pytest.mark.asyncio
+    async def test_show_picker_cancel_returns_none(self):
+        import asyncio
+
+        al = self._make_layout()
+        items = self._sample_items()
+
+        async def _cancel():
+            await asyncio.sleep(0.01)
+            al.cancel_picker()
+
+        task = asyncio.create_task(_cancel())
+        result = await al.show_picker(items=items)
+        await task
+        assert result is None
+        assert al._picker_visible is False
+
+    @pytest.mark.asyncio
+    async def test_show_picker_empty_items_returns_none(self):
+        al = self._make_layout()
+        result = await al.show_picker(items=[])
+        assert result is None
+
+    def test_picker_move_up(self):
+        al = self._make_layout()
+        al._picker_items = self._sample_items()
+        al._picker_selected_idx = 2
+        al.picker_move_up()
+        assert al._picker_selected_idx == 1
+        al.picker_move_up()
+        assert al._picker_selected_idx == 0
+        al.picker_move_up()
+        assert al._picker_selected_idx == 0  # clamped
+
+    def test_picker_move_down(self):
+        al = self._make_layout()
+        al._picker_items = self._sample_items()
+        al._picker_selected_idx = 0
+        al.picker_move_down()
+        assert al._picker_selected_idx == 1
+        al.picker_move_down()
+        assert al._picker_selected_idx == 2
+        al.picker_move_down()
+        assert al._picker_selected_idx == 2  # clamped
+
+    @pytest.mark.asyncio
+    async def test_picker_navigate_and_select(self):
+        import asyncio
+
+        al = self._make_layout()
+        items = self._sample_items()
+
+        async def _navigate_and_select():
+            await asyncio.sleep(0.01)
+            al.picker_move_down()
+            al.picker_move_down()
+            al.accept_picker()
+
+        task = asyncio.create_task(_navigate_and_select())
+        result = await al.show_picker(items=items)
+        await task
+        assert result is not None
+        assert result["id"] == "3"
+
+    def test_hide_picker_resets_state(self):
+        al = self._make_layout()
+        al._picker_visible = True
+        al._picker_items = self._sample_items()
+        al._picker_selected_idx = 1
+        al._picker_preview_fn = lambda x: []
+        al.hide_picker()
+        assert al._picker_visible is False
+        assert al._picker_items == []
+        assert al._picker_selected_idx == 0
+        assert al._picker_preview_fn is None
+        assert al._picker_event is None
+
+    def test_cancel_picker_when_no_event_is_noop(self):
+        al = self._make_layout()
+        al._picker_event = None
+        al.cancel_picker()
+        assert al._picker_result is None
+
+    def test_cancel_picker_signals_event(self):
+        import asyncio
+
+        al = self._make_layout()
+        al._picker_event = asyncio.Event()
+        al._picker_result = {"id": "something"}
+        al.cancel_picker()
+        assert al._picker_result is None
+        assert al._picker_event.is_set()
+
+    def test_accept_picker_sets_result(self):
+        import asyncio
+
+        al = self._make_layout()
+        al._picker_items = self._sample_items()
+        al._picker_selected_idx = 1
+        al._picker_event = asyncio.Event()
+        al.accept_picker()
+        assert al._picker_result is not None
+        assert al._picker_result["id"] == "2"
+        assert al._picker_event.is_set()
+
+    def test_accept_picker_empty_items_no_crash(self):
+        import asyncio
+
+        al = self._make_layout()
+        al._picker_items = []
+        al._picker_event = asyncio.Event()
+        al.accept_picker()
+        assert al._picker_result is None
+        assert al._picker_event.is_set()
+
+    def test_get_picker_list_fragments(self):
+        al = self._make_layout()
+        al._picker_items = self._sample_items()
+        al._picker_selected_idx = 0
+        frags = al._get_picker_list()
+        texts = "".join(f[1] for f in frags)
+        assert "Fix auth flow" in texts
+        assert "Canvas work" in texts
+        assert frags[0][1].strip().startswith(">")
+
+    def test_get_picker_list_second_selected(self):
+        al = self._make_layout()
+        al._picker_items = self._sample_items()
+        al._picker_selected_idx = 1
+        frags = al._get_picker_list()
+        selected = [f for f in frags if "selected" in f[0]]
+        selected_text = "".join(f[1] for f in selected)
+        assert "Canvas work" in selected_text
+
+    def test_get_picker_preview_with_fn(self):
+        al = self._make_layout()
+        al._picker_items = self._sample_items()
+        al._picker_selected_idx = 0
+        al._picker_preview_fn = lambda item: [("class:preview", f"Preview for {item['id']}")]
+        frags = al._get_picker_preview()
+        assert len(frags) == 1
+        assert "Preview for 1" in frags[0][1]
+
+    def test_get_picker_preview_no_fn(self):
+        al = self._make_layout()
+        al._picker_items = self._sample_items()
+        al._picker_preview_fn = None
+        frags = al._get_picker_preview()
+        assert any("No preview" in f[1] for f in frags)
+
+    def test_get_picker_preview_empty_items(self):
+        al = self._make_layout()
+        al._picker_items = []
+        al._picker_preview_fn = lambda x: []
+        frags = al._get_picker_preview()
+        assert any("No preview" in f[1] for f in frags)
+
+    def test_get_picker_title(self):
+        al = self._make_layout()
+        frags = al._get_picker_title()
+        assert len(frags) == 1
+        assert "Resume Conversation" in frags[0][1]
+
+    def test_picker_styles_present(self):
+        style = create_anteroom_style()
+        class_names = [rule[0] for rule in style.style_rules]
+        assert "picker.frame" in class_names
+        assert "picker.title" in class_names
+        assert "picker.hint" in class_names
+        assert "picker.separator" in class_names
+        assert "picker.list" in class_names
+        assert "picker.list.selected" in class_names
+        assert "picker.list.item" in class_names
+        assert "picker.list.meta" in class_names
+        assert "picker.preview" in class_names
+        assert "picker.preview.empty" in class_names
+
+    @pytest.mark.asyncio
+    async def test_picker_hides_after_accept(self):
+        import asyncio
+
+        al = self._make_layout()
+        items = self._sample_items()
+
+        async def _accept():
+            await asyncio.sleep(0.01)
+            al.accept_picker()
+
+        task = asyncio.create_task(_accept())
+        result = await al.show_picker(items=items)
+        await task
+        assert result is not None
+        assert al._picker_visible is False
+        assert al._picker_event is None
+        assert al._picker_items == []
+
+    @pytest.mark.asyncio
+    async def test_multiple_pickers_sequential(self):
+        import asyncio
+
+        al = self._make_layout()
+        items = self._sample_items()
+
+        async def _accept_first():
+            await asyncio.sleep(0.01)
+            al.accept_picker()
+
+        task1 = asyncio.create_task(_accept_first())
+        r1 = await al.show_picker(items=items)
+        await task1
+        assert r1 is not None
+        assert r1["id"] == "1"
+        assert al._picker_visible is False
+
+        async def _accept_second():
+            await asyncio.sleep(0.01)
+            al.picker_move_down()
+            al.accept_picker()
+
+        task2 = asyncio.create_task(_accept_second())
+        r2 = await al.show_picker(items=items)
+        await task2
+        assert r2 is not None
+        assert r2["id"] == "2"
+        assert al._picker_visible is False
