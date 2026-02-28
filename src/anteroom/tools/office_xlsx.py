@@ -2583,7 +2583,7 @@ def _template_fill_com(manager: Any, resolved: str, display_path: str, **kwargs:
                     continue
                 first_addr = cells.Address
                 while True:
-                    cells.Value = str(cells.Value).replace(token, val_str)
+                    cells.Value = _sanitize_cell_value(str(cells.Value).replace(token, val_str))
                     tokens_replaced += 1
                     cells = used.FindNext(cells)
                     if cells is None or cells.Address == first_addr:
