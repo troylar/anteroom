@@ -144,9 +144,10 @@ CLI (cli/)         ──┘         │
 - **`tools/canvas.py`** — Canvas create/update/patch with SSE streaming support
 - **`tools/subagent.py`** — `run_agent` tool: isolated child AI sessions, same safety gates. Guarded by `SubagentLimiter`. Configurable via `safety.subagent`
 - **`tools/introspect.py`** — Lets AI examine its own runtime context. READ tier (auto-allowed)
-- **`tools/office_docx.py`** — DOCX (Word) create/read/edit tool via python-docx. WRITE tier. Graceful degradation when library unavailable. Actions: create (heading/paragraph/table blocks), read (extract text/tables), edit (find-replace + append)
-- **`tools/office_xlsx.py`** — XLSX (Excel) create/read/edit tool via openpyxl. WRITE tier. Graceful degradation. Actions: create (named sheets with headers/rows), read (cell data as JSON, optional range/sheet), edit (cell updates, row append, sheet add)
-- **`tools/office_pptx.py`** — PPTX (PowerPoint) create/read/edit tool via python-pptx. WRITE tier. Graceful degradation. Actions: create (slides with title/content/bullets/notes), read (extract slide text/notes), edit (find-replace + append slides)
+- **`tools/office_com.py`** — Shared COM lifecycle manager for Office tools on Windows. Singleton ComAppManager caches COM Application objects per prog_id, handles CoInitialize/CoUninitialize per thread via asyncio.to_thread(). Optional: requires pywin32 on Windows
+- **`tools/office_docx.py`** — DOCX (Word) tool via python-docx (lib) or COM. WRITE tier. Graceful degradation. Actions: create, read, edit, track_changes (COM), comments (COM), headers_footers, insert_image, styles, export_pdf (COM), page_setup, sections, bookmarks (COM), toc (COM), find_regex
+- **`tools/office_xlsx.py`** — XLSX (Excel) tool via openpyxl (lib) or COM. WRITE tier. Graceful degradation. Actions: create, read, edit, format_cells, merge_cells, freeze_panes, auto_filter, print_area, named_ranges, data_validation, conditional_format, comments, hyperlinks, images, protect, group_rows_cols, print_settings, charts, export_pdf (COM), sort (COM), pivot_tables (COM), sparklines (COM), slicers (COM)
+- **`tools/office_pptx.py`** — PPTX (PowerPoint) tool via python-pptx (lib) or COM. WRITE tier. Graceful degradation. Actions: create, read, edit, transitions (COM), animations (COM), insert_image, insert_shape, format_shape, master_layout, reorder_slides, embed_chart (COM), embed_table, export_pdf (COM), hyperlinks, headers_footers, sections (COM), group_shapes (COM), audio_video (COM), smartart (COM)
 
 ### Security Model
 
@@ -195,6 +196,7 @@ PyPI: `anteroom`. Deploy via `/deploy` skill (merge PR, CI, version bump, build,
 
 **Optional Dependencies** (declared in `pyproject.toml`):
 - **`office`** — `python-docx>=1.0`, `openpyxl>=3.1.0`, `python-pptx>=1.0`. Required for built-in docx/xlsx/pptx tools. Enable with: `pip install anteroom[office]`
+- **`office-com`** — `python-docx>=1.0`, `openpyxl>=3.1.0`, `python-pptx>=1.0`, `pywin32>=306` (Windows only). Full COM backend for native Office automation. Enable with: `pip install anteroom[office-com]`
 - **`encryption`** — `sqlcipher3>=0.5.0`. Required only if `config.storage.encrypt_at_rest: true`. Enable with: `pip install anteroom[encryption]`
 
 ## Testing Patterns

@@ -1,6 +1,6 @@
 # Built-in Tools
 
-Twelve tools ship out of the box with no MCP server required. Three additional office tools (`docx`, `xlsx`, `pptx`) are available with the optional `anteroom[office]` install.
+Twelve tools ship out of the box with no MCP server required. Three additional office tools (`docx`, `xlsx`, `pptx`) are available with the optional `anteroom[office]` install. A COM backend with extended actions for each office tool is available with `anteroom[office-com]` on Windows with Microsoft Office installed.
 
 ## Tool Reference
 
@@ -243,48 +243,129 @@ Install `anteroom[office]` to enable three additional tools for creating, readin
 $ pip install anteroom[office]
 ```
 
+### COM Backend
+
+Some actions are marked **(COM only)**. These require Windows with Microsoft Office installed and the `pywin32` library. Install with:
+
+```bash
+$ pip install anteroom[office-com]
+```
+
+All other actions work cross-platform via the library backend (`python-docx`, `openpyxl`, `python-pptx`).
+
 ### docx
 
-Create, read, or edit Word documents (.docx).
+Create, read, and edit Word documents (.docx). Supports 14 actions.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `action` | string | yes | `create`, `read`, or `edit` |
+| `action` | string | yes | Action to perform (see actions below) |
 | `path` | string | yes | File path (relative to working directory or absolute) |
 | `content_blocks` | array | no | Content blocks for create/edit. Each: `{type: "heading"\|"paragraph"\|"table", text?, level?, rows?}` |
 | `replacements` | array | no | Find/replace pairs for edit: `[{old: str, new: str}]` |
 
-**create** builds a new document from content blocks (headings, paragraphs, tables). **read** extracts text with heading levels and tables as JSON. **edit** performs find/replace across paragraphs and optionally appends new blocks. Max 200 content blocks per call. Output truncated at 100,000 characters.
+**Available actions:**
+
+| Action | Description |
+|---|---|
+| `create` | Create a document from heading, paragraph, and table blocks |
+| `read` | Extract text with heading levels and tables as JSON |
+| `edit` | Find-replace across paragraphs and optionally append new blocks |
+| `track_changes` | Accept, reject, or list tracked changes (COM only) |
+| `comments` | Add, read, resolve, or delete comments (COM only) |
+| `headers_footers` | Set or read document headers and footers |
+| `insert_image` | Insert an image into the document |
+| `styles` | List, set, or apply paragraph and character styles |
+| `export_pdf` | Export the document to PDF (COM only) |
+| `page_setup` | Set margins, page orientation, and paper size |
+| `sections` | List, add, or delete document sections |
+| `bookmarks` | Add, read, or delete bookmarks (COM only) |
+| `toc` | Insert or update a table of contents (COM only) |
+| `find_regex` | Find text using regex patterns |
+
+Max 200 content blocks per call. Output truncated at 100,000 characters.
 
 ### xlsx
 
-Create, read, or edit Excel spreadsheets (.xlsx).
+Create, read, and edit Excel spreadsheets (.xlsx). Supports 23 actions.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `action` | string | yes | `create`, `read`, or `edit` |
+| `action` | string | yes | Action to perform (see actions below) |
 | `path` | string | yes | File path (relative to working directory or absolute) |
 | `sheets` | array | no | Sheets for create: `[{name, headers?, rows}]` |
-| `sheet_name` | string | no | Sheet to read/edit (default: active sheet) |
-| `cell_range` | string | no | Cell range to read, e.g. `A1:C10` |
+| `sheet_name` | string | no | Sheet to target (default: active sheet) |
+| `cell_range` | string | no | Cell range to operate on, e.g. `A1:C10` |
 | `updates` | array | no | Cell updates for edit: `[{cell: "A1", value: 42}]` |
-| `append_rows` | array | no | Rows to append for edit: `[[value, ...]]` |
-| `add_sheets` | array | no | New sheets for edit: `[{name, rows?}]` |
+| `append_rows` | array | no | Rows to append: `[[value, ...]]` |
+| `add_sheets` | array | no | New sheets to add: `[{name, rows?}]` |
 
-**create** builds a new workbook with named sheets and row data. **read** returns cell data as JSON rows (uses `read_only=True` for safety). **edit** updates cells, appends rows, or adds sheets. Max 10,000 rows. Output truncated at 100,000 characters.
+**Available actions:**
+
+| Action | Description |
+|---|---|
+| `create` | Create a workbook with named sheets, headers, and row data |
+| `read` | Read cell data as JSON with optional range and sheet filter |
+| `edit` | Update cells, append rows, or add sheets |
+| `format_cells` | Apply fonts, borders, fills, alignment, and number formats |
+| `merge_cells` | Merge or unmerge cell ranges |
+| `freeze_panes` | Freeze rows or columns for scrolling |
+| `auto_filter` | Apply or remove auto-filter on columns |
+| `print_area` | Set the print area range |
+| `named_ranges` | Create, list, or delete named ranges |
+| `data_validation` | Add dropdown or range validation to cells |
+| `conditional_format` | Apply conditional formatting rules |
+| `comments` | Add, read, or delete cell comments |
+| `hyperlinks` | Add or read hyperlinks in cells |
+| `images` | Insert images into worksheets |
+| `protect` | Protect or unprotect sheets and workbooks |
+| `group_rows_cols` | Group or ungroup rows and columns |
+| `print_settings` | Configure print layout, margins, and headers |
+| `charts` | Create column, bar, line, pie, scatter, or area charts |
+| `export_pdf` | Export the workbook to PDF (COM only) |
+| `sort` | Sort data ranges (COM only) |
+| `pivot_tables` | Create pivot tables (COM only) |
+| `sparklines` | Add sparkline charts (COM only) |
+| `slicers` | Add data slicers (COM only) |
+
+Max 10,000 rows. Output truncated at 100,000 characters.
 
 ### pptx
 
-Create, read, or edit PowerPoint presentations (.pptx).
+Create, read, and edit PowerPoint presentations (.pptx). Supports 19 actions.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `action` | string | yes | `create`, `read`, or `edit` |
+| `action` | string | yes | Action to perform (see actions below) |
 | `path` | string | yes | File path (relative to working directory or absolute) |
 | `slides` | array | no | Slides for create/edit: `[{title?, content?, bullets?, notes?, layout?}]` |
 | `replacements` | array | no | Find/replace pairs for edit: `[{old: str, new: str}]` |
 
-**create** builds a new presentation with slides (title, content, bullets, notes). **read** extracts slide text and speaker notes. **edit** performs find/replace across all slides and optionally appends new slides. Max 100 slides. Output truncated at 100,000 characters.
+**Available actions:**
+
+| Action | Description |
+|---|---|
+| `create` | Create a presentation with slides (title, content, bullets, notes) |
+| `read` | Extract slide text and speaker notes |
+| `edit` | Find-replace text across slides and optionally append new slides |
+| `transitions` | Apply slide transitions (COM only) |
+| `animations` | Add shape animations (COM only) |
+| `insert_image` | Insert an image onto a slide |
+| `insert_shape` | Add shapes (rectangle, oval, triangle, etc.) |
+| `format_shape` | Style shapes with fill, line, shadow, and text formatting |
+| `master_layout` | List or apply slide master layouts |
+| `reorder_slides` | Move or delete slides |
+| `embed_chart` | Embed charts on slides (COM only) |
+| `embed_table` | Insert tables onto slides |
+| `export_pdf` | Export the presentation to PDF (COM only) |
+| `hyperlinks` | Add hyperlinks to shapes |
+| `headers_footers` | Set slide footers, date/time, and slide numbers |
+| `sections` | Manage presentation sections (COM only) |
+| `group_shapes` | Group or ungroup shapes (COM only) |
+| `audio_video` | Insert audio or video media (COM only) |
+| `smartart` | Insert SmartArt graphics (COM only) |
+
+Max 100 slides. Output truncated at 100,000 characters.
 
 !!! note "Graceful Degradation"
     If the office libraries are not installed, these tools are not registered — they won't appear in the tool list. If you attempt to call them directly, the tool returns an install instruction.
