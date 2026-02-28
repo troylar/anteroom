@@ -368,8 +368,10 @@ class TestAnteroomCompleter:
         skill_names = ["commit", "deploy"]
         skill_descriptions = {"commit": "Create a commit", "deploy": "Deploy to PyPI"}
         command_descriptions = {
-            "help": "show help", "resume": "resume conversation",
-            "model": "change model", "quit": "exit",
+            "help": "show help",
+            "resume": "resume conversation",
+            "model": "change model",
+            "quit": "exit",
         }
 
         completer = MagicMock()

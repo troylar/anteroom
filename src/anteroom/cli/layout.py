@@ -339,39 +339,49 @@ class AnteroomLayout:
         )
         dialog_inner = HSplit(
             [
+                Window(height=1, style="class:dialog.frame"),
                 Window(
                     content=FormattedTextControl(self._get_dialog_title),
                     height=1,
                     style="class:dialog.title",
                 ),
-                Window(height=1, char="\u2500", style="class:dialog.border"),
+                Window(height=1, style="class:dialog.frame"),
                 Window(
                     content=FormattedTextControl(self._get_dialog_body),
                     style="class:dialog.body",
                     wrap_lines=True,
                 ),
-                Window(height=1, char=" ", style="class:dialog.body"),
-                self._dialog_input_window,
-                Window(height=1, char=" ", style="class:dialog.body"),
+                Window(height=1, style="class:dialog.frame"),
+                VSplit(
+                    [
+                        Window(width=2, style="class:dialog.frame"),
+                        Window(
+                            content=FormattedTextControl(lambda: [("class:dialog.input.prompt", " > ")]),
+                            width=3,
+                            height=1,
+                            style="class:dialog.input",
+                        ),
+                        self._dialog_input_window,
+                        Window(width=1, style="class:dialog.input"),
+                    ]
+                ),
+                Window(height=1, style="class:dialog.frame"),
                 Window(
                     content=FormattedTextControl(lambda: [("class:dialog.hint", "  Enter: submit  Escape: cancel")]),
                     height=1,
                     style="class:dialog.hint",
                 ),
-            ]
+            ],
+            style="class:dialog.frame",
         )
         dialog_centered = HSplit(
             [
                 Window(style="class:dialog.shadow"),  # top spacer
                 VSplit(
                     [
-                        Window(width=4, style="class:dialog.shadow"),  # left margin
-                        HSplit(
-                            [dialog_inner],
-                            style="class:dialog.frame",
-                            padding=1,
-                        ),
-                        Window(width=4, style="class:dialog.shadow"),  # right margin
+                        Window(width=2, style="class:dialog.shadow"),  # left margin
+                        dialog_inner,
+                        Window(width=2, style="class:dialog.shadow"),  # right margin
                     ]
                 ),
                 Window(style="class:dialog.shadow"),  # bottom spacer
@@ -790,15 +800,15 @@ def create_anteroom_style() -> Style:
             "prompt": "#C5A059 bold",
             "prompt.continuation": "#505868",
             # Dialog overlay
-            "dialog.frame": "bg:#1a1a2e #e0e0e0",
-            "dialog.title": "bg:#1a1a2e #C5A059 bold",
-            "dialog.border": "#3a3a4e",
-            "dialog.body": "bg:#1a1a2e #e0e0e0",
+            "dialog.frame": "bg:#1e1e2e",
+            "dialog.title": "bg:#1e1e2e #C5A059 bold",
+            "dialog.body": "bg:#1e1e2e #d0d0d0",
             "dialog.input": "bg:#2a2a3e #e0e0e0",
-            "dialog.hint": "bg:#1a1a2e #6b7280",
-            "dialog.option": "bg:#1a1a2e #94A3B8",
-            "dialog.option.key": "bg:#1a1a2e #C5A059 bold",
-            "dialog.shadow": "bg:#0a0a15",
+            "dialog.input.prompt": "bg:#2a2a3e #C5A059",
+            "dialog.hint": "bg:#1e1e2e #555568",
+            "dialog.option": "bg:#1e1e2e #94A3B8",
+            "dialog.option.key": "bg:#1e1e2e #C5A059 bold",
+            "dialog.shadow": "bg:#0d0d18",
             # Picker overlay
             "picker.frame": "bg:#1a1a2e #e0e0e0",
             "picker.title": "bg:#C5A059 #1a1a2e bold",

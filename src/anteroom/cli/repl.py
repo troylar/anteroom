@@ -727,6 +727,54 @@ async def _check_project_trust(
     renderer.console.print(f"  Path: [{MUTED}]{file_path}[/{MUTED}]")
     renderer.console.print(f"  Size: [{MUTED}]{file_size:,} bytes[/{MUTED}]")
 
+    if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+        while True:
+            body: list[tuple[str, str]] = [
+                ("class:dialog.body", f"  Path: {file_path}\n"),
+                ("class:dialog.body", f"  Size: {file_size:,} bytes\n\n"),
+                ("class:dialog.option.key", "  [y]"),
+                ("class:dialog.option", " Trust this folder   "),
+                ("class:dialog.option.key", "[r]"),
+                ("class:dialog.option", " Trust parent\n"),
+                ("class:dialog.option.key", "  [v]"),
+                ("class:dialog.option", " View content        "),
+                ("class:dialog.option.key", "[n]"),
+                ("class:dialog.option", " Skip"),
+            ]
+            answer = await renderer._fullscreen_layout.show_dialog(
+                title="Project Trust — ANTEROOM.md",
+                body_fragments=body,
+            )
+            if answer is None:
+                renderer.console.print(f"  [{MUTED}]Skipped: project context not loaded[/{MUTED}]\n")
+                return None
+            choice = answer.strip().lower()
+            if choice in ("y", "yes"):
+                save_trust_decision(folder_path, content_hash, data_dir=data_dir)
+                renderer.console.print(f"  [{MUTED}]Trusted: {folder_path}[/{MUTED}]\n")
+                return content
+            if choice in ("r", "recursive"):
+                parent_path = str(file_path.parent.parent)
+                save_trust_decision(parent_path, content_hash, recursive=True, data_dir=data_dir)
+                renderer.console.print(f"  [{MUTED}]Trusted (recursive): {parent_path}[/{MUTED}]\n")
+                return content
+            if choice in ("v", "view"):
+                renderer.console.print(f"\n[dim]{'─' * 60}[/dim]")
+                lines = content.splitlines()
+                if len(lines) > 50:
+                    for line in lines[:50]:
+                        renderer.console.print(f"  [dim]{line}[/dim]")
+                    renderer.console.print(f"  [dim]... ({len(lines) - 50} more lines)[/dim]")
+                else:
+                    for line in lines:
+                        renderer.console.print(f"  [dim]{line}[/dim]")
+                renderer.console.print(f"[dim]{'─' * 60}[/dim]\n")
+                continue
+            if choice in ("n", "no", ""):
+                renderer.console.print(f"  [{MUTED}]Skipped: project context not loaded[/{MUTED}]\n")
+                return None
+        return None  # unreachable but keeps mypy happy
+
     try:
         from prompt_toolkit import PromptSession as _TrustSession
 
@@ -751,7 +799,6 @@ async def _check_project_trust(
 
             if choice in ("v", "view"):
                 renderer.console.print(f"\n[dim]{'─' * 60}[/dim]")
-                # Limit display to prevent terminal flooding
                 lines = content.splitlines()
                 if len(lines) > 50:
                     for line in lines[:50]:
@@ -2642,20 +2689,14 @@ async def _run_repl(
     def _picker_cancel(event: Any) -> None:
         _anteroom_layout.cancel_picker()
 
-    _dialog_esc_filter = Condition(
-        lambda: _anteroom_layout._dialog_visible and not _anteroom_layout._picker_visible
-    )
+    _dialog_esc_filter = Condition(lambda: _anteroom_layout._dialog_visible and not _anteroom_layout._picker_visible)
 
     @kb.add("escape", filter=_dialog_esc_filter)
     def _dialog_cancel_on_escape(event: Any) -> None:
         _anteroom_layout.cancel_dialog()
 
     _agent_esc_filter = Condition(
-        lambda: (
-            agent_busy.is_set()
-            and not _anteroom_layout._dialog_visible
-            and not _anteroom_layout._picker_visible
-        )
+        lambda: agent_busy.is_set() and not _anteroom_layout._dialog_visible and not _anteroom_layout._picker_visible
     )
 
     @kb.add("escape", filter=_agent_esc_filter)
@@ -2835,7 +2876,7 @@ async def _run_repl(
         # -- Space state --
         _active_space: list[dict[str, Any] | None] = [space]
 
-        def _resolve_space(name_or_id: str) -> dict[str, Any] | None:
+        async def _resolve_space(name_or_id: str) -> dict[str, Any] | None:
             """Look up a space by name, UUID, or UUID prefix. Shows picker on ambiguity."""
             from ..services.space_storage import resolve_space
 
@@ -2843,16 +2884,34 @@ async def _run_repl(
             if match:
                 return match
             if candidates:
-                renderer.console.print(f"\nMultiple spaces match '{name_or_id}':")
-                for i, c in enumerate(candidates, 1):
-                    renderer.console.print(f"  {i}. {c['name']} [{c['id'][:8]}...]")
-                try:
-                    choice = input(f"Select (1-{len(candidates)}): ").strip()
-                    idx = int(choice) - 1
-                    if 0 <= idx < len(candidates):
-                        return candidates[idx]
-                except (ValueError, EOFError, KeyboardInterrupt):
-                    pass
+                if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                    _sp_lines: list[tuple[str, str]] = [
+                        ("class:dialog.body", f"  Multiple spaces match '{name_or_id}':\n\n"),
+                    ]
+                    for i, c in enumerate(candidates, 1):
+                        _sp_lines.append(("class:dialog.body", f"  [{i}] {c['name']} [{c['id'][:8]}...]\n"))
+                    _sp_ans = await renderer._fullscreen_layout.show_dialog(
+                        title="Select Space",
+                        body_fragments=_sp_lines,
+                    )
+                    if _sp_ans is not None:
+                        try:
+                            idx = int(_sp_ans.strip()) - 1
+                            if 0 <= idx < len(candidates):
+                                return candidates[idx]
+                        except ValueError:
+                            pass
+                else:
+                    renderer.console.print(f"\nMultiple spaces match '{name_or_id}':")
+                    for i, c in enumerate(candidates, 1):
+                        renderer.console.print(f"  {i}. {c['name']} [{c['id'][:8]}...]")
+                    try:
+                        choice = input(f"Select (1-{len(candidates)}): ").strip()
+                        idx = int(choice) - 1
+                        if 0 <= idx < len(candidates):
+                            return candidates[idx]
+                    except (ValueError, EOFError, KeyboardInterrupt):
+                        pass
             return None
 
         def _inject_space_instructions(sp: dict[str, Any], instr: str | None = None) -> None:
@@ -3079,14 +3138,30 @@ async def _run_repl(
                         renderer.render_error(f"Conversation not found: {target}. Use /list to see conversations.")
                         continue
                     title = to_delete.get("title", "Untitled")
-                    try:
-                        answer = input(f'  Delete "{title}"? [y/N] ').strip().lower()
-                    except (EOFError, KeyboardInterrupt):
-                        renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
-                        continue
-                    if answer not in ("y", "yes"):
-                        renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
-                        continue
+                    if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                        _del_body: list[tuple[str, str]] = [
+                            ("class:dialog.body", f'  Delete "{title}"?\n\n'),
+                            ("class:dialog.option.key", "  [y]"),
+                            ("class:dialog.option", " Yes   "),
+                            ("class:dialog.option.key", "[n]"),
+                            ("class:dialog.option", " No"),
+                        ]
+                        answer = await renderer._fullscreen_layout.show_dialog(
+                            title="Delete Conversation",
+                            body_fragments=_del_body,
+                        )
+                        if answer is None or answer.strip().lower() not in ("y", "yes"):
+                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                            continue
+                    else:
+                        try:
+                            answer = input(f'  Delete "{title}"? [y/N] ').strip().lower()
+                        except (EOFError, KeyboardInterrupt):
+                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                            continue
+                        if answer not in ("y", "yes"):
+                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                            continue
                     storage.delete_conversation(db, to_delete["id"], config.app.data_dir)
                     renderer.console.print(f"[{CHROME}]Deleted: {title}[/{CHROME}]\n")
                     if conv.get("id") == to_delete["id"]:
@@ -3531,7 +3606,7 @@ async def _run_repl(
                         if not target:
                             renderer.console.print(f"[{CHROME}]Usage: /space switch <name>[/{CHROME}]\n")
                             continue
-                        sp = _resolve_space(target)
+                        sp = await _resolve_space(target)
                         if not sp:
                             renderer.render_error(f"Space '{target}' not found. Run /spaces to list available spaces.")
                             continue
@@ -3547,7 +3622,7 @@ async def _run_repl(
                         if not target:
                             renderer.console.print(f"[{CHROME}]Usage: /space show <name>[/{CHROME}]\n")
                             continue
-                        sp = _resolve_space(target)
+                        sp = await _resolve_space(target)
                         if not sp:
                             renderer.render_error(f"Space '{target}' not found.")
                             continue
@@ -3702,19 +3777,43 @@ async def _run_repl(
                             ns = "default"
                         _pm, _pc = packs_service.resolve_pack(db, ns, name)
                         if not _pm and _pc:
-                            renderer.console.print(f"\nMultiple packs match @{ns}/{name}:")
-                            for _pi, _c in enumerate(_pc, 1):
-                                renderer.console.print(
-                                    f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                    f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                            if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                                _pk_body: list[tuple[str, str]] = [
+                                    ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
+                                ]
+                                for _pi, _c in enumerate(_pc, 1):
+                                    _pk_body.append(
+                                        (
+                                            "class:dialog.body",
+                                            f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                            f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
+                                        )
+                                    )
+                                _pk_ans = await renderer._fullscreen_layout.show_dialog(
+                                    title="Select Pack",
+                                    body_fragments=_pk_body,
                                 )
-                            try:
-                                _ch = input(f"Select (1-{len(_pc)}): ").strip()
-                                _idx = int(_ch) - 1
-                                if 0 <= _idx < len(_pc):
-                                    _pm = _pc[_idx]
-                            except (ValueError, EOFError, KeyboardInterrupt):
-                                continue
+                                if _pk_ans is not None:
+                                    try:
+                                        _idx = int(_pk_ans.strip()) - 1
+                                        if 0 <= _idx < len(_pc):
+                                            _pm = _pc[_idx]
+                                    except ValueError:
+                                        pass
+                            else:
+                                renderer.console.print(f"\nMultiple packs match @{ns}/{name}:")
+                                for _pi, _c in enumerate(_pc, 1):
+                                    renderer.console.print(
+                                        f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                                    )
+                                try:
+                                    _ch = input(f"Select (1-{len(_pc)}): ").strip()
+                                    _idx = int(_ch) - 1
+                                    if 0 <= _idx < len(_pc):
+                                        _pm = _pc[_idx]
+                                except (ValueError, EOFError, KeyboardInterrupt):
+                                    continue
                         pack_info = _pm
                         if not pack_info:
                             renderer.console.print(f"[{CHROME}]Pack @{ns}/{name} not found.[/{CHROME}]\n")
@@ -3765,19 +3864,43 @@ async def _run_repl(
                             ns = "default"
                         _pm, _pc = packs_service.resolve_pack(db, ns, name)
                         if not _pm and _pc:
-                            renderer.console.print(f"\nMultiple packs match @{ns}/{name}:")
-                            for _pi, _c in enumerate(_pc, 1):
-                                renderer.console.print(
-                                    f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                    f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                            if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                                _pk_body: list[tuple[str, str]] = [
+                                    ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
+                                ]
+                                for _pi, _c in enumerate(_pc, 1):
+                                    _pk_body.append(
+                                        (
+                                            "class:dialog.body",
+                                            f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                            f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
+                                        )
+                                    )
+                                _pk_ans = await renderer._fullscreen_layout.show_dialog(
+                                    title="Select Pack",
+                                    body_fragments=_pk_body,
                                 )
-                            try:
-                                _ch = input(f"Select (1-{len(_pc)}): ").strip()
-                                _idx = int(_ch) - 1
-                                if 0 <= _idx < len(_pc):
-                                    _pm = _pc[_idx]
-                            except (ValueError, EOFError, KeyboardInterrupt):
-                                continue
+                                if _pk_ans is not None:
+                                    try:
+                                        _idx = int(_pk_ans.strip()) - 1
+                                        if 0 <= _idx < len(_pc):
+                                            _pm = _pc[_idx]
+                                    except ValueError:
+                                        pass
+                            else:
+                                renderer.console.print(f"\nMultiple packs match @{ns}/{name}:")
+                                for _pi, _c in enumerate(_pc, 1):
+                                    renderer.console.print(
+                                        f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                                    )
+                                try:
+                                    _ch = input(f"Select (1-{len(_pc)}): ").strip()
+                                    _idx = int(_ch) - 1
+                                    if 0 <= _idx < len(_pc):
+                                        _pm = _pc[_idx]
+                                except (ValueError, EOFError, KeyboardInterrupt):
+                                    continue
                         if not _pm:
                             renderer.console.print(f"[{CHROME}]Pack @{ns}/{name} not found.[/{CHROME}]\n")
                             continue
@@ -3875,19 +3998,45 @@ async def _run_repl(
 
                         _pm, _pc = packs_service.resolve_pack(db, ns, name)
                         if not _pm and _pc:
-                            renderer.console.print(f"\nMultiple packs match @{rich_escape(ns)}/{rich_escape(name)}:")
-                            for _pi, _c in enumerate(_pc, 1):
-                                renderer.console.print(
-                                    f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                    f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                            if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                                _pk_body: list[tuple[str, str]] = [
+                                    ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
+                                ]
+                                for _pi, _c in enumerate(_pc, 1):
+                                    _pk_body.append(
+                                        (
+                                            "class:dialog.body",
+                                            f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                            f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
+                                        )
+                                    )
+                                _pk_ans = await renderer._fullscreen_layout.show_dialog(
+                                    title="Select Pack",
+                                    body_fragments=_pk_body,
                                 )
-                            try:
-                                _ch = input(f"Select (1-{len(_pc)}): ").strip()
-                                _idx = int(_ch) - 1
-                                if 0 <= _idx < len(_pc):
-                                    _pm = _pc[_idx]
-                            except (ValueError, EOFError, KeyboardInterrupt):
-                                continue
+                                if _pk_ans is not None:
+                                    try:
+                                        _idx = int(_pk_ans.strip()) - 1
+                                        if 0 <= _idx < len(_pc):
+                                            _pm = _pc[_idx]
+                                    except ValueError:
+                                        pass
+                            else:
+                                renderer.console.print(
+                                    f"\nMultiple packs match @{rich_escape(ns)}/{rich_escape(name)}:"
+                                )
+                                for _pi, _c in enumerate(_pc, 1):
+                                    renderer.console.print(
+                                        f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                                    )
+                                try:
+                                    _ch = input(f"Select (1-{len(_pc)}): ").strip()
+                                    _idx = int(_ch) - 1
+                                    if 0 <= _idx < len(_pc):
+                                        _pm = _pc[_idx]
+                                except (ValueError, EOFError, KeyboardInterrupt):
+                                    continue
                         if not _pm:
                             renderer.console.print(
                                 f"[{CHROME}]Pack @{rich_escape(ns)}/{rich_escape(name)} not found.[/{CHROME}]\n"
@@ -3921,19 +4070,45 @@ async def _run_repl(
 
                         _pm, _pc = packs_service.resolve_pack(db, ns, name)
                         if not _pm and _pc:
-                            renderer.console.print(f"\nMultiple packs match @{rich_escape(ns)}/{rich_escape(name)}:")
-                            for _pi, _c in enumerate(_pc, 1):
-                                renderer.console.print(
-                                    f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                    f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                            if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                                _pk_body: list[tuple[str, str]] = [
+                                    ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
+                                ]
+                                for _pi, _c in enumerate(_pc, 1):
+                                    _pk_body.append(
+                                        (
+                                            "class:dialog.body",
+                                            f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                            f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
+                                        )
+                                    )
+                                _pk_ans = await renderer._fullscreen_layout.show_dialog(
+                                    title="Select Pack",
+                                    body_fragments=_pk_body,
                                 )
-                            try:
-                                _ch = input(f"Select (1-{len(_pc)}): ").strip()
-                                _idx = int(_ch) - 1
-                                if 0 <= _idx < len(_pc):
-                                    _pm = _pc[_idx]
-                            except (ValueError, EOFError, KeyboardInterrupt):
-                                continue
+                                if _pk_ans is not None:
+                                    try:
+                                        _idx = int(_pk_ans.strip()) - 1
+                                        if 0 <= _idx < len(_pc):
+                                            _pm = _pc[_idx]
+                                    except ValueError:
+                                        pass
+                            else:
+                                renderer.console.print(
+                                    f"\nMultiple packs match @{rich_escape(ns)}/{rich_escape(name)}:"
+                                )
+                                for _pi, _c in enumerate(_pc, 1):
+                                    renderer.console.print(
+                                        f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                                    )
+                                try:
+                                    _ch = input(f"Select (1-{len(_pc)}): ").strip()
+                                    _idx = int(_ch) - 1
+                                    if 0 <= _idx < len(_pc):
+                                        _pm = _pc[_idx]
+                                except (ValueError, EOFError, KeyboardInterrupt):
+                                    continue
                         if not _pm:
                             renderer.console.print(
                                 f"[{CHROME}]Pack @{rich_escape(ns)}/{rich_escape(name)} not found.[/{CHROME}]\n"
@@ -4241,9 +4416,7 @@ async def _run_repl(
                                     preview_cache[cid] = _picker_format_preview(msgs)
                                 return preview_cache[cid]
 
-                            picked = await renderer._fullscreen_layout.show_picker(
-                                items=convs, preview_fn=_preview
-                            )
+                            picked = await renderer._fullscreen_layout.show_picker(items=convs, preview_fn=_preview)
                         else:
                             picked = await _show_resume_picker()
                         if picked is None:
@@ -4275,14 +4448,28 @@ async def _run_repl(
                             preview += "..."
                         renderer.console.print(f"  {msg['position']}. [{role_label}] {preview}")
 
-                    renderer.console.print(
-                        f"\n[{CHROME}]Enter position to rewind to (keep that message, delete after):[/{CHROME}]"
-                    )
-                    try:
-                        pos_input = input("  Position: ").strip()
-                    except (EOFError, KeyboardInterrupt):
-                        renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
-                        continue
+                    if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                        _rw_body: list[tuple[str, str]] = [
+                            ("class:dialog.body", "  Enter position to rewind to\n"),
+                            ("class:dialog.body", "  (keep that message, delete after)\n"),
+                        ]
+                        pos_input_raw = await renderer._fullscreen_layout.show_dialog(
+                            title="Rewind Conversation",
+                            body_fragments=_rw_body,
+                        )
+                        if pos_input_raw is None:
+                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                            continue
+                        pos_input = pos_input_raw.strip()
+                    else:
+                        renderer.console.print(
+                            f"\n[{CHROME}]Enter position to rewind to (keep that message, delete after):[/{CHROME}]"
+                        )
+                        try:
+                            pos_input = input("  Position: ").strip()
+                        except (EOFError, KeyboardInterrupt):
+                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                            continue
 
                     if not pos_input.isdigit():
                         renderer.render_error("Invalid position")
@@ -4305,12 +4492,32 @@ async def _run_repl(
                         )
                         for fp in sorted(file_paths):
                             renderer.console.print(f"  - {fp}")
-                        try:
-                            answer = input("  Undo file changes? [y/N] ").strip().lower()
-                            undo_files = answer in ("y", "yes")
-                        except (EOFError, KeyboardInterrupt):
-                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
-                            continue
+                        if renderer.is_fullscreen() and renderer._fullscreen_layout is not None:
+                            _undo_body: list[tuple[str, str]] = [
+                                (
+                                    "class:dialog.body",
+                                    f"  {len(file_paths)} file(s) modified after this point.\n  Undo file changes?\n\n",
+                                ),
+                                ("class:dialog.option.key", "  [y]"),
+                                ("class:dialog.option", " Yes   "),
+                                ("class:dialog.option.key", "[n]"),
+                                ("class:dialog.option", " No"),
+                            ]
+                            _undo_ans = await renderer._fullscreen_layout.show_dialog(
+                                title="Undo File Changes",
+                                body_fragments=_undo_body,
+                            )
+                            if _undo_ans is None:
+                                renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                                continue
+                            undo_files = _undo_ans.strip().lower() in ("y", "yes")
+                        else:
+                            try:
+                                answer = input("  Undo file changes? [y/N] ").strip().lower()
+                                undo_files = answer in ("y", "yes")
+                            except (EOFError, KeyboardInterrupt):
+                                renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                                continue
 
                     result = await rewind_service(
                         db=db,
