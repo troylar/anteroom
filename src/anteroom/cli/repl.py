@@ -136,6 +136,7 @@ async def _watch_for_escape(cancel_event: asyncio.Event) -> None:
 
 _MAX_PASTE_DISPLAY_LINES = 6
 _PASTE_THRESHOLD = 0.05  # 50ms; paste arrives faster than human typing
+_SUB_PROMPT_TIMEOUT = 300  # seconds — failsafe for stuck sub-prompts
 
 
 def _is_paste(last_text_change: float, threshold: float = _PASTE_THRESHOLD) -> bool:
@@ -151,6 +152,11 @@ def _collapse_long_input(user_input: str) -> None:
     preserved; only the visual display is truncated.
     """
     if not sys.stdout.isatty():
+        return
+
+    # In fullscreen mode the input pane handles display; raw cursor codes
+    # would be meaningless inside the OutputPaneWriter.
+    if renderer.is_fullscreen():
         return
 
     lines = user_input.split("\n")
@@ -721,6 +727,54 @@ async def _check_project_trust(
     renderer.console.print(f"  Path: [{MUTED}]{file_path}[/{MUTED}]")
     renderer.console.print(f"  Size: [{MUTED}]{file_size:,} bytes[/{MUTED}]")
 
+    if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+        while True:
+            body: list[tuple[str, str]] = [
+                ("class:dialog.body", f"  Path: {file_path}\n"),
+                ("class:dialog.body", f"  Size: {file_size:,} bytes\n\n"),
+                ("class:dialog.option.key", "  [y]"),
+                ("class:dialog.option", " Trust this folder   "),
+                ("class:dialog.option.key", "[r]"),
+                ("class:dialog.option", " Trust parent\n"),
+                ("class:dialog.option.key", "  [v]"),
+                ("class:dialog.option", " View content        "),
+                ("class:dialog.option.key", "[n]"),
+                ("class:dialog.option", " Skip"),
+            ]
+            answer = await renderer.get_fullscreen_layout().show_dialog(
+                title="Project Trust — ANTEROOM.md",
+                body_fragments=body,
+            )
+            if answer is None:
+                renderer.console.print(f"  [{MUTED}]Skipped: project context not loaded[/{MUTED}]\n")
+                return None
+            choice = answer.strip().lower()
+            if choice in ("y", "yes"):
+                save_trust_decision(folder_path, content_hash, data_dir=data_dir)
+                renderer.console.print(f"  [{MUTED}]Trusted: {folder_path}[/{MUTED}]\n")
+                return content
+            if choice in ("r", "recursive"):
+                parent_path = str(file_path.parent.parent)
+                save_trust_decision(parent_path, content_hash, recursive=True, data_dir=data_dir)
+                renderer.console.print(f"  [{MUTED}]Trusted (recursive): {parent_path}[/{MUTED}]\n")
+                return content
+            if choice in ("v", "view"):
+                renderer.console.print(f"\n[dim]{'─' * 60}[/dim]")
+                lines = content.splitlines()
+                if len(lines) > 50:
+                    for line in lines[:50]:
+                        renderer.console.print(f"  [dim]{line}[/dim]")
+                    renderer.console.print(f"  [dim]... ({len(lines) - 50} more lines)[/dim]")
+                else:
+                    for line in lines:
+                        renderer.console.print(f"  [dim]{line}[/dim]")
+                renderer.console.print(f"[dim]{'─' * 60}[/dim]\n")
+                continue
+            if choice in ("n", "no", ""):
+                renderer.console.print(f"  [{MUTED}]Skipped: project context not loaded[/{MUTED}]\n")
+                return None
+        return None  # unreachable but keeps mypy happy
+
     try:
         from prompt_toolkit import PromptSession as _TrustSession
 
@@ -745,7 +799,6 @@ async def _check_project_trust(
 
             if choice in ("v", "view"):
                 renderer.console.print(f"\n[dim]{'─' * 60}[/dim]")
-                # Limit display to prevent terminal flooding
                 lines = content.splitlines()
                 if len(lines) > 50:
                     for line in lines[:50]:
@@ -1004,7 +1057,56 @@ async def run_cli(
     async def _confirm_destructive(verdict: SafetyVerdict) -> bool:
         from rich.markup import escape
 
+        def _apply_choice(choice: str) -> bool:
+            if choice in ("a", "always"):
+                tool_registry.grant_session_permission(verdict.tool_name)
+                _persist_allowed_tool(verdict.tool_name)
+                renderer.console.print(f"  [{MUTED}]✓ Allowed: {escape(verdict.tool_name)} (always)[/{MUTED}]\n")
+                return True
+            if choice in ("s", "session"):
+                tool_registry.grant_session_permission(verdict.tool_name)
+                renderer.console.print(f"  [{MUTED}]✓ Allowed: {escape(verdict.tool_name)} (session)[/{MUTED}]\n")
+                return True
+            if choice in ("y", "yes"):
+                renderer.console.print(f"  [{MUTED}]✓ Allowed: {escape(verdict.tool_name)} (once)[/{MUTED}]\n")
+                return True
+            renderer.console.print(f"  [{MUTED}]✗ Denied: {escape(verdict.tool_name)}[/{MUTED}]\n")
+            return False
+
         async with _approval_lock:
+            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+                body: list[tuple[str, str]] = [
+                    ("class:dialog.body", f"  {verdict.reason}\n"),
+                ]
+                cmd = verdict.details.get("command", "")
+                path = verdict.details.get("path", "")
+                if cmd:
+                    body.append(("class:dialog.hint", f"  Command: {cmd}\n\n"))
+                elif path:
+                    body.append(("class:dialog.hint", f"  Path: {path}\n\n"))
+                else:
+                    body.append(("class:dialog.body", "\n"))
+                body.extend(
+                    [
+                        ("class:dialog.option.key", "  [y]"),
+                        ("class:dialog.option", " Allow once   "),
+                        ("class:dialog.option.key", "[s]"),
+                        ("class:dialog.option", " Session\n"),
+                        ("class:dialog.option.key", "  [a]"),
+                        ("class:dialog.option", " Always       "),
+                        ("class:dialog.option.key", "[n]"),
+                        ("class:dialog.option", " Deny"),
+                    ]
+                )
+                answer = await renderer.get_fullscreen_layout().show_dialog(
+                    title="Approval Required",
+                    body_fragments=body,
+                )
+                if answer is None:
+                    renderer.console.print(f"  [{MUTED}]✗ Denied: {escape(verdict.tool_name)}[/{MUTED}]\n")
+                    return False
+                return _apply_choice(answer.strip().lower())
+
             renderer.console.print(f"\n[yellow bold]Warning:[/yellow bold] {verdict.reason}")
             if verdict.details.get("command"):
                 renderer.console.print(f"  Command: [{MUTED}]{verdict.details['command']}[/{MUTED}]")
@@ -1017,21 +1119,7 @@ async def run_cli(
                 answer = await _confirm_session.prompt_async(
                     "  [y] Allow once  [s] Allow for session  [a] Allow always  [n] Deny: "
                 )
-                choice = answer.strip().lower()
-                if choice in ("a", "always"):
-                    tool_registry.grant_session_permission(verdict.tool_name)
-                    _persist_allowed_tool(verdict.tool_name)
-                    renderer.console.print(f"  [{MUTED}]✓ Allowed: {escape(verdict.tool_name)} (always)[/{MUTED}]\n")
-                    return True
-                if choice in ("s", "session"):
-                    tool_registry.grant_session_permission(verdict.tool_name)
-                    renderer.console.print(f"  [{MUTED}]✓ Allowed: {escape(verdict.tool_name)} (session)[/{MUTED}]\n")
-                    return True
-                if choice in ("y", "yes"):
-                    renderer.console.print(f"  [{MUTED}]✓ Allowed: {escape(verdict.tool_name)} (once)[/{MUTED}]\n")
-                    return True
-                renderer.console.print(f"  [{MUTED}]✗ Denied: {escape(verdict.tool_name)}[/{MUTED}]\n")
-                return False
+                return _apply_choice(answer.strip().lower())
             except (EOFError, KeyboardInterrupt):
                 renderer.console.print(f"  [{MUTED}]✗ Denied: {escape(verdict.tool_name)}[/{MUTED}]\n")
                 return False
@@ -1050,7 +1138,31 @@ async def run_cli(
 
     # Set up ask_user callback for mid-turn questions
     async def _ask_user_callback(question: str, options: list[str] | None = None) -> str:
+        def _resolve_choice(answer: str, opts: list[str] | None) -> str:
+            if opts and answer.isdigit():
+                idx = int(answer)
+                if 1 <= idx <= len(opts):
+                    return opts[idx - 1]
+                renderer.console.print(f"  [{MUTED}]Invalid choice #{idx}, using as freeform answer[/{MUTED}]")
+            return answer
+
         await renderer.stop_thinking()
+
+        if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+            body: list[tuple[str, str]] = [("class:dialog.body", f"  {question}\n\n")]
+            if options:
+                for i, opt in enumerate(options, 1):
+                    body.append(("class:dialog.option.key", f"  {i}. "))
+                    body.append(("class:dialog.option", f"{opt}\n"))
+            answer = await renderer.get_fullscreen_layout().show_dialog(
+                title="Question",
+                body_fragments=body,
+            )
+            renderer.start_thinking()
+            if answer is None:
+                return ""
+            return _resolve_choice(answer.strip(), options)
+
         renderer.console.print(f"\n[yellow bold]Question:[/yellow bold] {question}")
         try:
             from prompt_toolkit import PromptSession as _AskSession
@@ -1063,13 +1175,7 @@ async def run_cli(
                 hint = "(enter number to select, or type a custom answer; esc to cancel)"
                 renderer.console.print(f"  [{MUTED}]{hint}[/{MUTED}]")
                 answer = await _ask_session.prompt_async("  Choice: ")
-                answer = answer.strip()
-                if answer.isdigit():
-                    idx = int(answer)
-                    if 1 <= idx <= len(options):
-                        answer = options[idx - 1]
-                    else:
-                        renderer.console.print(f"  [{MUTED}]Invalid choice #{idx}, using as freeform answer[/{MUTED}]")
+                answer = _resolve_choice(answer.strip(), options)
             else:
                 renderer.console.print(f"  [{MUTED}](esc to cancel)[/{MUTED}]")
                 answer = await _ask_session.prompt_async("  Answer: ")
@@ -1773,6 +1879,8 @@ async def _run_repl(
     id_kw = _identity_kwargs(config)
 
     from prompt_toolkit import PromptSession
+    from prompt_toolkit.application import Application
+    from prompt_toolkit.buffer import Buffer
     from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.document import Document
     from prompt_toolkit.filters import Condition
@@ -1781,19 +1889,64 @@ async def _run_repl(
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.styles import Style as PtStyle
 
+    from .layout import AnteroomLayout, create_anteroom_style, format_header
+
+    _command_descriptions: dict[str, str] = {
+        "new": "new conversation",
+        "append": "add to last message",
+        "last": "continue last conversation",
+        "list": "list conversations",
+        "search": "search conversations",
+        "resume": "resume a conversation",
+        "delete": "delete a conversation",
+        "rename": "rename a conversation",
+        "slug": "show conversation slug",
+        "rewind": "undo messages",
+        "compact": "compress context",
+        "conventions": "show project conventions",
+        "tools": "list available tools",
+        "skills": "list loaded skills",
+        "reload-skills": "reload skill files",
+        "pack": "manage packs",
+        "packs": "list installed packs",
+        "project": "manage projects",
+        "projects": "list projects",
+        "space": "manage spaces",
+        "spaces": "list spaces",
+        "mcp": "MCP server status",
+        "model": "switch model",
+        "plan": "planning mode",
+        "upload": "upload a file",
+        "usage": "token usage stats",
+        "verbose": "cycle verbosity",
+        "detail": "tool call details",
+        "help": "show help",
+        "quit": "exit",
+        "exit": "exit",
+    }
+
     class AnteroomCompleter(Completer):
         """Tab completer for / commands, @ file paths, and conversation slugs."""
 
         _slug_commands = frozenset({"resume", "delete", "rename"})
 
-        def __init__(self, commands: list[str], skill_names: list[str], wd: str, db: Any) -> None:
+        def __init__(
+            self,
+            commands: list[str],
+            skill_names: list[str],
+            skill_descriptions: dict[str, str],
+            wd: str,
+            db: Any,
+        ) -> None:
             self._commands = commands
             self._skill_names = skill_names
+            self._skill_descriptions = skill_descriptions
             self._wd = wd
             self._db = db
 
-        def update_skill_names(self, skill_names: list[str]) -> None:
+        def update_skill_names(self, skill_names: list[str], skill_descriptions: dict[str, str]) -> None:
             self._skill_names = skill_names
+            self._skill_descriptions = skill_descriptions
 
         def _get_slug_completions(self, partial: str) -> Any:
             """Yield slug completions matching the partial input."""
@@ -1810,15 +1963,16 @@ async def _run_repl(
             text = document.text_before_cursor
             word = document.get_word_before_cursor(WORD=True)
 
-            if text.lstrip().startswith("/") and " " not in text.strip():
-                # Complete / commands and skills
+            if text.lstrip().startswith("/") and " " not in text.lstrip():
                 prefix = word.lstrip("/")
                 for cmd in self._commands:
                     if cmd.startswith(prefix):
-                        yield Completion(f"/{cmd}", start_position=-len(word))
+                        meta = _command_descriptions.get(cmd, "")
+                        yield Completion(f"/{cmd} ", start_position=-len(word), display_meta=meta)
                 for sname in self._skill_names:
                     if sname.startswith(prefix):
-                        yield Completion(f"/{sname} ", start_position=-len(word))
+                        desc = self._skill_descriptions.get(sname, "skill")
+                        yield Completion(f"/{sname} ", start_position=-len(word), display_meta=desc)
             elif text.lstrip().startswith("/"):
                 # Check if we're completing an argument after a slug-accepting command
                 parts = text.lstrip().split(None, 2)
@@ -1888,7 +2042,8 @@ async def _run_repl(
         "exit",
     ]
     skill_names = [s.name for s in skill_registry.list_skills()] if skill_registry else []
-    completer = AnteroomCompleter(commands, skill_names, working_dir, db)
+    skill_descs = {s.name: s.description for s in skill_registry.list_skills()} if skill_registry else {}
+    completer = AnteroomCompleter(commands, skill_names, skill_descs, working_dir, db)
 
     def _rebuild_tools() -> None:
         """Rebuild the tool list after MCP changes."""
@@ -1934,13 +2089,26 @@ async def _run_repl(
     _last_text_change: list[float] = [0.0]
 
     # Enter submits; Alt+Enter / Shift+Enter / Ctrl+J inserts newline
+    def _accept_completion(buf: Any) -> bool:
+        """Accept the current completion if the menu is open. Returns True if handled."""
+        if buf.complete_state and buf.complete_state.current_completion:
+            saved_completer = buf.completer
+            buf.completer = None
+            buf.apply_completion(buf.complete_state.current_completion)
+            buf.completer = saved_completer
+            return True
+        return False
+
     @kb.add("enter")
     def _submit(event: Any) -> None:
+        buf = event.current_buffer
+        if _accept_completion(buf):
+            return
         if _is_paste(_last_text_change[0]):
             # Rapid input (paste) — insert newline, don't submit
-            event.current_buffer.insert_text("\n")
+            buf.insert_text("\n")
         else:
-            event.current_buffer.validate_and_handle()
+            buf.validate_and_handle()
 
     @kb.add("escape", "enter")
     @kb.add("c-j")
@@ -1982,8 +2150,38 @@ async def _run_repl(
             "completion-menu.completion.current": f"bg:{GOLD} #1a1a2e",
             "completion-menu.meta.completion": f"bg:#1a1a2e {MUTED}",
             "completion-menu.meta.completion.current": f"bg:{GOLD} #1a1a2e",
+            "bottom-toolbar": "bg:#1e1e2e #9090a0 noreverse",
+            "bottom-toolbar.text": "noreverse",
+            "bottom-toolbar.model": GOLD,
+            "bottom-toolbar.tokens": "#c0c0d0",
+            "bottom-toolbar.tokens-warn": "#e8b830",
+            "bottom-toolbar.tokens-danger": "#e05050",
+            "bottom-toolbar.dim": "#707888",
+            "bottom-toolbar.sep": "#505868",
+            "bottom-toolbar.mcp": "#88a0b8",
         }
     )
+
+    _toolbar_cache: list[tuple[str, str]] = []
+    _toolbar_msg_count: list[int] = [0]
+
+    def _toolbar_refresh() -> None:
+        """Recompute the cached toolbar content."""
+        _toolbar_msg_count[0] = len(ai_messages)
+        _toolbar_cache[:] = renderer.format_status_toolbar(
+            model=current_model,
+            current_tokens=_estimate_tokens(ai_messages),
+            max_context=config.cli.model_context_window,
+            message_count=len(ai_messages),
+            approval_mode=config.safety.approval_mode,
+            tool_count=len(all_tool_names),
+            mcp_statuses=mcp_manager.get_server_statuses() if mcp_manager else None,
+        )
+
+    def _bottom_toolbar() -> list[tuple[str, str]]:
+        if len(ai_messages) != _toolbar_msg_count[0] or not _toolbar_cache:
+            _toolbar_refresh()
+        return _toolbar_cache
 
     session: PromptSession[str] = PromptSession(
         history=FileHistory(str(history_path)),
@@ -1993,6 +2191,7 @@ async def _run_repl(
         completer=completer,
         reserve_space_for_menu=4,
         style=_repl_style,
+        bottom_toolbar=_bottom_toolbar,
     )
 
     _patch_completion_menu_position()
@@ -2003,7 +2202,151 @@ async def _run_repl(
 
     session.default_buffer.on_text_changed += _on_buffer_change
 
+    # -- Full-screen Application setup --
+    # The input buffer feeds accepted text into the input queue.
+    # An asyncio.Event signals when new input is available.
+    _input_ready = asyncio.Event()
+    _accepted_text: list[str] = [""]
+    _sub_prompt_event: list[asyncio.Event | None] = [None]
+
+    def _on_accept(buf: Buffer) -> bool:
+        """Buffer accept handler — stash text and signal the input loop."""
+        _accepted_text[0] = buf.text
+        # If a sub-prompt is active, signal it instead of the main input loop
+        if _sub_prompt_event[0] is not None:
+            _sub_prompt_event[0].set()
+        else:
+            _input_ready.set()
+        return True  # keep text in buffer (we clear it after reading)
+
+    async def _fs_sub_prompt(prompt_text: str = "  ") -> str:
+        """Prompt for a single line of input within the fullscreen app.
+
+        Used by interactive slash commands (/project create, /model, etc.)
+        that need sub-prompt input without leaving fullscreen.
+        """
+        evt = asyncio.Event()
+        _sub_prompt_event[0] = evt
+        # Show prompt hint in the output pane
+        renderer.console.print(f"[{CHROME}]{prompt_text}[/{CHROME}]", end="")
+        _fs_input_buffer.reset()
+        _fs_app.invalidate()
+        try:
+            await asyncio.wait_for(evt.wait(), timeout=_SUB_PROMPT_TIMEOUT)
+            result = _accepted_text[0]
+            _fs_input_buffer.reset()
+            _fs_app.invalidate()
+            return result
+        except asyncio.TimeoutError:
+            return ""
+        finally:
+            _sub_prompt_event[0] = None
+
+    _fs_input_buffer = Buffer(
+        name="anteroom-input",
+        completer=completer,
+        complete_while_typing=True,
+        history=FileHistory(str(history_path)),
+        accept_handler=_on_accept,
+        multiline=True,
+    )
+
+    def _should_auto_complete() -> bool:
+        text = _fs_input_buffer.text
+        stripped = text.lstrip()
+        if stripped.startswith("/") and " " not in stripped:
+            return True
+        if "@" in (text.split()[-1] if text.split() else ""):
+            return True
+        return False
+
+    _fs_input_buffer.complete_while_typing = Condition(_should_auto_complete)
+    _fs_input_buffer.on_text_changed += _on_buffer_change
+
+    _cached_git_branch: list[str] = [""]
+    _cached_git_branch_time: list[float] = [0.0]
+    _git_branch_pending: list[bool] = [False]
+    _cached_project_name: list[str] = [""]
+    _cached_project_id: list[str | None] = [None]
+    _cached_project_time: list[float] = [0.0]
+
+    def _fetch_git_branch_sync() -> str:
+        """Run git rev-parse in a thread-safe way (called via asyncio.to_thread)."""
+        import subprocess as _sp
+
+        try:
+            return (
+                _sp.check_output(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=working_dir,
+                    stderr=_sp.DEVNULL,
+                    timeout=5,
+                )
+                .decode("utf-8", errors="replace")
+                .strip()
+            )
+        except Exception:
+            return ""
+
+    async def _refresh_git_branch() -> None:
+        """Refresh git branch cache in a background thread."""
+        if _git_branch_pending[0]:
+            return
+        _git_branch_pending[0] = True
+        try:
+            _cached_git_branch[0] = await asyncio.to_thread(_fetch_git_branch_sync)
+            _cached_git_branch_time[0] = time.monotonic()
+        finally:
+            _git_branch_pending[0] = False
+        _fs_app.invalidate()
+
+    def _header_fn() -> list[tuple[str, str]]:
+        """Build header fragments from current session state."""
+        # Schedule background git branch refresh when cache is stale
+        now = time.monotonic()
+        if now - _cached_git_branch_time[0] > 5.0 and not _git_branch_pending[0]:
+            try:
+                asyncio.get_running_loop().create_task(_refresh_git_branch())
+            except RuntimeError:
+                pass  # no event loop yet
+
+        _pname = ""
+        if project_id:
+            if now - _cached_project_time[0] > 5.0 or _cached_project_id[0] != project_id:
+                _pdata = storage.get_project(db, project_id)
+                _cached_project_name[0] = _pdata.get("name", "") if _pdata else ""
+                _cached_project_id[0] = project_id
+                _cached_project_time[0] = now
+            _pname = _cached_project_name[0]
+
+        return format_header(
+            model=current_model,
+            working_dir=working_dir,
+            git_branch=_cached_git_branch[0],
+            project_name=_pname,
+            space_name=space["name"] if space else "",
+            conv_title=conv.get("title", "") or "",
+            plan_mode=plan_mode,
+        )
+
+    _anteroom_layout = AnteroomLayout(
+        header_fn=_header_fn,
+        footer_fn=_bottom_toolbar,
+        input_buffer=_fs_input_buffer,
+    )
+
+    _use_fullscreen = sys.stdout.isatty() and sys.stdin.isatty()
+
+    _fs_app: Application[None] = Application(
+        layout=_anteroom_layout.layout,
+        key_bindings=kb,
+        style=create_anteroom_style(),
+        full_screen=_use_fullscreen,
+        mouse_support=_use_fullscreen,
+    )
+
     current_model = config.ai.model
+    _pending_resume_info = False
 
     if resume_conversation_id:
         conv_data = storage.get_conversation(db, resume_conversation_id)
@@ -2012,7 +2355,8 @@ async def _run_repl(
             ai_messages = _load_conversation_messages(db, resume_conversation_id)
             is_first_message = False
             working_dir = _restore_working_dir(conv, tool_registry, working_dir)
-            _show_resume_info(db, conv, ai_messages)
+            # Resume info is deferred to _run_fullscreen() so it renders in the output pane
+            _pending_resume_info = True
             # Load project from resumed conversation if not already set via --project
             if not project_id and conv.get("project_id"):
                 project_id = conv["project_id"]
@@ -2288,7 +2632,74 @@ async def _run_repl(
     # Escape cancels the agent loop (only active during streaming).
     # prompt_toolkit's key processor handles the Escape timeout (~100ms)
     # to distinguish bare Escape from escape sequences (arrow keys, etc.).
-    @kb.add("escape", filter=Condition(lambda: agent_busy.is_set()))
+    @kb.add("pageup")
+    def _scroll_up(event: Any) -> None:
+        _anteroom_layout.scroll_output_up(10)
+        _fs_app.invalidate()
+
+    @kb.add("pagedown")
+    def _scroll_down(event: Any) -> None:
+        _anteroom_layout.scroll_output_down(10)
+        _fs_app.invalidate()
+
+    @kb.add("home")
+    def _scroll_to_top(event: Any) -> None:
+        _anteroom_layout.scroll_output_to_top()
+        _fs_app.invalidate()
+
+    @kb.add("end")
+    def _scroll_to_bottom(event: Any) -> None:
+        _anteroom_layout.scroll_output_to_bottom()
+        _fs_app.invalidate()
+
+    @kb.add("tab")
+    def _tab_complete(event: Any) -> None:
+        buf = event.current_buffer
+        if buf.complete_state:
+            if not _accept_completion(buf):
+                buf.complete_next()
+        else:
+            buf.start_completion()
+
+    @kb.add("s-tab")
+    def _tab_complete_prev(event: Any) -> None:
+        buf = event.current_buffer
+        if buf.complete_state:
+            buf.complete_previous()
+
+    _picker_filter = Condition(lambda: _anteroom_layout._picker_visible)
+
+    @kb.add("up", filter=_picker_filter)
+    @kb.add("k", filter=_picker_filter)
+    def _picker_up(event: Any) -> None:
+        _anteroom_layout.picker_move_up()
+        _fs_app.invalidate()
+
+    @kb.add("down", filter=_picker_filter)
+    @kb.add("j", filter=_picker_filter)
+    def _picker_down(event: Any) -> None:
+        _anteroom_layout.picker_move_down()
+        _fs_app.invalidate()
+
+    @kb.add("enter", filter=_picker_filter)
+    def _picker_accept(event: Any) -> None:
+        _anteroom_layout.accept_picker()
+
+    @kb.add("escape", filter=_picker_filter)
+    def _picker_cancel(event: Any) -> None:
+        _anteroom_layout.cancel_picker()
+
+    _dialog_esc_filter = Condition(lambda: _anteroom_layout._dialog_visible and not _anteroom_layout._picker_visible)
+
+    @kb.add("escape", filter=_dialog_esc_filter)
+    def _dialog_cancel_on_escape(event: Any) -> None:
+        _anteroom_layout.cancel_dialog()
+
+    _agent_esc_filter = Condition(
+        lambda: agent_busy.is_set() and not _anteroom_layout._dialog_visible and not _anteroom_layout._picker_visible
+    )
+
+    @kb.add("escape", filter=_agent_esc_filter)
     def _cancel_on_escape(event: Any) -> None:
         ce = _current_cancel_event[0]
         if ce is not None:
@@ -2297,16 +2708,21 @@ async def _run_repl(
             # in the event loop when it detects the cancel_event.
 
     async def _collect_input() -> None:
-        """Continuously collect user input and put on queue."""
+        """Continuously collect user input via the fullscreen buffer accept handler."""
         while not exit_flag.is_set():
             _exit_flag[0] = False
+            _input_ready.clear()
+
+            # Wait for the buffer accept handler to fire
             try:
-                user_input_raw = await session.prompt_async(_prompt)
-            except EOFError:
-                exit_flag.set()
+                await _input_ready.wait()
+            except asyncio.CancelledError:
                 return
-            except KeyboardInterrupt:
-                continue
+
+            user_input_raw = _accepted_text[0]
+            # Clear the input buffer for the next prompt
+            _fs_input_buffer.reset()
+            _fs_app.invalidate()
 
             if _exit_flag[0]:
                 exit_flag.set()
@@ -2316,6 +2732,10 @@ async def _run_repl(
             text = user_input_raw.strip()
             if not text:
                 continue
+
+            # Echo the user's input into the output pane so it stays visible
+            _anteroom_layout.append_output_fragments([("class:prompt", "> "), ("", text + "\n\n")])
+            _fs_app.invalidate()
 
             if agent_busy.is_set():
                 if input_queue.full():
@@ -2456,7 +2876,7 @@ async def _run_repl(
         # -- Space state --
         _active_space: list[dict[str, Any] | None] = [space]
 
-        def _resolve_space(name_or_id: str) -> dict[str, Any] | None:
+        async def _resolve_space(name_or_id: str) -> dict[str, Any] | None:
             """Look up a space by name, UUID, or UUID prefix. Shows picker on ambiguity."""
             from ..services.space_storage import resolve_space
 
@@ -2464,16 +2884,34 @@ async def _run_repl(
             if match:
                 return match
             if candidates:
-                renderer.console.print(f"\nMultiple spaces match '{name_or_id}':")
-                for i, c in enumerate(candidates, 1):
-                    renderer.console.print(f"  {i}. {c['name']} [{c['id'][:8]}...]")
-                try:
-                    choice = input(f"Select (1-{len(candidates)}): ").strip()
-                    idx = int(choice) - 1
-                    if 0 <= idx < len(candidates):
-                        return candidates[idx]
-                except (ValueError, EOFError, KeyboardInterrupt):
-                    pass
+                if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+                    _sp_lines: list[tuple[str, str]] = [
+                        ("class:dialog.body", f"  Multiple spaces match '{name_or_id}':\n\n"),
+                    ]
+                    for i, c in enumerate(candidates, 1):
+                        _sp_lines.append(("class:dialog.body", f"  [{i}] {c['name']} [{c['id'][:8]}...]\n"))
+                    _sp_ans = await renderer.get_fullscreen_layout().show_dialog(
+                        title="Select Space",
+                        body_fragments=_sp_lines,
+                    )
+                    if _sp_ans is not None:
+                        try:
+                            idx = int(_sp_ans.strip()) - 1
+                            if 0 <= idx < len(candidates):
+                                return candidates[idx]
+                        except ValueError:
+                            pass
+                else:
+                    renderer.console.print(f"\nMultiple spaces match '{name_or_id}':")
+                    for i, c in enumerate(candidates, 1):
+                        renderer.console.print(f"  {i}. {c['name']} [{c['id'][:8]}...]")
+                    try:
+                        choice = input(f"Select (1-{len(candidates)}): ").strip()
+                        idx = int(choice) - 1
+                        if 0 <= idx < len(candidates):
+                            return candidates[idx]
+                    except (ValueError, EOFError, KeyboardInterrupt):
+                        pass
             return None
 
         def _inject_space_instructions(sp: dict[str, Any], instr: str | None = None) -> None:
@@ -2511,7 +2949,7 @@ async def _run_repl(
             # for input, clear it so the prompt renders as gold (idle).
             if agent_busy.is_set() and not _has_pending_work():
                 agent_busy.clear()
-                session.app.invalidate()
+                _fs_app.invalidate()
 
             try:
                 user_input = await asyncio.wait_for(input_queue.get(), timeout=0.5)
@@ -2700,14 +3138,30 @@ async def _run_repl(
                         renderer.render_error(f"Conversation not found: {target}. Use /list to see conversations.")
                         continue
                     title = to_delete.get("title", "Untitled")
-                    try:
-                        answer = input(f'  Delete "{title}"? [y/N] ').strip().lower()
-                    except (EOFError, KeyboardInterrupt):
-                        renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
-                        continue
-                    if answer not in ("y", "yes"):
-                        renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
-                        continue
+                    if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+                        _del_body: list[tuple[str, str]] = [
+                            ("class:dialog.body", f'  Delete "{title}"?\n\n'),
+                            ("class:dialog.option.key", "  [y]"),
+                            ("class:dialog.option", " Yes   "),
+                            ("class:dialog.option.key", "[n]"),
+                            ("class:dialog.option", " No"),
+                        ]
+                        answer = await renderer.get_fullscreen_layout().show_dialog(
+                            title="Delete Conversation",
+                            body_fragments=_del_body,
+                        )
+                        if answer is None or answer.strip().lower() not in ("y", "yes"):
+                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                            continue
+                    else:
+                        try:
+                            answer = input(f'  Delete "{title}"? [y/N] ').strip().lower()
+                        except (EOFError, KeyboardInterrupt):
+                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                            continue
+                        if answer not in ("y", "yes"):
+                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                            continue
                     storage.delete_conversation(db, to_delete["id"], config.app.data_dir)
                     renderer.console.print(f"[{CHROME}]Deleted: {title}[/{CHROME}]\n")
                     if conv.get("id") == to_delete["id"]:
@@ -2899,8 +3353,11 @@ async def _run_repl(
                             invoke_def = skill_registry.get_invoke_skill_definition()
                             if invoke_def:
                                 tools_openai.append(invoke_def)
-                        # Refresh tab-completion skill names
-                        completer.update_skill_names([s.name for s in skills])
+                        # Refresh tab-completion skill names and descriptions
+                        completer.update_skill_names(
+                            [s.name for s in skills],
+                            {s.name: s.description for s in skills},
+                        )
                     continue
                 elif cmd in ("/projects", "/project"):
                     parts = user_input.split(maxsplit=2)
@@ -2947,7 +3404,7 @@ async def _run_repl(
                         instr_lines: list[str] = []
                         try:
                             while True:
-                                line = await session.prompt_async("  ")
+                                line = await _fs_sub_prompt("  ")
                                 if line == "":
                                     break
                                 instr_lines.append(line)
@@ -2956,7 +3413,7 @@ async def _run_repl(
                         instr_text = "\n".join(instr_lines).strip()
                         renderer.console.print(f"[{CHROME}]Model override (press Enter for default):[/{CHROME}]")
                         try:
-                            model_input = await session.prompt_async("  ")
+                            model_input = await _fs_sub_prompt("  ")
                         except (EOFError, KeyboardInterrupt):
                             model_input = ""
                         model_val = model_input.strip() or None
@@ -2990,6 +3447,7 @@ async def _run_repl(
                             current_model = proj["model"]
                             ai_service = create_ai_service(config.ai)
                             ai_service.config.model = proj["model"]
+                            _toolbar_refresh()
                             renderer.console.print(f"[{CHROME}]Model: {proj['model']}[/{CHROME}]")
                         renderer.console.print(f"[green]Active project: {proj['name']}[/green]\n")
 
@@ -3008,7 +3466,7 @@ async def _run_repl(
                         renderer.console.print(f"[bold]Editing: {proj['name']}[/bold]")
                         renderer.console.print(f"[{CHROME}]New name (Enter to keep '{proj['name']}'):[/{CHROME}]")
                         try:
-                            new_name = await session.prompt_async("  ")
+                            new_name = await _fs_sub_prompt("  ")
                         except (EOFError, KeyboardInterrupt):
                             new_name = ""
                         renderer.console.print(
@@ -3017,7 +3475,7 @@ async def _run_repl(
                         new_instr_lines: list[str] = []
                         try:
                             while True:
-                                line = await session.prompt_async("  ")
+                                line = await _fs_sub_prompt("  ")
                                 if line == "":
                                     break
                                 new_instr_lines.append(line)
@@ -3026,7 +3484,7 @@ async def _run_repl(
                         new_instr = "\n".join(new_instr_lines).strip()
                         renderer.console.print(f"[{CHROME}]New model (Enter to keep, 'clear' to remove):[/{CHROME}]")
                         try:
-                            new_model_input = await session.prompt_async("  ")
+                            new_model_input = await _fs_sub_prompt("  ")
                         except (EOFError, KeyboardInterrupt):
                             new_model_input = ""
                         update_kw: dict[str, Any] = {}
@@ -3060,7 +3518,7 @@ async def _run_repl(
                             continue
                         renderer.console.print(f"[yellow]Delete project '{proj['name']}'? (y/N)[/yellow]")
                         try:
-                            confirm = await session.prompt_async("  ")
+                            confirm = await _fs_sub_prompt("  ")
                         except (EOFError, KeyboardInterrupt):
                             confirm = "n"
                         if confirm.strip().lower() != "y":
@@ -3148,7 +3606,7 @@ async def _run_repl(
                         if not target:
                             renderer.console.print(f"[{CHROME}]Usage: /space switch <name>[/{CHROME}]\n")
                             continue
-                        sp = _resolve_space(target)
+                        sp = await _resolve_space(target)
                         if not sp:
                             renderer.render_error(f"Space '{target}' not found. Run /spaces to list available spaces.")
                             continue
@@ -3164,7 +3622,7 @@ async def _run_repl(
                         if not target:
                             renderer.console.print(f"[{CHROME}]Usage: /space show <name>[/{CHROME}]\n")
                             continue
-                        sp = _resolve_space(target)
+                        sp = await _resolve_space(target)
                         if not sp:
                             renderer.render_error(f"Space '{target}' not found.")
                             continue
@@ -3319,19 +3777,43 @@ async def _run_repl(
                             ns = "default"
                         _pm, _pc = packs_service.resolve_pack(db, ns, name)
                         if not _pm and _pc:
-                            renderer.console.print(f"\nMultiple packs match @{ns}/{name}:")
-                            for _pi, _c in enumerate(_pc, 1):
-                                renderer.console.print(
-                                    f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                    f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+                                _pk_body: list[tuple[str, str]] = [
+                                    ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
+                                ]
+                                for _pi, _c in enumerate(_pc, 1):
+                                    _pk_body.append(
+                                        (
+                                            "class:dialog.body",
+                                            f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                            f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
+                                        )
+                                    )
+                                _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
+                                    title="Select Pack",
+                                    body_fragments=_pk_body,
                                 )
-                            try:
-                                _ch = input(f"Select (1-{len(_pc)}): ").strip()
-                                _idx = int(_ch) - 1
-                                if 0 <= _idx < len(_pc):
-                                    _pm = _pc[_idx]
-                            except (ValueError, EOFError, KeyboardInterrupt):
-                                continue
+                                if _pk_ans is not None:
+                                    try:
+                                        _idx = int(_pk_ans.strip()) - 1
+                                        if 0 <= _idx < len(_pc):
+                                            _pm = _pc[_idx]
+                                    except ValueError:
+                                        pass
+                            else:
+                                renderer.console.print(f"\nMultiple packs match @{ns}/{name}:")
+                                for _pi, _c in enumerate(_pc, 1):
+                                    renderer.console.print(
+                                        f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                                    )
+                                try:
+                                    _ch = input(f"Select (1-{len(_pc)}): ").strip()
+                                    _idx = int(_ch) - 1
+                                    if 0 <= _idx < len(_pc):
+                                        _pm = _pc[_idx]
+                                except (ValueError, EOFError, KeyboardInterrupt):
+                                    continue
                         pack_info = _pm
                         if not pack_info:
                             renderer.console.print(f"[{CHROME}]Pack @{ns}/{name} not found.[/{CHROME}]\n")
@@ -3382,19 +3864,43 @@ async def _run_repl(
                             ns = "default"
                         _pm, _pc = packs_service.resolve_pack(db, ns, name)
                         if not _pm and _pc:
-                            renderer.console.print(f"\nMultiple packs match @{ns}/{name}:")
-                            for _pi, _c in enumerate(_pc, 1):
-                                renderer.console.print(
-                                    f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                    f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+                                _pk_body: list[tuple[str, str]] = [
+                                    ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
+                                ]
+                                for _pi, _c in enumerate(_pc, 1):
+                                    _pk_body.append(
+                                        (
+                                            "class:dialog.body",
+                                            f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                            f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
+                                        )
+                                    )
+                                _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
+                                    title="Select Pack",
+                                    body_fragments=_pk_body,
                                 )
-                            try:
-                                _ch = input(f"Select (1-{len(_pc)}): ").strip()
-                                _idx = int(_ch) - 1
-                                if 0 <= _idx < len(_pc):
-                                    _pm = _pc[_idx]
-                            except (ValueError, EOFError, KeyboardInterrupt):
-                                continue
+                                if _pk_ans is not None:
+                                    try:
+                                        _idx = int(_pk_ans.strip()) - 1
+                                        if 0 <= _idx < len(_pc):
+                                            _pm = _pc[_idx]
+                                    except ValueError:
+                                        pass
+                            else:
+                                renderer.console.print(f"\nMultiple packs match @{ns}/{name}:")
+                                for _pi, _c in enumerate(_pc, 1):
+                                    renderer.console.print(
+                                        f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                                    )
+                                try:
+                                    _ch = input(f"Select (1-{len(_pc)}): ").strip()
+                                    _idx = int(_ch) - 1
+                                    if 0 <= _idx < len(_pc):
+                                        _pm = _pc[_idx]
+                                except (ValueError, EOFError, KeyboardInterrupt):
+                                    continue
                         if not _pm:
                             renderer.console.print(f"[{CHROME}]Pack @{ns}/{name} not found.[/{CHROME}]\n")
                             continue
@@ -3492,19 +3998,45 @@ async def _run_repl(
 
                         _pm, _pc = packs_service.resolve_pack(db, ns, name)
                         if not _pm and _pc:
-                            renderer.console.print(f"\nMultiple packs match @{rich_escape(ns)}/{rich_escape(name)}:")
-                            for _pi, _c in enumerate(_pc, 1):
-                                renderer.console.print(
-                                    f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                    f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+                                _pk_body: list[tuple[str, str]] = [
+                                    ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
+                                ]
+                                for _pi, _c in enumerate(_pc, 1):
+                                    _pk_body.append(
+                                        (
+                                            "class:dialog.body",
+                                            f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                            f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
+                                        )
+                                    )
+                                _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
+                                    title="Select Pack",
+                                    body_fragments=_pk_body,
                                 )
-                            try:
-                                _ch = input(f"Select (1-{len(_pc)}): ").strip()
-                                _idx = int(_ch) - 1
-                                if 0 <= _idx < len(_pc):
-                                    _pm = _pc[_idx]
-                            except (ValueError, EOFError, KeyboardInterrupt):
-                                continue
+                                if _pk_ans is not None:
+                                    try:
+                                        _idx = int(_pk_ans.strip()) - 1
+                                        if 0 <= _idx < len(_pc):
+                                            _pm = _pc[_idx]
+                                    except ValueError:
+                                        pass
+                            else:
+                                renderer.console.print(
+                                    f"\nMultiple packs match @{rich_escape(ns)}/{rich_escape(name)}:"
+                                )
+                                for _pi, _c in enumerate(_pc, 1):
+                                    renderer.console.print(
+                                        f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                                    )
+                                try:
+                                    _ch = input(f"Select (1-{len(_pc)}): ").strip()
+                                    _idx = int(_ch) - 1
+                                    if 0 <= _idx < len(_pc):
+                                        _pm = _pc[_idx]
+                                except (ValueError, EOFError, KeyboardInterrupt):
+                                    continue
                         if not _pm:
                             renderer.console.print(
                                 f"[{CHROME}]Pack @{rich_escape(ns)}/{rich_escape(name)} not found.[/{CHROME}]\n"
@@ -3538,19 +4070,45 @@ async def _run_repl(
 
                         _pm, _pc = packs_service.resolve_pack(db, ns, name)
                         if not _pm and _pc:
-                            renderer.console.print(f"\nMultiple packs match @{rich_escape(ns)}/{rich_escape(name)}:")
-                            for _pi, _c in enumerate(_pc, 1):
-                                renderer.console.print(
-                                    f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                    f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+                                _pk_body: list[tuple[str, str]] = [
+                                    ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
+                                ]
+                                for _pi, _c in enumerate(_pc, 1):
+                                    _pk_body.append(
+                                        (
+                                            "class:dialog.body",
+                                            f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                            f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
+                                        )
+                                    )
+                                _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
+                                    title="Select Pack",
+                                    body_fragments=_pk_body,
                                 )
-                            try:
-                                _ch = input(f"Select (1-{len(_pc)}): ").strip()
-                                _idx = int(_ch) - 1
-                                if 0 <= _idx < len(_pc):
-                                    _pm = _pc[_idx]
-                            except (ValueError, EOFError, KeyboardInterrupt):
-                                continue
+                                if _pk_ans is not None:
+                                    try:
+                                        _idx = int(_pk_ans.strip()) - 1
+                                        if 0 <= _idx < len(_pc):
+                                            _pm = _pc[_idx]
+                                    except ValueError:
+                                        pass
+                            else:
+                                renderer.console.print(
+                                    f"\nMultiple packs match @{rich_escape(ns)}/{rich_escape(name)}:"
+                                )
+                                for _pi, _c in enumerate(_pc, 1):
+                                    renderer.console.print(
+                                        f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
+                                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                                    )
+                                try:
+                                    _ch = input(f"Select (1-{len(_pc)}): ").strip()
+                                    _idx = int(_ch) - 1
+                                    if 0 <= _idx < len(_pc):
+                                        _pm = _pc[_idx]
+                                except (ValueError, EOFError, KeyboardInterrupt):
+                                    continue
                         if not _pm:
                             renderer.console.print(
                                 f"[{CHROME}]Pack @{rich_escape(ns)}/{rich_escape(name)} not found.[/{CHROME}]\n"
@@ -3697,6 +4255,7 @@ async def _run_repl(
                     current_model = new_model
                     ai_service = create_ai_service(config.ai)
                     ai_service.config.model = new_model
+                    _toolbar_refresh()
                     renderer.console.print(f"[{CHROME}]Switched to model: {new_model}[/{CHROME}]\n")
                     continue
                 elif cmd == "/plan":
@@ -3834,7 +4393,33 @@ async def _run_repl(
                 elif cmd == "/resume":
                     parts = user_input.split(maxsplit=1)
                     if len(parts) < 2:
-                        picked = await _show_resume_picker()
+                        if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+                            convs = storage.list_conversations(db, limit=20)
+                            if not convs:
+                                renderer.render_info("No conversations found.")
+                                continue
+                            for c in convs:
+                                title = (c.get("title") or "Untitled")[:35]
+                                badge = _picker_type_badge(c.get("type") or "chat")
+                                ts = _picker_relative_time(c.get("updated_at") or "")
+                                count = c.get("message_count") or 0
+                                slug = (c.get("slug") or "")[:20]
+                                c["_label"] = f"{title}" + (f" {badge}" if badge else "")
+                                c["_meta"] = f"{slug}  {count}msg  {ts}"
+
+                            preview_cache: dict[str, list[tuple[str, str]]] = {}
+
+                            def _preview(item: dict[str, Any]) -> list[tuple[str, str]]:
+                                cid = item["id"]
+                                if cid not in preview_cache:
+                                    msgs = storage.list_messages(db, cid)
+                                    preview_cache[cid] = _picker_format_preview(msgs)
+                                return preview_cache[cid]
+
+                            _fs_layout = renderer.get_fullscreen_layout()
+                            picked = await _fs_layout.show_picker(items=convs, preview_fn=_preview)
+                        else:
+                            picked = await _show_resume_picker()
                         if picked is None:
                             continue
                         loaded = storage.get_conversation(db, picked["id"])
@@ -3864,14 +4449,28 @@ async def _run_repl(
                             preview += "..."
                         renderer.console.print(f"  {msg['position']}. [{role_label}] {preview}")
 
-                    renderer.console.print(
-                        f"\n[{CHROME}]Enter position to rewind to (keep that message, delete after):[/{CHROME}]"
-                    )
-                    try:
-                        pos_input = input("  Position: ").strip()
-                    except (EOFError, KeyboardInterrupt):
-                        renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
-                        continue
+                    if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+                        _rw_body: list[tuple[str, str]] = [
+                            ("class:dialog.body", "  Enter position to rewind to\n"),
+                            ("class:dialog.body", "  (keep that message, delete after)\n"),
+                        ]
+                        pos_input_raw = await renderer.get_fullscreen_layout().show_dialog(
+                            title="Rewind Conversation",
+                            body_fragments=_rw_body,
+                        )
+                        if pos_input_raw is None:
+                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                            continue
+                        pos_input = pos_input_raw.strip()
+                    else:
+                        renderer.console.print(
+                            f"\n[{CHROME}]Enter position to rewind to (keep that message, delete after):[/{CHROME}]"
+                        )
+                        try:
+                            pos_input = input("  Position: ").strip()
+                        except (EOFError, KeyboardInterrupt):
+                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                            continue
 
                     if not pos_input.isdigit():
                         renderer.render_error("Invalid position")
@@ -3894,12 +4493,32 @@ async def _run_repl(
                         )
                         for fp in sorted(file_paths):
                             renderer.console.print(f"  - {fp}")
-                        try:
-                            answer = input("  Undo file changes? [y/N] ").strip().lower()
-                            undo_files = answer in ("y", "yes")
-                        except (EOFError, KeyboardInterrupt):
-                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
-                            continue
+                        if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+                            _undo_body: list[tuple[str, str]] = [
+                                (
+                                    "class:dialog.body",
+                                    f"  {len(file_paths)} file(s) modified after this point.\n  Undo file changes?\n\n",
+                                ),
+                                ("class:dialog.option.key", "  [y]"),
+                                ("class:dialog.option", " Yes   "),
+                                ("class:dialog.option.key", "[n]"),
+                                ("class:dialog.option", " No"),
+                            ]
+                            _undo_ans = await renderer.get_fullscreen_layout().show_dialog(
+                                title="Undo File Changes",
+                                body_fragments=_undo_body,
+                            )
+                            if _undo_ans is None:
+                                renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                                continue
+                            undo_files = _undo_ans.strip().lower() in ("y", "yes")
+                        else:
+                            try:
+                                answer = input("  Undo file changes? [y/N] ").strip().lower()
+                                undo_files = answer in ("y", "yes")
+                            except (EOFError, KeyboardInterrupt):
+                                renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
+                                continue
 
                     result = await rewind_service(
                         db=db,
@@ -4279,6 +4898,7 @@ async def _run_repl(
                                     response_tokens=response_token_count,
                                     elapsed=total_elapsed,
                                 )
+                                _toolbar_refresh()
                                 renderer.render_newline()
 
                     if not should_retry:
@@ -4304,7 +4924,7 @@ async def _run_repl(
                     thinking = False
                 if not _has_pending_work():
                     agent_busy.clear()
-                    session.app.invalidate()
+                    _fs_app.invalidate()
                 _current_cancel_event[0] = None
                 if cancel_event_ref is not None:
                     cancel_event_ref[0] = None
@@ -4313,30 +4933,43 @@ async def _run_repl(
                 if not _IS_WINDOWS:
                     signal.signal(signal.SIGINT, original_handler)
 
-    from prompt_toolkit.patch_stdout import patch_stdout as _patch_stdout
+    # -- Full-screen application lifecycle --
+    if _use_fullscreen:
+        renderer.use_fullscreen_output(_anteroom_layout, _fs_app.invalidate)
+    renderer.set_tool_dedup(config.cli.tool_dedup)
+    renderer.configure_thresholds(
+        esc_hint_delay=config.cli.esc_hint_delay,
+        stall_display=config.cli.stall_display_threshold,
+        stall_warning=config.cli.stall_warning_threshold,
+    )
 
-    with _patch_stdout():
-        renderer.use_stdout_console()
-        renderer.set_tool_dedup(config.cli.tool_dedup)
-        renderer.configure_thresholds(
-            esc_hint_delay=config.cli.esc_hint_delay,
-            stall_display=config.cli.stall_display_threshold,
-            stall_warning=config.cli.stall_warning_threshold,
-        )
+    async def _run_fullscreen() -> None:
+        """Run input collector and agent runner inside the fullscreen app."""
+        # Render deferred resume info now that console writes to the output pane
+        if _pending_resume_info:
+            _show_resume_info(db, conv, ai_messages)
+
         input_task = asyncio.create_task(_collect_input())
         runner_task = asyncio.create_task(_agent_runner())
 
         # Wait for either task to signal exit
         done_tasks, pending_tasks = await asyncio.wait({input_task, runner_task}, return_when=asyncio.FIRST_COMPLETED)
         exit_flag.set()
+        _input_ready.set()  # unblock _collect_input if waiting
         for t in pending_tasks:
             t.cancel()
             try:
                 await t
             except BaseException:
                 pass
+        # Exit the fullscreen application
+        _fs_app.exit()
 
-    # Show resume hint after patch_stdout exits so output isn't swallowed
+    _fs_app.after_render += lambda _app: None  # ensure event loop ticks
+    asyncio.get_running_loop().call_soon(lambda: asyncio.create_task(_run_fullscreen()))
+    await _fs_app.run_async()
+
+    # Show resume hint after fullscreen exits
     if conv.get("id") and not is_first_message:
         resume_label = conv.get("slug") or conv["id"][:8]
         from rich.console import Console as _HintConsole

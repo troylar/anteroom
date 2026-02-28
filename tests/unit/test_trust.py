@@ -169,9 +169,10 @@ class TestCheckProjectTrust:
         mock_session.prompt_async = AsyncMock(return_value="y")
 
         with (
-            patch("anteroom.cli.repl.renderer"),
+            patch("anteroom.cli.repl.renderer") as _mock_rend,
             patch("prompt_toolkit.PromptSession", return_value=mock_session),
         ):
+            _mock_rend.is_fullscreen.return_value = False
             result = await _check_project_trust(md, new_content, data_dir=tmp_path)
         assert result == new_content
         # Trust store should be updated with new hash
@@ -190,9 +191,10 @@ class TestCheckProjectTrust:
         mock_session.prompt_async = AsyncMock(return_value="n")
 
         with (
-            patch("anteroom.cli.repl.renderer"),
+            patch("anteroom.cli.repl.renderer") as _mock_rend,
             patch("prompt_toolkit.PromptSession", return_value=mock_session),
         ):
+            _mock_rend.is_fullscreen.return_value = False
             result = await _check_project_trust(md, new_content, data_dir=tmp_path)
         assert result is None
 
@@ -208,9 +210,10 @@ class TestCheckProjectTrust:
         mock_session.prompt_async = AsyncMock(return_value="y")
 
         with (
-            patch("anteroom.cli.repl.renderer"),
+            patch("anteroom.cli.repl.renderer") as _mock_rend,
             patch("prompt_toolkit.PromptSession", return_value=mock_session),
         ):
+            _mock_rend.is_fullscreen.return_value = False
             result = await _check_project_trust(md, content, data_dir=tmp_path)
 
         assert result == content
@@ -228,9 +231,10 @@ class TestCheckProjectTrust:
         mock_session.prompt_async = AsyncMock(return_value="n")
 
         with (
-            patch("anteroom.cli.repl.renderer"),
+            patch("anteroom.cli.repl.renderer") as _mock_rend,
             patch("prompt_toolkit.PromptSession", return_value=mock_session),
         ):
+            _mock_rend.is_fullscreen.return_value = False
             result = await _check_project_trust(md, content, data_dir=tmp_path)
 
         assert result is None
@@ -248,9 +252,10 @@ class TestCheckProjectTrust:
         mock_session.prompt_async = AsyncMock(side_effect=EOFError)
 
         with (
-            patch("anteroom.cli.repl.renderer"),
+            patch("anteroom.cli.repl.renderer") as _mock_rend,
             patch("prompt_toolkit.PromptSession", return_value=mock_session),
         ):
+            _mock_rend.is_fullscreen.return_value = False
             result = await _check_project_trust(md, content, data_dir=tmp_path)
 
         assert result is None
@@ -267,9 +272,10 @@ class TestCheckProjectTrust:
         mock_session.prompt_async = AsyncMock(side_effect=KeyboardInterrupt)
 
         with (
-            patch("anteroom.cli.repl.renderer"),
+            patch("anteroom.cli.repl.renderer") as _mock_rend,
             patch("prompt_toolkit.PromptSession", return_value=mock_session),
         ):
+            _mock_rend.is_fullscreen.return_value = False
             result = await _check_project_trust(md, content, data_dir=tmp_path)
 
         assert result is None
@@ -288,9 +294,10 @@ class TestCheckProjectTrust:
         mock_session.prompt_async = AsyncMock(return_value="r")
 
         with (
-            patch("anteroom.cli.repl.renderer"),
+            patch("anteroom.cli.repl.renderer") as _mock_rend,
             patch("prompt_toolkit.PromptSession", return_value=mock_session),
         ):
+            _mock_rend.is_fullscreen.return_value = False
             result = await _check_project_trust(md, content, data_dir=tmp_path)
 
         assert result == content
@@ -311,9 +318,10 @@ class TestCheckProjectTrust:
         mock_session.prompt_async = AsyncMock(side_effect=["v", "y"])
 
         with (
-            patch("anteroom.cli.repl.renderer"),
+            patch("anteroom.cli.repl.renderer") as _mock_rend,
             patch("prompt_toolkit.PromptSession", return_value=mock_session),
         ):
+            _mock_rend.is_fullscreen.return_value = False
             result = await _check_project_trust(md, content, data_dir=tmp_path)
 
         assert result == content
