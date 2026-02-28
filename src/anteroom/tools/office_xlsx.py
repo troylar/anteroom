@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from typing import Any
 
@@ -473,7 +474,7 @@ def _create_com(manager: Any, resolved: str, display_path: str, **kwargs: Any) -
             row_num = 1
             if headers:
                 for col_num, val in enumerate(headers, 1):
-                    ws.Cells(row_num, col_num).Value = val
+                    ws.Cells(row_num, col_num).Value = _sanitize_cell_value(val)
                 row_num += 1
                 total_rows += 1
 
@@ -481,7 +482,7 @@ def _create_com(manager: Any, resolved: str, display_path: str, **kwargs: Any) -
                 if total_rows >= _MAX_ROWS:
                     break
                 for col_num, val in enumerate(row, 1):
-                    ws.Cells(row_num, col_num).Value = val
+                    ws.Cells(row_num, col_num).Value = _sanitize_cell_value(val)
                 row_num += 1
                 total_rows += 1
 
@@ -586,7 +587,7 @@ def _edit_com(manager: Any, resolved: str, display_path: str, **kwargs: Any) -> 
                 value = upd.get("value")
                 if not cell:
                     continue
-                ws.Range(cell).Value = value
+                ws.Range(cell).Value = _sanitize_cell_value(value)
                 cells_updated += 1
 
             if append_rows:
@@ -594,7 +595,7 @@ def _edit_com(manager: Any, resolved: str, display_path: str, **kwargs: Any) -> 
                 next_row = used.Row + used.Rows.Count if used is not None else 1
                 for row in append_rows:
                     for col_num, val in enumerate(row, 1):
-                        ws.Cells(next_row, col_num).Value = val
+                        ws.Cells(next_row, col_num).Value = _sanitize_cell_value(val)
                     next_row += 1
                     rows_appended += 1
 
@@ -605,7 +606,7 @@ def _edit_com(manager: Any, resolved: str, display_path: str, **kwargs: Any) -> 
             rows = sheet_def.get("rows") or []
             for r_idx, row in enumerate(rows[:_MAX_ROWS], 1):
                 for c_idx, val in enumerate(row, 1):
-                    ws_new.Cells(r_idx, c_idx).Value = val
+                    ws_new.Cells(r_idx, c_idx).Value = _sanitize_cell_value(val)
             sheets_added += 1
 
         wb.Save()
@@ -2171,6 +2172,20 @@ def _edit_lib(resolved: str, display_path: str, **kwargs: Any) -> dict[str, Any]
 
 
 _ALLOWED_URL_SCHEMES = ("http://", "https://", "mailto:")
+
+_DDE_PATTERN = re.compile(r"^[=+\-@]\s*[A-Za-z]+\|", re.IGNORECASE)
+
+
+def _sanitize_cell_value(val: Any) -> Any:
+    """Block DDE formula injection in COM cell writes.
+
+    Values like ``=CMD|'/C calc'!A0`` exploit DDE to execute system commands.
+    Legitimate formulas (``=SUM(A1:A10)``) do not contain pipe characters after
+    the function name, so this only blocks the DDE vector.
+    """
+    if isinstance(val, str) and _DDE_PATTERN.match(val):
+        return "'" + val
+    return val
 
 
 def _validate_url(url: str) -> str | None:

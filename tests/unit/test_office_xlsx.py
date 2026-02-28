@@ -6,7 +6,14 @@ from unittest.mock import patch
 
 import pytest
 
-from anteroom.tools.office_xlsx import _MAX_ROWS, AVAILABLE, DEFINITION, handle, set_working_dir
+from anteroom.tools.office_xlsx import (
+    _MAX_ROWS,
+    AVAILABLE,
+    DEFINITION,
+    _sanitize_cell_value,
+    handle,
+    set_working_dir,
+)
 
 _needs_openpyxl = pytest.mark.skipif(not AVAILABLE, reason="requires openpyxl: pip install anteroom[office]")
 
@@ -1170,6 +1177,50 @@ class TestCharts:
     async def test_chart_file_not_found(self):
         result = await handle(action="charts", path="missing.xlsx", data_range="A1:B3")
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Security: DDE formula injection sanitization
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizeCellValue:
+    def test_normal_string_passes_through(self):
+        assert _sanitize_cell_value("hello") == "hello"
+
+    def test_number_passes_through(self):
+        assert _sanitize_cell_value(42) == 42
+
+    def test_none_passes_through(self):
+        assert _sanitize_cell_value(None) is None
+
+    def test_legitimate_formula_passes_through(self):
+        assert _sanitize_cell_value("=SUM(A1:A10)") == "=SUM(A1:A10)"
+
+    def test_dde_cmd_blocked(self):
+        val = "=CMD|'/C calc'!A0"
+        result = _sanitize_cell_value(val)
+        assert result.startswith("'")
+
+    def test_dde_msexcel_blocked(self):
+        val = "=MSEXCEL|'\\..\\file'!A0"
+        result = _sanitize_cell_value(val)
+        assert result.startswith("'")
+
+    def test_dde_with_plus_prefix(self):
+        val = "+CMD|'/C whoami'!A0"
+        result = _sanitize_cell_value(val)
+        assert result.startswith("'")
+
+    def test_dde_with_minus_prefix(self):
+        val = "-CMD|'/C id'!A0"
+        result = _sanitize_cell_value(val)
+        assert result.startswith("'")
+
+    def test_dde_with_at_prefix(self):
+        val = "@SUM|foo!A0"
+        result = _sanitize_cell_value(val)
+        assert result.startswith("'")
 
 
 # ---------------------------------------------------------------------------

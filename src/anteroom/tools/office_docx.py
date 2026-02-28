@@ -1554,6 +1554,10 @@ def _find_regex_lib(resolved: str, display_path: str, **kwargs: Any) -> dict[str
     if not pattern:
         return {"error": "pattern is required for find_regex"}
 
+    max_pattern_len = 200
+    if len(pattern) > max_pattern_len:
+        return {"error": f"Regex pattern too long (max {max_pattern_len} characters)"}
+
     try:
         compiled = re.compile(pattern)
     except re.error as exc:

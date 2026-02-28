@@ -847,6 +847,17 @@ class TestFindRegex:
         assert "Invalid regex" in result["error"]
 
     @pytest.mark.asyncio
+    async def test_pattern_too_long(self, tmp_path):
+        await self._create_doc()
+        result = await handle(
+            action="find_regex",
+            path="regex.docx",
+            pattern="a" * 201,
+        )
+        assert "error" in result
+        assert "too long" in result["error"]
+
+    @pytest.mark.asyncio
     async def test_file_not_found(self):
         result = await handle(
             action="find_regex",
