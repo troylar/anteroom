@@ -41,6 +41,7 @@ AVAILABLE = _BACKEND is not None
 _MAX_OUTPUT = 100_000
 _MAX_CONTENT_BLOCKS = 200
 _MAX_SLIDES = 100
+_MAX_EDIT_OPS = 500
 
 # English Metric Units per inch (used by COM backend for position/size)
 _EMU_PER_INCH = 914400
@@ -662,6 +663,19 @@ def _edit_com(manager: Any, resolved: str, display_path: str, **kwargs: Any) -> 
     if slides and len(slides) > _MAX_SLIDES:
         prs.Close()
         return {"error": f"Too many slides to append (max {_MAX_SLIDES})"}
+
+    for _arr_name, _arr in [
+        ("table_edits", table_edits),
+        ("table_format", table_format),
+        ("shape_edits", shape_edits),
+        ("notes_edits", notes_edits),
+        ("paragraph_edits", paragraph_edits),
+        ("placeholder_edits", placeholder_edits),
+        ("image_replacements", image_replacements),
+    ]:
+        if len(_arr) > _MAX_EDIT_OPS:
+            prs.Close()
+            return {"error": f"Too many {_arr_name} entries (max {_MAX_EDIT_OPS})"}
 
     current_count = prs.Slides.Count
     if slides and current_count + len(slides) > _MAX_SLIDES:
@@ -2770,6 +2784,18 @@ def _edit_lib(resolved: str, display_path: str, **kwargs: Any) -> dict[str, Any]
 
     if slides_to_add and len(slides_to_add) > _MAX_SLIDES:
         return {"error": f"Too many slides to append (max {_MAX_SLIDES})"}
+
+    for _arr_name, _arr in [
+        ("table_edits", table_edits),
+        ("table_format", table_format),
+        ("shape_edits", shape_edits),
+        ("notes_edits", notes_edits),
+        ("paragraph_edits", paragraph_edits),
+        ("placeholder_edits", placeholder_edits),
+        ("image_replacements", image_replacements),
+    ]:
+        if len(_arr) > _MAX_EDIT_OPS:
+            return {"error": f"Too many {_arr_name} entries (max {_MAX_EDIT_OPS})"}
 
     current_count = len(prs.slides)
     if slides_to_add and current_count + len(slides_to_add) > _MAX_SLIDES:

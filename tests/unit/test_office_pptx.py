@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from anteroom.tools.office_pptx import _MAX_SLIDES, AVAILABLE, DEFINITION, handle, set_working_dir
+from anteroom.tools.office_pptx import _MAX_EDIT_OPS, _MAX_SLIDES, AVAILABLE, DEFINITION, handle, set_working_dir
 
 _needs_pptx = pytest.mark.skipif(not AVAILABLE, reason="requires python-pptx: pip install anteroom[office]")
 
@@ -1894,6 +1894,25 @@ class TestEditErrorMessageNewParams:
         assert "paragraph_edits" in result["error"]
         assert "placeholder_edits" in result["error"]
         assert "image_replacements" in result["error"]
+
+
+@_needs_pptx
+class TestEditOpsCap:
+    @pytest.mark.asyncio
+    async def test_too_many_table_edits(self, tmp_path):
+        await handle(action="create", path="cap.pptx", slides=[{"title": "S"}])
+        edits = [{"slide_index": 1, "table_index": 1, "row": 0, "col": 0, "value": "x"}] * (_MAX_EDIT_OPS + 1)
+        result = await handle(action="edit", path="cap.pptx", table_edits=edits)
+        assert "error" in result
+        assert "Too many" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_too_many_paragraph_edits(self, tmp_path):
+        await handle(action="create", path="cap2.pptx", slides=[{"title": "S"}])
+        edits = [{"slide_index": 1, "shape_index": 1, "paragraphs": [{"text": "x"}]}] * (_MAX_EDIT_OPS + 1)
+        result = await handle(action="edit", path="cap2.pptx", paragraph_edits=edits)
+        assert "error" in result
+        assert "Too many" in result["error"]
 
 
 @_needs_pptx
