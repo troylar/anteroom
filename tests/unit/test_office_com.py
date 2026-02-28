@@ -23,8 +23,21 @@ class TestComAppManager:
 
         assert app1 is app2
         mock_dispatch.assert_called_once_with("Word.Application")
-        mock_app.Visible = False
-        mock_app.DisplayAlerts = False
+        assert mock_app.Visible is False
+        assert mock_app.DisplayAlerts is False
+
+    def test_get_app_powerpoint_visible_minimized(self):
+        """PowerPoint refuses Visible=False; must be visible + minimized."""
+        manager = ComAppManager()
+        mock_app = MagicMock()
+
+        with patch("anteroom.tools.office_com._win32com_client") as mock_client:
+            mock_client.Dispatch = MagicMock(return_value=mock_app)
+            manager.get_app("PowerPoint.Application")
+
+        assert mock_app.Visible is True
+        assert mock_app.WindowState == 2  # ppWindowMinimized
+        assert mock_app.DisplayAlerts is False
 
     def test_get_app_different_prog_ids(self):
         manager = ComAppManager()

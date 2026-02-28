@@ -55,7 +55,13 @@ class ComAppManager:
         """
         if prog_id not in self._apps:
             app = _win32com_client.Dispatch(prog_id)
-            app.Visible = False
+            if prog_id == "PowerPoint.Application":
+                # PowerPoint refuses to automate with Visible=False
+                # (-2147352567). Set visible and minimize instead.
+                app.Visible = True
+                app.WindowState = 2  # ppWindowMinimized
+            else:
+                app.Visible = False
             app.DisplayAlerts = False
             self._apps[prog_id] = app
         return self._apps[prog_id]
