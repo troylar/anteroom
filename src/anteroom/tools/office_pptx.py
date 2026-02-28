@@ -171,7 +171,7 @@ DEFINITION: dict[str, Any] = {
                 "description": (
                     "Key-value pairs for {{key}} token replacement throughout the entire presentation. "
                     "Replaces {{key}} with value in all text frames, tables, and notes. "
-                    "Example: {\"company\": \"Acme\", \"date\": \"2025-01-01\"} replaces "
+                    'Example: {"company": "Acme", "date": "2025-01-01"} replaces '
                     "{{company}} and {{date}} everywhere."
                 ),
             },

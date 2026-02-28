@@ -1822,9 +1822,6 @@ class TestImageReplacements:
             height=2,
         )
 
-        read_before = await handle(action="read", path="img_repl.pptx")
-        shape_count_before = read_before["content"].count("[Shape")
-
         # Find the picture shape index
         from pptx import Presentation as _Presentation
 
