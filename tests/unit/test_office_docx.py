@@ -957,9 +957,7 @@ class TestComDispatchErrorHandling:
             patch("anteroom.tools.office_docx._BACKEND", "com"),
             patch("anteroom.tools.office_docx._com_mod", mock_com_mod),
         ):
-            result = await handle(
-                action="edit", path="test.docx", replacements=[{"old": "a", "new": "b"}]
-            )
+            result = await handle(action="edit", path="test.docx", replacements=[{"old": "a", "new": "b"}])
 
         assert "error" in result
         assert "Access denied by security policy" in result["error"]
