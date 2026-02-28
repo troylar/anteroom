@@ -8,7 +8,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from . import storage
-from .embeddings import EmbeddingPermanentError, EmbeddingService, EmbeddingTransientError
+from .embeddings import EmbeddingPermanentError, EmbeddingService, EmbeddingTransientError, LocalEmbeddingService
 
 if TYPE_CHECKING:
     from ..db import ThreadSafeConnection
@@ -24,7 +24,12 @@ MAX_STORE_RETRIES = 3
 
 
 class EmbeddingWorker:
-    def __init__(self, db: ThreadSafeConnection, embedding_service: EmbeddingService, batch_size: int = 50) -> None:
+    def __init__(
+        self,
+        db: ThreadSafeConnection,
+        embedding_service: EmbeddingService | LocalEmbeddingService,
+        batch_size: int = 50,
+    ) -> None:
         self._db = db
         self._service = embedding_service
         self._batch_size = batch_size

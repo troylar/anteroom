@@ -103,7 +103,7 @@ class RetentionWorker:
 
     def __init__(
         self,
-        db: object,
+        db: ThreadSafeConnection,
         data_dir: Path,
         retention_days: int,
         *,
