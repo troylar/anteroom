@@ -121,6 +121,14 @@ def configure_thresholds(
 # Response buffer (tokens collected silently, rendered on completion)
 _streaming_buffer: list[str] = []
 
+# Fullscreen streaming state
+_fullscreen_stream_checkpoint: int = -1
+_fullscreen_last_flush: float = 0.0
+_FULLSCREEN_FLUSH_INTERVAL: float = 0.1  # 100ms debounce for streaming text
+
+# Fullscreen plan checklist state
+_fullscreen_plan_checkpoint: int = -1
+
 # Spinner state
 _thinking_start: float = 0
 _spinner: Status | None = None
@@ -189,6 +197,10 @@ def update_plan_step(index: int, status: str) -> None:
     if not _plan_steps or index < 0 or index >= len(_plan_steps):
         return
     _plan_steps[index]["status"] = status
+    if _fullscreen_mode and _fullscreen_layout and _thinking_start:
+        elapsed = time.monotonic() - _thinking_start
+        _write_fullscreen_plan_block(elapsed)
+        return
     # Redraw if thinking block is on screen
     if _repl_mode and _thinking_start and _stdout and _plan_written_lines > 0:
         elapsed = time.monotonic() - _thinking_start
@@ -197,10 +209,11 @@ def update_plan_step(index: int, status: str) -> None:
 
 def clear_plan() -> None:
     """Clear plan state entirely (e.g. on /plan off or new conversation)."""
-    global _plan_steps, _plan_visible, _plan_written_lines
+    global _plan_steps, _plan_visible, _plan_written_lines, _fullscreen_plan_checkpoint
     _plan_steps = []
     _plan_visible = False
     _plan_written_lines = 0
+    _fullscreen_plan_checkpoint = -1
 
 
 def _plan_block_height() -> int:
@@ -502,7 +515,7 @@ def start_thinking(*, newline: bool = False) -> None:
     """
     global _thinking_start, _spinner, _last_spinner_update, _tool_batch_active, _thinking_ticker_task
     global _thinking_phase, _thinking_tokens, _streaming_chars, _last_chunk_time, _phase_start_time, _retrying_info
-    global _plan_written_lines
+    global _plan_written_lines, _fullscreen_stream_checkpoint, _fullscreen_plan_checkpoint
     _flush_dedup()
     _tool_batch_active = False
     _thinking_start = time.monotonic()
@@ -515,6 +528,8 @@ def start_thinking(*, newline: bool = False) -> None:
     _last_spinner_update = _thinking_start
     # Reset plan written lines — the block will be freshly written
     _plan_written_lines = 0
+    _fullscreen_stream_checkpoint = -1
+    _fullscreen_plan_checkpoint = -1
     if _fullscreen_mode and _fullscreen_layout:
         # Fullscreen: update status line, no raw ANSI
         _write_thinking_line(0.0)
@@ -650,6 +665,41 @@ def _write_thinking_block(
     _plan_written_lines = height  # remember how many plan lines we wrote
 
 
+def _write_fullscreen_plan_block(elapsed: float) -> None:
+    """Render the plan checklist into the fullscreen output pane.
+
+    Uses a checkpoint/truncate pattern so the plan block is updated in-place
+    as steps progress. On each call, truncates back to the checkpoint and
+    re-appends the full plan block.
+    """
+    global _fullscreen_plan_checkpoint
+    if not _fullscreen_layout or not _plan_steps:
+        return
+    output_ctrl = _fullscreen_layout.output
+    if _fullscreen_plan_checkpoint < 0:
+        _fullscreen_plan_checkpoint = output_ctrl.set_checkpoint()
+    output_ctrl.truncate_to(_fullscreen_plan_checkpoint)
+
+    fragments: list[tuple[str, str]] = []
+    fragments.append(("class:status", "  Plan\n"))
+    for step in _plan_steps:
+        status = step["status"]
+        if status == "complete":
+            icon = "\u2713"
+            style = "class:status"
+        elif status == "in_progress":
+            icon = "\u2192"
+            style = "class:status"
+        else:
+            icon = "\u25cb"
+            style = "class:status.phase"
+        fragments.append((style, f"    {icon} {step['text']}\n"))
+
+    output_ctrl.append(fragments)
+    if _fullscreen_invalidate:
+        _fullscreen_invalidate()
+
+
 def _build_status_fragments(
     elapsed: float,
     *,
@@ -698,6 +748,8 @@ def _write_thinking_line(
     - ``cancel_msg``: muted message like "cancelled" (user-initiated, not error)
     """
     if _fullscreen_mode and _fullscreen_layout:
+        if _plan_visible and _plan_steps:
+            _write_fullscreen_plan_block(elapsed)
         fragments = _build_status_fragments(elapsed, error_msg=error_msg, countdown=countdown, cancel_msg=cancel_msg)
         _fullscreen_layout.set_status(fragments)
         if _fullscreen_invalidate:
@@ -753,6 +805,7 @@ async def stop_thinking(
     - Neither: clean final line (just "Thinking... Ns")
     """
     global _spinner, _thinking_ticker_task, _thinking_phase, _plan_written_lines
+    global _fullscreen_plan_checkpoint, _plan_visible
     elapsed = 0.0
     # Await ticker termination to prevent race conditions
     if _thinking_ticker_task is not None:
@@ -764,6 +817,17 @@ async def stop_thinking(
         _thinking_ticker_task = None
     if _fullscreen_mode and _fullscreen_layout:
         elapsed = time.monotonic() - _thinking_start
+        if collapse_plan and _plan_visible and _plan_steps and _fullscreen_plan_checkpoint >= 0:
+            completed = sum(1 for s in _plan_steps if s["status"] == "complete")
+            total = len(_plan_steps)
+            _fullscreen_layout.output.truncate_to(_fullscreen_plan_checkpoint)
+            _fullscreen_plan_checkpoint = -1
+            summary = f"  Plan: {completed}/{total} steps complete\n"
+            _fullscreen_layout.output.append_text(summary, "class:status")
+            _plan_visible = False
+            _plan_written_lines = 0
+        elif not collapse_plan and _fullscreen_plan_checkpoint >= 0:
+            _fullscreen_plan_checkpoint = -1
         _fullscreen_layout.clear_status()
         if _fullscreen_invalidate:
             _fullscreen_invalidate()
@@ -993,11 +1057,25 @@ def flush_buffered_text() -> None:
     Called before tool calls start so the AI's task explanation
     (e.g. 'Let me review your auth files') renders before the tool output.
     """
-    global _streaming_buffer
+    global _streaming_buffer, _fullscreen_stream_checkpoint
     text = "".join(_streaming_buffer)
     _streaming_buffer = []
     if not text.strip():
+        if _fullscreen_stream_checkpoint >= 0 and _fullscreen_layout:
+            _fullscreen_layout.output.truncate_to(_fullscreen_stream_checkpoint)
+            _fullscreen_stream_checkpoint = -1
         return
+
+    if _fullscreen_mode and _fullscreen_layout and _fullscreen_stream_checkpoint >= 0:
+        _fullscreen_layout.output.truncate_to(_fullscreen_stream_checkpoint)
+        _fullscreen_stream_checkpoint = -1
+        from rich.padding import Padding
+
+        _stdout_console.print(Padding(_make_markdown(text), (0, 2, 0, 2)))
+        if hasattr(_stdout, "force_invalidate"):
+            _stdout.force_invalidate()
+        return
+
     from rich.padding import Padding
 
     _stdout_console.print(Padding(_make_markdown(text), (0, 2, 0, 2)))
@@ -1016,25 +1094,66 @@ def _flush_dedup() -> None:
 
 
 def render_token(content: str) -> None:
-    """Buffer token content silently (no streaming output)."""
+    """Buffer token content. In fullscreen mode, flush live to the output pane."""
     _streaming_buffer.append(content)
+    if _fullscreen_mode and _fullscreen_layout:
+        _fullscreen_streaming_flush(force=False)
+
+
+def _fullscreen_streaming_flush(*, force: bool = False) -> None:
+    """Flush accumulated streaming text to the fullscreen output pane.
+
+    Uses a checkpoint/truncate pattern: on each flush, truncate back to the
+    checkpoint and re-append the full accumulated text. This avoids per-token
+    Markdown parsing while showing live text.
+    """
+    global _fullscreen_stream_checkpoint, _fullscreen_last_flush
+    if not _fullscreen_layout:
+        return
+    now = time.monotonic()
+    if not force and now - _fullscreen_last_flush < _FULLSCREEN_FLUSH_INTERVAL:
+        return
+    text = "".join(_streaming_buffer)
+    if not text:
+        return
+    output_ctrl = _fullscreen_layout.output
+    if _fullscreen_stream_checkpoint < 0:
+        _fullscreen_stream_checkpoint = output_ctrl.set_checkpoint()
+    output_ctrl.truncate_to(_fullscreen_stream_checkpoint)
+    output_ctrl.append_text(text, "")
+    _fullscreen_last_flush = now
+    if _fullscreen_invalidate:
+        _fullscreen_invalidate()
 
 
 def render_response_end() -> None:
     """Render the complete buffered response with Rich Markdown."""
-    global _streaming_buffer, _tool_batch_active
+    global _streaming_buffer, _tool_batch_active, _fullscreen_stream_checkpoint
     _flush_dedup()
     full_text = "".join(_streaming_buffer)
     _streaming_buffer = []
 
     if not full_text.strip():
         _tool_batch_active = False
+        if _fullscreen_stream_checkpoint >= 0 and _fullscreen_layout:
+            _fullscreen_layout.output.truncate_to(_fullscreen_stream_checkpoint)
+            _fullscreen_stream_checkpoint = -1
         return
 
     # Add spacing after tool call block before AI response
     if _tool_batch_active:
         console.print()
         _tool_batch_active = False
+
+    if _fullscreen_mode and _fullscreen_layout and _fullscreen_stream_checkpoint >= 0:
+        _fullscreen_layout.output.truncate_to(_fullscreen_stream_checkpoint)
+        _fullscreen_stream_checkpoint = -1
+        from rich.padding import Padding
+
+        _stdout_console.print(Padding(_make_markdown(full_text), (0, 2, 0, 2)))
+        if hasattr(_stdout, "force_invalidate"):
+            _stdout.force_invalidate()
+        return
 
     from rich.padding import Padding
 

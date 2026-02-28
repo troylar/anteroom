@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from typing import TYPE_CHECKING, Any, Callable
 
 from prompt_toolkit.buffer import Buffer
@@ -85,6 +86,15 @@ class OutputControl(FormattedTextControl):
     @property
     def fragment_count(self) -> int:
         return len(self._output_fragments)
+
+    def set_checkpoint(self) -> int:
+        """Record current fragment count. Returns index for later truncation."""
+        return len(self._output_fragments)
+
+    def truncate_to(self, index: int) -> None:
+        """Remove all fragments from index onward (for replace-in-place)."""
+        if 0 <= index <= len(self._output_fragments):
+            del self._output_fragments[index:]
 
     def scroll_up(self, lines: int = 10) -> None:
         """Scroll up (back through history) by *lines*."""
@@ -723,10 +733,14 @@ class OutputPaneWriter:
         self,
         output: OutputControl,
         invalidate_fn: Callable[[], None],
+        *,
+        debounce_interval: float = 0.05,
     ) -> None:
         self._output = output
         self._invalidate = invalidate_fn
         self._pending: list[str] = []
+        self._last_invalidate: float = 0.0
+        self._debounce_interval: float = debounce_interval
 
     def write(self, data: str) -> int:
         self._pending.append(data)
@@ -743,7 +757,15 @@ class OutputPaneWriter:
 
         fragments = _strip_bg(to_formatted_text(ANSI(text)))
         self._output.append(fragments)
+        now = time.monotonic()
+        if now - self._last_invalidate >= self._debounce_interval:
+            self._invalidate()
+            self._last_invalidate = now
+
+    def force_invalidate(self) -> None:
+        """Unconditionally trigger a repaint (bypass debounce)."""
         self._invalidate()
+        self._last_invalidate = time.monotonic()
 
     @property
     def encoding(self) -> str:

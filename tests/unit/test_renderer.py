@@ -3265,3 +3265,341 @@ class TestFullscreenBridge:
         self._mod.console.print("hello world")
         assert layout.output.fragment_count > 0
         assert len(calls) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Fullscreen streaming pipeline
+# ---------------------------------------------------------------------------
+
+
+class TestFullscreenStreaming:
+    """Tests for live token streaming and Markdown replacement in fullscreen."""
+
+    def setup_method(self):
+        import anteroom.cli.renderer as mod
+
+        self._mod = mod
+        self._orig_console = mod.console
+        self._orig_stdout_console = mod._stdout_console
+        self._orig_stdout = mod._stdout
+        self._orig_repl_mode = mod._repl_mode
+        self._orig_fullscreen = mod._fullscreen_mode
+        self._orig_layout = mod._fullscreen_layout
+        self._orig_invalidate = mod._fullscreen_invalidate
+        self._orig_stream_cp = mod._fullscreen_stream_checkpoint
+        self._orig_plan_cp = mod._fullscreen_plan_checkpoint
+        self._orig_last_flush = mod._fullscreen_last_flush
+        self._orig_buffer = mod._streaming_buffer[:]
+        self._orig_plan_steps = mod._plan_steps[:]
+        self._orig_plan_visible = mod._plan_visible
+        self._orig_plan_written = mod._plan_written_lines
+        self._orig_thinking_start = mod._thinking_start
+        self._orig_tool_batch = mod._tool_batch_active
+        self._orig_dedup_key = mod._dedup_key
+        self._orig_dedup_count = mod._dedup_count
+
+    def teardown_method(self):
+        mod = self._mod
+        mod.console = self._orig_console
+        mod._stdout_console = self._orig_stdout_console
+        mod._stdout = self._orig_stdout
+        mod._repl_mode = self._orig_repl_mode
+        mod._fullscreen_mode = self._orig_fullscreen
+        mod._fullscreen_layout = self._orig_layout
+        mod._fullscreen_invalidate = self._orig_invalidate
+        mod._fullscreen_stream_checkpoint = self._orig_stream_cp
+        mod._fullscreen_plan_checkpoint = self._orig_plan_cp
+        mod._fullscreen_last_flush = self._orig_last_flush
+        mod._streaming_buffer[:] = self._orig_buffer
+        mod._plan_steps[:] = self._orig_plan_steps
+        mod._plan_visible = self._orig_plan_visible
+        mod._plan_written_lines = self._orig_plan_written
+        mod._thinking_start = self._orig_thinking_start
+        mod._tool_batch_active = self._orig_tool_batch
+        mod._dedup_key = self._orig_dedup_key
+        mod._dedup_count = self._orig_dedup_count
+
+    def _setup_fullscreen(self):
+        from prompt_toolkit.buffer import Buffer
+
+        from anteroom.cli.layout import AnteroomLayout
+
+        buf = Buffer(name="test")
+        layout = AnteroomLayout(header_fn=lambda: [], footer_fn=lambda: [], input_buffer=buf)
+        invalidate_calls = []
+        self._mod.use_fullscreen_output(layout, lambda: invalidate_calls.append(1))
+        self._mod._streaming_buffer.clear()
+        self._mod._fullscreen_stream_checkpoint = -1
+        self._mod._fullscreen_plan_checkpoint = -1
+        self._mod._fullscreen_last_flush = 0.0
+        self._mod._dedup_key = ""
+        self._mod._dedup_count = 0
+        return layout, invalidate_calls
+
+    def test_render_token_fullscreen_flushes_to_pane(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._fullscreen_last_flush = 0.0
+        self._mod.render_token("Hello ")
+        assert layout.output.fragment_count > 0
+        text = "".join(t for _, t in layout.output._output_fragments)
+        assert "Hello " in text
+
+    def test_render_token_debounced(self):
+        layout, calls = self._setup_fullscreen()
+        self._mod._fullscreen_last_flush = 0.0
+        self._mod.render_token("a")
+        first_count = len(calls)
+        self._mod._fullscreen_last_flush = time.monotonic()
+        self._mod.render_token("b")
+        assert len(calls) == first_count  # debounced
+
+    def test_render_response_end_replaces_raw_with_markdown(self):
+        layout, _ = self._setup_fullscreen()
+        layout.output.append_text("prefix\n")
+        self._mod._fullscreen_last_flush = 0.0
+        self._mod.render_token("**bold text**")
+        raw_count = layout.output.fragment_count
+        assert raw_count > 0
+        self._mod.render_response_end()
+        final_text = "".join(t for _, t in layout.output._output_fragments)
+        assert "prefix\n" in final_text
+        assert "**bold text**" not in final_text or "bold text" in final_text
+
+    def test_render_response_end_empty_clears_checkpoint(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._fullscreen_last_flush = 0.0
+        self._mod.render_token("   ")
+        assert self._mod._fullscreen_stream_checkpoint >= 0
+        self._mod.render_response_end()
+        assert self._mod._fullscreen_stream_checkpoint == -1
+
+    def test_flush_buffered_text_fullscreen(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._fullscreen_last_flush = 0.0
+        self._mod.render_token("Some explanation text")
+        cp_before = self._mod._fullscreen_stream_checkpoint
+        assert cp_before >= 0
+        self._mod.flush_buffered_text()
+        assert self._mod._fullscreen_stream_checkpoint == -1
+        assert layout.output.fragment_count > 0
+
+    def test_flush_buffered_text_empty_clears_checkpoint(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._fullscreen_last_flush = 0.0
+        self._mod.render_token("   ")
+        self._mod.flush_buffered_text()
+        assert self._mod._fullscreen_stream_checkpoint == -1
+
+    def test_checkpoint_truncate_replace_cycle(self):
+        layout, _ = self._setup_fullscreen()
+        layout.output.append_text("before\n")
+        before_count = layout.output.fragment_count
+        self._mod._fullscreen_last_flush = 0.0
+        self._mod.render_token("streaming")
+        assert layout.output.fragment_count > before_count
+        self._mod._fullscreen_last_flush = 0.0
+        self._mod.render_token(" more")
+        text_mid = "".join(t for _, t in layout.output._output_fragments)
+        assert "streaming more" in text_mid
+        self._mod.render_response_end()
+        final_text = "".join(t for _, t in layout.output._output_fragments)
+        assert "before\n" in final_text
+
+    def test_fullscreen_streaming_flush_force(self):
+        layout, calls = self._setup_fullscreen()
+        self._mod._fullscreen_last_flush = time.monotonic()
+        self._mod._streaming_buffer.append("forced text")
+        self._mod._fullscreen_streaming_flush(force=True)
+        text = "".join(t for _, t in layout.output._output_fragments)
+        assert "forced text" in text
+
+    def test_render_response_end_no_checkpoint(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._fullscreen_stream_checkpoint = -1
+        self._mod._streaming_buffer[:] = ["hello world"]
+        self._mod.render_response_end()
+        assert layout.output.fragment_count > 0
+        assert self._mod._fullscreen_stream_checkpoint == -1
+
+    def test_flush_buffered_text_force_invalidate_called(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._fullscreen_last_flush = 0.0
+        self._mod.render_token("some text")
+        assert self._mod._fullscreen_stream_checkpoint >= 0
+        force_calls = []
+        original_stdout = self._mod._stdout
+        if hasattr(original_stdout, "force_invalidate"):
+            original_force = original_stdout.force_invalidate
+            original_stdout.force_invalidate = lambda: force_calls.append(1)
+            self._mod.flush_buffered_text()
+            original_stdout.force_invalidate = original_force
+        else:
+            self._mod.flush_buffered_text()
+        assert self._mod._fullscreen_stream_checkpoint == -1
+
+
+# ---------------------------------------------------------------------------
+# Fullscreen plan rendering
+# ---------------------------------------------------------------------------
+
+
+class TestFullscreenPlan:
+    """Tests for plan checklist rendering in fullscreen output pane."""
+
+    def setup_method(self):
+        import anteroom.cli.renderer as mod
+
+        self._mod = mod
+        self._orig_console = mod.console
+        self._orig_stdout_console = mod._stdout_console
+        self._orig_stdout = mod._stdout
+        self._orig_repl_mode = mod._repl_mode
+        self._orig_fullscreen = mod._fullscreen_mode
+        self._orig_layout = mod._fullscreen_layout
+        self._orig_invalidate = mod._fullscreen_invalidate
+        self._orig_stream_cp = mod._fullscreen_stream_checkpoint
+        self._orig_plan_cp = mod._fullscreen_plan_checkpoint
+        self._orig_plan_steps = mod._plan_steps[:]
+        self._orig_plan_visible = mod._plan_visible
+        self._orig_plan_written = mod._plan_written_lines
+        self._orig_thinking_start = mod._thinking_start
+        self._orig_ticker = mod._thinking_ticker_task
+
+    def teardown_method(self):
+        mod = self._mod
+        mod.console = self._orig_console
+        mod._stdout_console = self._orig_stdout_console
+        mod._stdout = self._orig_stdout
+        mod._repl_mode = self._orig_repl_mode
+        mod._fullscreen_mode = self._orig_fullscreen
+        mod._fullscreen_layout = self._orig_layout
+        mod._fullscreen_invalidate = self._orig_invalidate
+        mod._fullscreen_stream_checkpoint = self._orig_stream_cp
+        mod._fullscreen_plan_checkpoint = self._orig_plan_cp
+        mod._plan_steps[:] = self._orig_plan_steps
+        mod._plan_visible = self._orig_plan_visible
+        mod._plan_written_lines = self._orig_plan_written
+        mod._thinking_start = self._orig_thinking_start
+        mod._thinking_ticker_task = self._orig_ticker
+
+    def _setup_fullscreen(self):
+        from prompt_toolkit.buffer import Buffer
+
+        from anteroom.cli.layout import AnteroomLayout
+
+        buf = Buffer(name="test")
+        layout = AnteroomLayout(header_fn=lambda: [], footer_fn=lambda: [], input_buffer=buf)
+        invalidate_calls = []
+        self._mod.use_fullscreen_output(layout, lambda: invalidate_calls.append(1))
+        self._mod._fullscreen_stream_checkpoint = -1
+        self._mod._fullscreen_plan_checkpoint = -1
+        return layout, invalidate_calls
+
+    def test_plan_renders_to_fullscreen_output(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._thinking_start = time.monotonic()
+        self._mod.start_plan(["Step 1", "Step 2", "Step 3"])
+        self._mod._write_fullscreen_plan_block(1.0)
+        text = "".join(t for _, t in layout.output._output_fragments)
+        assert "Plan" in text
+        assert "Step 1" in text
+        assert "Step 2" in text
+        assert "Step 3" in text
+
+    def test_plan_step_update_rerenders(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._thinking_start = time.monotonic()
+        self._mod.start_plan(["Step 1", "Step 2"])
+        self._mod._write_fullscreen_plan_block(1.0)
+        self._mod.update_plan_step(0, "complete")
+        text = "".join(t for _, t in layout.output._output_fragments)
+        assert "\u2713" in text  # checkmark for complete
+
+    def test_plan_collapse_on_stop_thinking(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._thinking_start = time.monotonic()
+        self._mod._thinking_ticker_task = None
+        self._mod.start_plan(["Step 1", "Step 2"])
+        self._mod._plan_visible = True
+        self._mod._write_fullscreen_plan_block(1.0)
+        self._mod.update_plan_step(0, "complete")
+
+        async def _run():
+            await self._mod.stop_thinking(collapse_plan=True)
+
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
+        text = "".join(t for _, t in layout.output._output_fragments)
+        assert "Plan: 1/2 steps complete" in text
+        assert self._mod._plan_visible is False
+
+    def test_plan_checkpoint_reset_on_clear(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._thinking_start = time.monotonic()
+        self._mod.start_plan(["Step 1"])
+        self._mod._write_fullscreen_plan_block(1.0)
+        assert self._mod._fullscreen_plan_checkpoint >= 0
+        self._mod.clear_plan()
+        assert self._mod._fullscreen_plan_checkpoint == -1
+
+    def test_start_thinking_resets_checkpoints(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._fullscreen_stream_checkpoint = 5
+        self._mod._fullscreen_plan_checkpoint = 10
+        self._mod._thinking_ticker_task = None
+        self._mod.start_thinking()
+        assert self._mod._fullscreen_stream_checkpoint == -1
+        assert self._mod._fullscreen_plan_checkpoint == -1
+
+    def test_thinking_line_renders_plan_in_fullscreen(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._thinking_start = time.monotonic()
+        self._mod.start_plan(["Do stuff"])
+        self._mod._write_thinking_line(1.0)
+        text = "".join(t for _, t in layout.output._output_fragments)
+        assert "Do stuff" in text
+        status = layout._status_fragments
+        assert any("Thinking" in t for _, t in status)
+
+    def test_plan_block_empty_steps_noop(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._plan_steps = []
+        self._mod._write_fullscreen_plan_block(1.0)
+        assert layout.output.fragment_count == 0
+        assert self._mod._fullscreen_plan_checkpoint == -1
+
+    def test_stop_thinking_collapse_false_resets_checkpoint(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._thinking_start = time.monotonic()
+        self._mod._thinking_ticker_task = None
+        self._mod.start_plan(["Step 1"])
+        self._mod._plan_visible = True
+        self._mod._write_fullscreen_plan_block(1.0)
+        assert self._mod._fullscreen_plan_checkpoint >= 0
+
+        async def _run():
+            await self._mod.stop_thinking(collapse_plan=False)
+
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(_run())
+        assert self._mod._fullscreen_plan_checkpoint == -1
+
+    def test_stop_thinking_collapse_with_no_checkpoint(self):
+        layout, _ = self._setup_fullscreen()
+        self._mod._thinking_start = time.monotonic()
+        self._mod._thinking_ticker_task = None
+        self._mod.start_plan(["Step 1"])
+        self._mod._plan_visible = True
+        self._mod._fullscreen_plan_checkpoint = -1
+
+        async def _run():
+            await self._mod.stop_thinking(collapse_plan=True)
+
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(_run())
+        assert self._mod._fullscreen_plan_checkpoint == -1
+        assert layout.output.fragment_count == 0

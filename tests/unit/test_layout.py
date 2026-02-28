@@ -1357,3 +1357,127 @@ class TestPickerOverlay:
         assert r2 is not None
         assert r2["id"] == "2"
         assert al._picker_visible is False
+
+
+# ---------------------------------------------------------------------------
+# OutputControl checkpoint/truncate
+# ---------------------------------------------------------------------------
+
+
+class TestOutputControlCheckpoint:
+    def test_set_checkpoint_returns_fragment_count(self):
+        ctrl = OutputControl()
+        ctrl.append_text("a")
+        ctrl.append_text("b")
+        assert ctrl.set_checkpoint() == 2
+
+    def test_set_checkpoint_empty(self):
+        ctrl = OutputControl()
+        assert ctrl.set_checkpoint() == 0
+
+    def test_truncate_to_removes_fragments(self):
+        ctrl = OutputControl()
+        ctrl.append_text("a")
+        ctrl.append_text("b")
+        cp = ctrl.set_checkpoint()
+        ctrl.append_text("c")
+        ctrl.append_text("d")
+        assert ctrl.fragment_count == 4
+        ctrl.truncate_to(cp)
+        assert ctrl.fragment_count == 2
+        assert ctrl._output_fragments == [("", "a"), ("", "b")]
+
+    def test_truncate_to_zero_clears_all(self):
+        ctrl = OutputControl()
+        ctrl.append_text("a")
+        ctrl.append_text("b")
+        ctrl.truncate_to(0)
+        assert ctrl.fragment_count == 0
+
+    def test_truncate_to_current_length_noop(self):
+        ctrl = OutputControl()
+        ctrl.append_text("a")
+        ctrl.truncate_to(1)
+        assert ctrl.fragment_count == 1
+
+    def test_truncate_to_negative_index_noop(self):
+        ctrl = OutputControl()
+        ctrl.append_text("a")
+        ctrl.truncate_to(-1)
+        assert ctrl.fragment_count == 1
+
+    def test_truncate_to_beyond_length_noop(self):
+        ctrl = OutputControl()
+        ctrl.append_text("a")
+        ctrl.truncate_to(5)
+        assert ctrl.fragment_count == 1
+
+    def test_checkpoint_truncate_replace_cycle(self):
+        ctrl = OutputControl()
+        ctrl.append_text("prefix\n")
+        cp = ctrl.set_checkpoint()
+        ctrl.append_text("streaming v1")
+        assert ctrl.fragment_count == 2
+        ctrl.truncate_to(cp)
+        ctrl.append_text("streaming v2")
+        assert ctrl.fragment_count == 2
+        assert ctrl._output_fragments[1] == ("", "streaming v2")
+
+
+# ---------------------------------------------------------------------------
+# OutputPaneWriter debounced invalidation
+# ---------------------------------------------------------------------------
+
+
+class TestOutputPaneWriterDebounce:
+    def test_debounced_invalidation(self):
+        ctrl = OutputControl()
+        call_count = 0
+
+        def count_invalidate():
+            nonlocal call_count
+            call_count += 1
+
+        writer = OutputPaneWriter(ctrl, count_invalidate, debounce_interval=0.1)
+        writer.write("first")
+        writer.flush()
+        first_count = call_count
+        assert first_count == 1
+
+        writer.write("second")
+        writer.flush()
+        assert call_count == 1  # debounced, no new invalidation
+
+    def test_force_invalidate_always_fires(self):
+        ctrl = OutputControl()
+        call_count = 0
+
+        def count_invalidate():
+            nonlocal call_count
+            call_count += 1
+
+        writer = OutputPaneWriter(ctrl, count_invalidate, debounce_interval=10.0)
+        writer.write("data")
+        writer.flush()
+        assert call_count == 1
+        writer.force_invalidate()
+        assert call_count == 2
+
+    def test_invalidation_after_debounce_elapsed(self):
+        import time
+
+        ctrl = OutputControl()
+        call_count = 0
+
+        def count_invalidate():
+            nonlocal call_count
+            call_count += 1
+
+        writer = OutputPaneWriter(ctrl, count_invalidate, debounce_interval=0.01)
+        writer.write("first")
+        writer.flush()
+        assert call_count == 1
+        time.sleep(0.02)
+        writer.write("second")
+        writer.flush()
+        assert call_count == 2
