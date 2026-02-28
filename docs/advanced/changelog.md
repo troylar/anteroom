@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 28, 2026
 
+### v1.84.1
+
+**Fixed:**
+
+- PPTX edit operations now report why entries were skipped instead of silently returning zero edits (#599)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.84.1)
+
 ### v1.84.0
 
 **New:**
