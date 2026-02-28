@@ -180,6 +180,230 @@ class TestEdit:
         assert "error" in result
         assert "exceed" in result["error"].lower()
 
+    @pytest.mark.asyncio
+    async def test_edit_table_cells(self, tmp_path):
+        await handle(
+            action="create",
+            path="table_test.pptx",
+            slides=[{"title": "Data"}],
+        )
+        await handle(
+            action="embed_table",
+            path="table_test.pptx",
+            slide_index=1,
+            data=[["Name", "Value"], ["", ""], ["", ""]],
+            rows=3,
+            cols=2,
+        )
+        result = await handle(
+            action="edit",
+            path="table_test.pptx",
+            table_edits=[
+                {"slide_index": 1, "table_index": 1, "row": 1, "col": 0, "value": "Alice"},
+                {"slide_index": 1, "table_index": 1, "row": 1, "col": 1, "value": "100"},
+                {"slide_index": 1, "table_index": 1, "row": 2, "col": 0, "value": "Bob"},
+                {"slide_index": 1, "table_index": 1, "row": 2, "col": 1, "value": "200"},
+            ],
+        )
+        assert "error" not in result
+        assert result["table_cells_edited"] == 4
+
+        read_result = await handle(action="read", path="table_test.pptx")
+        assert "Alice" in read_result["content"]
+        assert "Bob" in read_result["content"]
+
+    @pytest.mark.asyncio
+    async def test_edit_table_cells_out_of_bounds(self, tmp_path):
+        await handle(
+            action="create",
+            path="table_oob.pptx",
+            slides=[{"title": "Data"}],
+        )
+        await handle(
+            action="embed_table",
+            path="table_oob.pptx",
+            slide_index=1,
+            data=[["A", "B"], ["1", "2"]],
+            rows=2,
+            cols=2,
+        )
+        result = await handle(
+            action="edit",
+            path="table_oob.pptx",
+            table_edits=[
+                {"slide_index": 1, "table_index": 1, "row": 99, "col": 0, "value": "nope"},
+            ],
+        )
+        assert "error" not in result
+        assert result["table_cells_edited"] == 0
+
+    @pytest.mark.asyncio
+    async def test_edit_shape_text(self, tmp_path):
+        await handle(
+            action="create",
+            path="shape_edit.pptx",
+            slides=[{"title": "Original Title", "content": "Original Content"}],
+        )
+        read_before = await handle(action="read", path="shape_edit.pptx")
+        assert "Original Title" in read_before["content"]
+
+        result = await handle(
+            action="edit",
+            path="shape_edit.pptx",
+            shape_edits=[
+                {"slide_index": 1, "shape_index": 1, "text": "New Title"},
+            ],
+        )
+        assert "error" not in result
+        assert result["shapes_edited"] == 1
+
+    @pytest.mark.asyncio
+    async def test_edit_shape_out_of_bounds(self, tmp_path):
+        await handle(
+            action="create",
+            path="shape_oob.pptx",
+            slides=[{"title": "Slide"}],
+        )
+        result = await handle(
+            action="edit",
+            path="shape_oob.pptx",
+            shape_edits=[
+                {"slide_index": 1, "shape_index": 999, "text": "nope"},
+            ],
+        )
+        assert "error" not in result
+        assert result["shapes_edited"] == 0
+
+    @pytest.mark.asyncio
+    async def test_edit_notes(self, tmp_path):
+        await handle(
+            action="create",
+            path="notes_edit.pptx",
+            slides=[{"title": "Slide 1"}, {"title": "Slide 2"}],
+        )
+        result = await handle(
+            action="edit",
+            path="notes_edit.pptx",
+            notes_edits=[
+                {"slide_index": 1, "text": "Speaker notes for slide 1"},
+                {"slide_index": 2, "text": "Speaker notes for slide 2"},
+            ],
+        )
+        assert "error" not in result
+        assert result["notes_edited"] == 2
+
+        read_result = await handle(action="read", path="notes_edit.pptx")
+        assert "Speaker notes for slide 1" in read_result["content"]
+        assert "Speaker notes for slide 2" in read_result["content"]
+
+    @pytest.mark.asyncio
+    async def test_edit_delete_slides(self, tmp_path):
+        await handle(
+            action="create",
+            path="delete_test.pptx",
+            slides=[{"title": "Keep"}, {"title": "Delete Me"}, {"title": "Also Keep"}],
+        )
+        result = await handle(
+            action="edit",
+            path="delete_test.pptx",
+            delete_slides=[2],
+        )
+        assert "error" not in result
+        assert result["slides_deleted"] == 1
+
+        read_result = await handle(action="read", path="delete_test.pptx")
+        assert read_result["slides"] == 2
+        assert "Delete Me" not in read_result["content"]
+        assert "Keep" in read_result["content"]
+
+    @pytest.mark.asyncio
+    async def test_edit_duplicate_slides(self, tmp_path):
+        await handle(
+            action="create",
+            path="dup_test.pptx",
+            slides=[{"title": "Original"}],
+        )
+        result = await handle(
+            action="edit",
+            path="dup_test.pptx",
+            duplicate_slides=[1],
+        )
+        assert "error" not in result
+        assert result["slides_duplicated"] == 1
+
+        read_result = await handle(action="read", path="dup_test.pptx")
+        assert read_result["slides"] == 2
+
+    @pytest.mark.asyncio
+    async def test_edit_multiple_operations(self, tmp_path):
+        await handle(
+            action="create",
+            path="multi_edit.pptx",
+            slides=[{"title": "Hello world"}],
+        )
+        result = await handle(
+            action="edit",
+            path="multi_edit.pptx",
+            replacements=[{"old": "Hello", "new": "Goodbye"}],
+            notes_edits=[{"slide_index": 1, "text": "New notes"}],
+            slides=[{"title": "New Slide"}],
+        )
+        assert "error" not in result
+        assert result["replacements_made"] >= 1
+        assert result["notes_edited"] == 1
+        assert result["slides_appended"] == 1
+
+    @pytest.mark.asyncio
+    async def test_edit_error_message_lists_all_params(self, tmp_path):
+        await handle(
+            action="create",
+            path="err_msg.pptx",
+            slides=[{"title": "Slide"}],
+        )
+        result = await handle(action="edit", path="err_msg.pptx")
+        assert "error" in result
+        assert "table_edits" in result["error"]
+        assert "shape_edits" in result["error"]
+        assert "notes_edits" in result["error"]
+        assert "delete_slides" in result["error"]
+        assert "duplicate_slides" in result["error"]
+
+
+@_needs_pptx
+class TestReadTableDisplay:
+    @pytest.mark.asyncio
+    async def test_read_shows_table_details(self, tmp_path):
+        await handle(
+            action="create",
+            path="table_read.pptx",
+            slides=[{"title": "Data"}],
+        )
+        await handle(
+            action="embed_table",
+            path="table_read.pptx",
+            slide_index=1,
+            data=[["Name", "Score"], ["Alice", "95"]],
+            rows=2,
+            cols=2,
+        )
+        result = await handle(action="read", path="table_read.pptx")
+        assert "error" not in result
+        assert "Table 1:" in result["content"]
+        assert "Row 0:" in result["content"]
+        assert "Alice" in result["content"]
+
+    @pytest.mark.asyncio
+    async def test_read_shows_shape_indices(self, tmp_path):
+        await handle(
+            action="create",
+            path="shape_idx.pptx",
+            slides=[{"title": "My Title", "content": "Body text"}],
+        )
+        result = await handle(action="read", path="shape_idx.pptx")
+        assert "error" not in result
+        assert "[Shape" in result["content"]
+        assert "shapes)" in result["content"]
+
 
 @_needs_pptx
 class TestPathValidation:
@@ -1136,6 +1360,566 @@ class TestHeadersFooters:
             operation="list",
         )
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# New edit features: template_fill, table_format, paragraph_edits,
+# placeholder_edits, image_replacements
+# ---------------------------------------------------------------------------
+
+
+@_needs_pptx
+class TestTemplateFill:
+    @pytest.mark.asyncio
+    async def test_template_fill_in_text(self, tmp_path):
+        await handle(
+            action="create",
+            path="tmpl.pptx",
+            slides=[{"title": "Hello {{name}}", "content": "Date: {{date}}"}],
+        )
+        result = await handle(
+            action="edit",
+            path="tmpl.pptx",
+            template_fill={"name": "World", "date": "2025-01-01"},
+        )
+        assert "error" not in result
+        assert result["tokens_replaced"] >= 2
+
+        read_result = await handle(action="read", path="tmpl.pptx")
+        assert "World" in read_result["content"]
+        assert "2025-01-01" in read_result["content"]
+        assert "{{name}}" not in read_result["content"]
+
+    @pytest.mark.asyncio
+    async def test_template_fill_in_table(self, tmp_path):
+        await handle(
+            action="create",
+            path="tmpl_tbl.pptx",
+            slides=[{"title": "Data"}],
+        )
+        await handle(
+            action="embed_table",
+            path="tmpl_tbl.pptx",
+            slide_index=1,
+            data=[["Name", "Score"], ["{{player}}", "{{score}}"]],
+            rows=2,
+            cols=2,
+        )
+        result = await handle(
+            action="edit",
+            path="tmpl_tbl.pptx",
+            template_fill={"player": "Alice", "score": "100"},
+        )
+        assert "error" not in result
+        assert result["tokens_replaced"] >= 2
+
+        read_result = await handle(action="read", path="tmpl_tbl.pptx")
+        assert "Alice" in read_result["content"]
+        assert "100" in read_result["content"]
+
+    @pytest.mark.asyncio
+    async def test_template_fill_in_notes(self, tmp_path):
+        await handle(
+            action="create",
+            path="tmpl_notes.pptx",
+            slides=[{"title": "Slide", "notes": "Speaker: {{speaker}}"}],
+        )
+        result = await handle(
+            action="edit",
+            path="tmpl_notes.pptx",
+            template_fill={"speaker": "Bob"},
+        )
+        assert "error" not in result
+        assert result["tokens_replaced"] >= 1
+
+        read_result = await handle(action="read", path="tmpl_notes.pptx")
+        assert "Bob" in read_result["content"]
+
+    @pytest.mark.asyncio
+    async def test_template_fill_no_match(self, tmp_path):
+        await handle(
+            action="create",
+            path="tmpl_no.pptx",
+            slides=[{"title": "Plain title"}],
+        )
+        result = await handle(
+            action="edit",
+            path="tmpl_no.pptx",
+            template_fill={"missing": "value"},
+        )
+        assert "error" not in result
+        assert result["tokens_replaced"] == 0
+
+
+@_needs_pptx
+class TestTableFormat:
+    @pytest.mark.asyncio
+    async def test_table_format_bg_color(self, tmp_path):
+        await handle(
+            action="create",
+            path="tf.pptx",
+            slides=[{"title": "Data"}],
+        )
+        await handle(
+            action="embed_table",
+            path="tf.pptx",
+            slide_index=1,
+            data=[["A", "B"], ["1", "2"]],
+            rows=2,
+            cols=2,
+        )
+        result = await handle(
+            action="edit",
+            path="tf.pptx",
+            table_format=[
+                {"slide_index": 1, "table_index": 1, "row": 0, "col": 0, "bg_color": "#FF0000"},
+            ],
+        )
+        assert "error" not in result
+        assert result["table_cells_formatted"] == 1
+
+    @pytest.mark.asyncio
+    async def test_table_format_font_styling(self, tmp_path):
+        await handle(
+            action="create",
+            path="tf_font.pptx",
+            slides=[{"title": "Data"}],
+        )
+        await handle(
+            action="embed_table",
+            path="tf_font.pptx",
+            slide_index=1,
+            data=[["Header", "Value"], ["X", "Y"]],
+            rows=2,
+            cols=2,
+        )
+        result = await handle(
+            action="edit",
+            path="tf_font.pptx",
+            table_format=[
+                {
+                    "slide_index": 1,
+                    "table_index": 1,
+                    "row": 0,
+                    "col": 0,
+                    "font_size": 14,
+                    "font_bold": True,
+                    "font_color": "#0000FF",
+                    "font_name": "Arial",
+                },
+            ],
+        )
+        assert "error" not in result
+        assert result["table_cells_formatted"] == 1
+
+    @pytest.mark.asyncio
+    async def test_table_format_alignment(self, tmp_path):
+        await handle(
+            action="create",
+            path="tf_align.pptx",
+            slides=[{"title": "Data"}],
+        )
+        await handle(
+            action="embed_table",
+            path="tf_align.pptx",
+            slide_index=1,
+            data=[["Left", "Center"], ["A", "B"]],
+            rows=2,
+            cols=2,
+        )
+        result = await handle(
+            action="edit",
+            path="tf_align.pptx",
+            table_format=[
+                {"slide_index": 1, "table_index": 1, "row": 0, "col": 1, "alignment": "center"},
+            ],
+        )
+        assert "error" not in result
+        assert result["table_cells_formatted"] == 1
+
+    @pytest.mark.asyncio
+    async def test_table_format_out_of_bounds(self, tmp_path):
+        await handle(
+            action="create",
+            path="tf_oob.pptx",
+            slides=[{"title": "Data"}],
+        )
+        await handle(
+            action="embed_table",
+            path="tf_oob.pptx",
+            slide_index=1,
+            data=[["A"]],
+            rows=1,
+            cols=1,
+        )
+        result = await handle(
+            action="edit",
+            path="tf_oob.pptx",
+            table_format=[
+                {"slide_index": 1, "table_index": 1, "row": 99, "col": 0, "bg_color": "#FF0000"},
+            ],
+        )
+        assert "error" not in result
+        assert result["table_cells_formatted"] == 0
+
+
+@_needs_pptx
+class TestParagraphEdits:
+    @pytest.mark.asyncio
+    async def test_paragraph_edits_multi_para(self, tmp_path):
+        await handle(
+            action="create",
+            path="para.pptx",
+            slides=[{"title": "Title", "content": "Original"}],
+        )
+        result = await handle(
+            action="edit",
+            path="para.pptx",
+            paragraph_edits=[
+                {
+                    "slide_index": 1,
+                    "shape_index": 2,
+                    "paragraphs": [
+                        {"text": "First paragraph"},
+                        {"text": "Second paragraph"},
+                        {"text": "Third paragraph"},
+                    ],
+                }
+            ],
+        )
+        assert "error" not in result
+        assert result["paragraphs_edited"] == 1
+
+        read_result = await handle(action="read", path="para.pptx")
+        assert "First paragraph" in read_result["content"]
+        assert "Third paragraph" in read_result["content"]
+
+    @pytest.mark.asyncio
+    async def test_paragraph_edits_with_formatting(self, tmp_path):
+        await handle(
+            action="create",
+            path="para_fmt.pptx",
+            slides=[{"title": "Title", "content": "Original"}],
+        )
+        result = await handle(
+            action="edit",
+            path="para_fmt.pptx",
+            paragraph_edits=[
+                {
+                    "slide_index": 1,
+                    "shape_index": 2,
+                    "paragraphs": [
+                        {"text": "Bold heading", "font_bold": True, "font_size": 24},
+                        {"text": "Normal text", "alignment": "center"},
+                    ],
+                }
+            ],
+        )
+        assert "error" not in result
+        assert result["paragraphs_edited"] == 1
+
+    @pytest.mark.asyncio
+    async def test_paragraph_edits_with_levels(self, tmp_path):
+        await handle(
+            action="create",
+            path="para_lvl.pptx",
+            slides=[{"title": "Title", "content": "Original"}],
+        )
+        result = await handle(
+            action="edit",
+            path="para_lvl.pptx",
+            paragraph_edits=[
+                {
+                    "slide_index": 1,
+                    "shape_index": 2,
+                    "paragraphs": [
+                        {"text": "Top level", "level": 0},
+                        {"text": "Indented", "level": 1},
+                        {"text": "More indented", "level": 2},
+                    ],
+                }
+            ],
+        )
+        assert "error" not in result
+        assert result["paragraphs_edited"] == 1
+
+    @pytest.mark.asyncio
+    async def test_paragraph_edits_shape_out_of_bounds(self, tmp_path):
+        await handle(
+            action="create",
+            path="para_oob.pptx",
+            slides=[{"title": "Slide"}],
+        )
+        result = await handle(
+            action="edit",
+            path="para_oob.pptx",
+            paragraph_edits=[
+                {
+                    "slide_index": 1,
+                    "shape_index": 999,
+                    "paragraphs": [{"text": "nope"}],
+                }
+            ],
+        )
+        assert "error" not in result
+        assert result["paragraphs_edited"] == 0
+
+    @pytest.mark.asyncio
+    async def test_paragraph_edits_missing_paragraphs(self, tmp_path):
+        await handle(
+            action="create",
+            path="para_empty.pptx",
+            slides=[{"title": "Slide"}],
+        )
+        result = await handle(
+            action="edit",
+            path="para_empty.pptx",
+            paragraph_edits=[
+                {"slide_index": 1, "shape_index": 1},
+            ],
+        )
+        assert "error" not in result
+        assert result["paragraphs_edited"] == 0
+
+
+@_needs_pptx
+class TestPlaceholderEdits:
+    @pytest.mark.asyncio
+    async def test_placeholder_edit_title(self, tmp_path):
+        await handle(
+            action="create",
+            path="ph.pptx",
+            slides=[{"title": "Old Title", "content": "Body"}],
+        )
+        result = await handle(
+            action="edit",
+            path="ph.pptx",
+            placeholder_edits=[
+                {"slide_index": 1, "placeholder_type": "title", "text": "New Title"},
+            ],
+        )
+        assert "error" not in result
+        assert result["placeholders_edited"] == 1
+
+        read_result = await handle(action="read", path="ph.pptx")
+        assert "New Title" in read_result["content"]
+
+    @pytest.mark.asyncio
+    async def test_placeholder_edit_body(self, tmp_path):
+        await handle(
+            action="create",
+            path="ph_body.pptx",
+            slides=[{"title": "Title", "content": "Old body"}],
+        )
+        result = await handle(
+            action="edit",
+            path="ph_body.pptx",
+            placeholder_edits=[
+                {"slide_index": 1, "placeholder_type": "body", "text": "New body text"},
+            ],
+        )
+        assert "error" not in result
+        assert result["placeholders_edited"] == 1
+
+        read_result = await handle(action="read", path="ph_body.pptx")
+        assert "New body text" in read_result["content"]
+
+    @pytest.mark.asyncio
+    async def test_placeholder_edit_with_formatting(self, tmp_path):
+        await handle(
+            action="create",
+            path="ph_fmt.pptx",
+            slides=[{"title": "Title"}],
+        )
+        result = await handle(
+            action="edit",
+            path="ph_fmt.pptx",
+            placeholder_edits=[
+                {
+                    "slide_index": 1,
+                    "placeholder_type": "title",
+                    "text": "Styled Title",
+                    "font_size": 36,
+                    "font_bold": True,
+                },
+            ],
+        )
+        assert "error" not in result
+        assert result["placeholders_edited"] == 1
+
+    @pytest.mark.asyncio
+    async def test_placeholder_edit_unknown_type(self, tmp_path):
+        await handle(
+            action="create",
+            path="ph_unk.pptx",
+            slides=[{"title": "Slide"}],
+        )
+        result = await handle(
+            action="edit",
+            path="ph_unk.pptx",
+            placeholder_edits=[
+                {"slide_index": 1, "placeholder_type": "nonexistent", "text": "nope"},
+            ],
+        )
+        assert "error" not in result
+        assert result["placeholders_edited"] == 0
+
+    @pytest.mark.asyncio
+    async def test_placeholder_edit_slide_out_of_bounds(self, tmp_path):
+        await handle(
+            action="create",
+            path="ph_oob.pptx",
+            slides=[{"title": "Slide"}],
+        )
+        result = await handle(
+            action="edit",
+            path="ph_oob.pptx",
+            placeholder_edits=[
+                {"slide_index": 99, "placeholder_type": "title", "text": "nope"},
+            ],
+        )
+        assert "error" not in result
+        assert result["placeholders_edited"] == 0
+
+
+@_needs_pptx
+class TestImageReplacements:
+    @pytest.mark.asyncio
+    async def test_image_replacement_basic(self, tmp_path):
+        # Create a minimal 1x1 PNG
+        import struct
+        import zlib
+
+        def _make_png() -> bytes:
+            sig = b"\x89PNG\r\n\x1a\n"
+
+            def _chunk(ctype: bytes, data: bytes) -> bytes:
+                c = ctype + data
+                return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+
+            ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+            raw = zlib.compress(b"\x00\xff\x00\x00")
+            return sig + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", raw) + _chunk(b"IEND", b"")
+
+        img1 = tmp_path / "img1.png"
+        img2 = tmp_path / "img2.png"
+        img1.write_bytes(_make_png())
+        img2.write_bytes(_make_png())
+
+        await handle(
+            action="create",
+            path="img_repl.pptx",
+            slides=[{"title": "Slide"}],
+        )
+        await handle(
+            action="insert_image",
+            path="img_repl.pptx",
+            slide_index=1,
+            image_path=str(img1),
+            left=1,
+            top=1,
+            width=2,
+            height=2,
+        )
+
+        read_before = await handle(action="read", path="img_repl.pptx")
+        shape_count_before = read_before["content"].count("[Shape")
+
+        # Find the picture shape index
+        from pptx import Presentation as _Presentation
+
+        prs = _Presentation(str(tmp_path / "img_repl.pptx"))
+        pic_idx = None
+        for i, shape in enumerate(list(prs.slides)[0].shapes, 1):
+            if shape.shape_type == 13:
+                pic_idx = i
+                break
+        assert pic_idx is not None
+
+        result = await handle(
+            action="edit",
+            path="img_repl.pptx",
+            image_replacements=[
+                {"slide_index": 1, "shape_index": pic_idx, "image_path": str(img2)},
+            ],
+        )
+        assert "error" not in result
+        assert result["images_replaced"] == 1
+
+    @pytest.mark.asyncio
+    async def test_image_replacement_non_picture_shape(self, tmp_path):
+        await handle(
+            action="create",
+            path="img_np.pptx",
+            slides=[{"title": "Text shape"}],
+        )
+        result = await handle(
+            action="edit",
+            path="img_np.pptx",
+            image_replacements=[
+                {"slide_index": 1, "shape_index": 1, "image_path": "img.png"},
+            ],
+        )
+        assert "error" not in result
+        assert result["images_replaced"] == 0
+
+    @pytest.mark.asyncio
+    async def test_image_replacement_shape_out_of_bounds(self, tmp_path):
+        await handle(
+            action="create",
+            path="img_oob.pptx",
+            slides=[{"title": "Slide"}],
+        )
+        result = await handle(
+            action="edit",
+            path="img_oob.pptx",
+            image_replacements=[
+                {"slide_index": 1, "shape_index": 999, "image_path": "img.png"},
+            ],
+        )
+        assert "error" not in result
+        assert result["images_replaced"] == 0
+
+
+@_needs_pptx
+class TestEditErrorMessageNewParams:
+    @pytest.mark.asyncio
+    async def test_error_message_includes_new_params(self, tmp_path):
+        await handle(
+            action="create",
+            path="err_new.pptx",
+            slides=[{"title": "Slide"}],
+        )
+        result = await handle(action="edit", path="err_new.pptx")
+        assert "error" in result
+        assert "template_fill" in result["error"]
+        assert "table_format" in result["error"]
+        assert "paragraph_edits" in result["error"]
+        assert "placeholder_edits" in result["error"]
+        assert "image_replacements" in result["error"]
+
+
+@_needs_pptx
+class TestNewFeaturesDefinition:
+    def test_template_fill_in_definition(self):
+        props = DEFINITION["parameters"]["properties"]
+        assert "template_fill" in props
+
+    def test_table_format_in_definition(self):
+        props = DEFINITION["parameters"]["properties"]
+        assert "table_format" in props
+
+    def test_paragraph_edits_in_definition(self):
+        props = DEFINITION["parameters"]["properties"]
+        assert "paragraph_edits" in props
+
+    def test_placeholder_edits_in_definition(self):
+        props = DEFINITION["parameters"]["properties"]
+        assert "placeholder_edits" in props
+
+    def test_image_replacements_in_definition(self):
+        props = DEFINITION["parameters"]["properties"]
+        assert "image_replacements" in props
 
 
 # ---------------------------------------------------------------------------
