@@ -7,6 +7,19 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 28, 2026
 
+### v1.85.0
+
+**New:**
+
+- PPTX read now shows paragraph structure (level, bold, size) for multi-paragraph shapes and table cells (#605)
+
+**Fixed:**
+
+- COM backend auto-reconnects when Office drops the RPC connection between tool calls (#603)
+- `shape_edits` description warns about paragraph destruction and directs to `paragraph_edits` (#605)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.85.0)
+
 ### v1.84.2
 
 **Fixed:**
