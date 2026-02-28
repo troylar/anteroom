@@ -7,6 +7,18 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 28, 2026
 
+### v1.84.0
+
+**New:**
+
+- 5 new PPTX edit features: template fill (`{{key}}` replacement), table formatting, paragraph edits, placeholder edits by type name, and image replacements — all working in both lib and COM backends (#597)
+
+**Improved:**
+
+- Resource exhaustion prevention with `_MAX_EDIT_OPS = 500` cap on all array-based edit parameters (#597)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.84.0)
+
 ### v1.83.5
 
 **Fixed:**
