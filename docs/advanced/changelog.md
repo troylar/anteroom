@@ -7,6 +7,12 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 28, 2026
 
+### v1.85.1
+
+*Maintenance release — bumped 14 direct dependency version floors to address known CVEs and stay current (#611).*
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.85.1)
+
 ### v1.85.0
 
 **New:**
