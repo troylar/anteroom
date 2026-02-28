@@ -383,7 +383,7 @@ def _open_pres_com(
         prs = ppt.Presentations.Open(
             os.path.abspath(resolved),
             ReadOnly=read_only,
-            WithWindow=False,
+            WithWindow=True,
         )
         return ppt, prs, None
     except Exception as exc:
@@ -457,7 +457,7 @@ def _create_com(manager: Any, resolved: str, display_path: str, **kwargs: Any) -
         return {"error": f"Too many slides (max {_MAX_SLIDES})"}
 
     ppt = manager.get_app("PowerPoint.Application")
-    prs = ppt.Presentations.Add(WithWindow=False)
+    prs = ppt.Presentations.Add(WithWindow=True)
 
     try:
         for slide_def in slides:
