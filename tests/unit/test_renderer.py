@@ -307,8 +307,10 @@ class TestStartThinkingFlushesDedup:
         import anteroom.cli.renderer as r
 
         r._tool_batch_active = True
-        with patch("anteroom.cli.renderer._write_thinking_line"), \
-                patch("anteroom.cli.renderer.console") as mock_console:
+        with (
+            patch("anteroom.cli.renderer._write_thinking_line"),
+            patch("anteroom.cli.renderer.console") as mock_console,
+        ):
             r._repl_mode = True
             start_thinking()
             r._repl_mode = False
@@ -322,8 +324,10 @@ class TestStartThinkingFlushesDedup:
         import anteroom.cli.renderer as r
 
         r._tool_batch_active = False
-        with patch("anteroom.cli.renderer._write_thinking_line"), \
-                patch("anteroom.cli.renderer.console") as mock_console:
+        with (
+            patch("anteroom.cli.renderer._write_thinking_line"),
+            patch("anteroom.cli.renderer.console") as mock_console,
+        ):
             r._repl_mode = True
             start_thinking()
             r._repl_mode = False
