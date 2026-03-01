@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 1, 2026
 
+### v1.89.6
+
+**Fixed:**
+
+- Complete fix for CLI spacing between tool call output and AI narration text — v1.89.5 only covered mid-turn narration; this fixes the main streaming path (#680)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.89.6)
+
 ### v1.89.5
 
 **Fixed:**
