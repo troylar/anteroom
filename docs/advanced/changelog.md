@@ -7,6 +7,20 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## February 28, 2026
 
+### v1.86.0
+
+**New:**
+
+- Fullscreen visual polish: turn separators, streaming cursor, scroll indicator, approval mode prompt colors (#619)
+- Tool calls render as compact single-line results, parallel-safe (#619)
+
+**Fixed:**
+
+- Conversation context bleed — previous turn's AI response missing from history (#619)
+- Parallel tool call rendering, elapsed times, and summaries now correct (#619)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.86.0)
+
 ### v1.85.2
 
 **Fixed:**
