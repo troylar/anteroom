@@ -9,6 +9,11 @@
 </p>
 
 <p align="center">
+  Web UI + CLI. Any LLM. Enterprise security. No telemetry.<br>
+  <code>pip install anteroom</code>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/pypi/v/anteroom?style=for-the-badge&color=3b82f6&labelColor=0f1117" alt="PyPI Version">
   <img src="https://img.shields.io/badge/python-3.10%2B-10b981?style=for-the-badge&labelColor=0f1117" alt="Python 3.10+">
   <a href="https://codecov.io/gh/troylar/anteroom"><img src="https://img.shields.io/codecov/c/github/troylar/anteroom?style=for-the-badge&color=7c3aed&labelColor=0f1117&label=coverage" alt="Coverage"></a>
@@ -17,9 +22,9 @@
 
 <p align="center">
   <a href="https://anteroom.readthedocs.io">Docs</a> &bull;
-  <a href="#-get-running-in-60-seconds">Quick Start</a> &bull;
-  <a href="https://anteroom.readthedocs.io/en/latest/advanced/changelog/">Changelog</a> &bull;
-  <a href="https://anteroom.readthedocs.io/en/latest/getting-started/quickstart/">Tutorials</a>
+  <a href="#get-running-in-60-seconds">Quick Start</a> &bull;
+  <a href="#why-anteroom">Why Anteroom?</a> &bull;
+  <a href="https://anteroom.readthedocs.io/en/latest/advanced/changelog/">Changelog</a>
 </p>
 
 <br>
@@ -34,19 +39,37 @@
 
 <br>
 
-## What is Anteroom?
+## The backstory
 
-Anteroom is a **ChatGPT-style web UI** and **agentic CLI** that runs on your machine and connects to **any OpenAI-compatible API** &mdash; OpenAI, Azure, Ollama, LM Studio, or your company's internal endpoint.
+I'm a CTO at a Fortune 500 in a regulated industry where we can't use third-party AI tools &mdash; no ChatGPT, no Claude Code, no Cursor, no Copilot. But we *can* `pip install` open-source packages.
 
-Think of it as your private room between you and the AI. Your data never leaves your machine. No cloud. No telemetry. Just `pip install` and go.
+So I built Anteroom: a self-hosted AI gateway with a polished web UI for everyone on the team and an agentic CLI for developers. It connects to **any OpenAI-compatible API** &mdash; Azure OpenAI, Ollama, LM Studio, or your company's internal endpoint. Your data never leaves your network.
+
+JPMorgan built a private AI gateway for 250,000 employees. Goldman Sachs built one for 46,500. Anteroom gives every regulated institution the same capability &mdash; without a nine-figure technology budget.
 
 <br>
 
-> **Built for enterprise teams behind firewalls** who need agentic AI without sending data to third parties.
->
-> **Built for developers** who want a CLI-first, tool-rich AI workflow they fully control.
->
-> **Built for anyone** who believes their conversations are their own.
+---
+
+<br>
+
+## Why Anteroom?
+
+**38% of employees paste confidential data into unauthorized AI tools.** Marketing teams, executives, and product owners are the worst offenders &mdash; not developers. Shadow AI breaches cost $650K+ per incident.
+
+Cloud-hosted AI sends your data to third parties. Self-hosted chat UIs can't actually *do* anything. Building a custom platform costs millions.
+
+Anteroom threads the needle:
+
+| Problem | Anteroom |
+|---------|----------|
+| "AI tools send our data to the cloud" | Self-hosted, local-first. Data never leaves your network. |
+| "Chat AI can't actually do things" | Agentic: edits files, runs commands, generates documents, creates presentations |
+| "Our compliance team won't approve it" | OWASP ASVS L2 security, HMAC-chained audit logs, DLP, bash sandboxing |
+| "It only works for developers" | Web UI for everyone + CLI for developers, same governed platform |
+| "We can't control costs at scale" | Token budgets per-request, per-user, per-day |
+| "We're locked into one AI vendor" | Any OpenAI-compatible API &mdash; Azure, Ollama, local models |
+| "It takes months to deploy" | `pip install anteroom && aroom init` &mdash; done in 60 seconds |
 
 <br>
 
@@ -64,21 +87,28 @@ aroom               # web UI at http://127.0.0.1:8080
 
 That's it. No Docker. No database server. No config files required.
 
+Or use the CLI directly:
+
+```bash
+aroom chat                              # interactive REPL
+aroom exec "summarize this PR" --json   # one-shot for scripts
+```
+
 <br>
 
 ---
 
 <br>
 
-## Two interfaces, one brain
+## Two interfaces, one engine
 
-Everything is shared &mdash; conversations, tools, storage. Start in the web UI, pick up in the terminal. Or live entirely in the CLI. Your choice.
+Everything is shared &mdash; conversations, tools, storage, security controls, audit trail. The web UI serves the whole organization. The CLI serves developers who want agentic power tools.
 
 <br>
 
 ### Web UI
 
-A full-featured chat interface with projects, folders, tags, file attachments, canvas panels, inline tool approvals, and four built-in themes.
+A full-featured chat interface with projects, folders, tags, file attachments, canvas panels, inline tool approvals, and four built-in themes. Product owners, executives, compliance officers, and marketing teams use this.
 
 <p align="center">
   <img src="docs/screenshots/theme-midnight.png" alt="Midnight" width="390">&nbsp;&nbsp;
@@ -93,12 +123,12 @@ A full-featured chat interface with projects, folders, tags, file attachments, c
 
 ### CLI REPL
 
-An agentic terminal with **12 built-in tools** (+ 3 optional MS Office tools), MCP integration, sub-agent orchestration, a skills system, and planning mode &mdash; all with Rich markdown rendering. Type while the AI works; messages queue automatically.
+An agentic terminal with **12 built-in tools** (+ 3 optional MS Office tools), MCP integration, sub-agent orchestration, a skills system, and planning mode &mdash; all with Rich markdown rendering.
 
 ```
 $ aroom chat
 
-anteroom v1.57.0 — the secure AI gateway
+anteroom v1.85.0 — the secure AI gateway
   model: gpt-4o | tools: 12 built-in + 3 MCP | safety: ask_for_writes
 
 > Refactor the auth module to use JWT tokens
@@ -140,11 +170,11 @@ echo "review this" | aroom exec - --quiet      # pipe stdin
 
 <br>
 
-## What makes it different
+## Key capabilities
 
 ### Agentic, not just chat
 
-The AI reads files, edits code, runs commands, searches your codebase, and spawns parallel sub-agents &mdash; with safety gates at every step. Not a chatbot. A collaborator.
+The AI reads files, edits code, runs commands, searches your codebase, generates documents, creates presentations, and spawns parallel sub-agents &mdash; with safety gates at every step.
 
 **Built-in tools:** `read_file` `write_file` `edit_file` `bash` `glob_files` `grep` `create_canvas` `update_canvas` `patch_canvas` `run_agent` `ask_user` `introspect`
 
@@ -152,45 +182,27 @@ The AI reads files, edits code, runs commands, searches your codebase, and spawn
 
 ---
 
-### Extensible via MCP
+### Packs: shareable AI capabilities
 
-Connect any [Model Context Protocol](https://modelcontextprotocol.io/) server to add tools. Databases, APIs, file systems, custom services &mdash; the AI can use them all with the same safety controls as built-in tools.
+Packs are versioned, git-distributed bundles with **7 artifact types**: skills, tools, prompts, templates, hooks, configs, and docs. Build a "compliance pack" with regulatory prompts, a "marketing pack" with brand guidelines, a "DevOps pack" with deployment skills &mdash; and share them across teams.
 
-```yaml
-# config.yaml
-mcp_servers:
-  - name: internal-tools
-    command: npx
-    args: ["-y", "@my-org/internal-tools"]
-    trust_level: trusted              # trusted = no defensive prompt wrapping
-    tools_include:
-      - "search_*"
-      - "read_*"
-
-  - name: external-api
-    command: npx
-    args: ["-y", "@third-party/api"]
-    trust_level: untrusted            # default — outputs wrapped in defensive envelopes
-    tools_exclude:
-      - "admin_*"
+```bash
+aroom pack install https://github.com/example/compliance-pack
+aroom pack list
 ```
+
+Packs use a 6-layer precedence system (built-in &rarr; global &rarr; space &rarr; project &rarr; conversation &rarr; runtime) so departments can customize without weakening security controls.
 
 ---
 
-### Planning mode
+### Spaces: named workspaces
 
-For complex tasks, the AI explores first, writes a plan, then executes only after you approve. No surprises. Works in both CLI and web UI.
+Spaces bundle repositories, tools, configs, and packs into named workspaces. Different teams, different projects, different configurations &mdash; centrally governed.
 
-**CLI:**
+```bash
+aroom space create my-project --repo ./frontend --repo ./backend
+aroom space switch my-project
 ```
-> /plan build a REST API for user management
-  Planning... reading codebase, designing approach
-
-> /plan approve
-  Executing plan: 8 steps across 5 files...
-```
-
-**Web UI:** Check the plan panel when planning is active, approve or reject before execution continues.
 
 ---
 
@@ -199,38 +211,71 @@ For complex tasks, the AI explores first, writes a plan, then executes only afte
 Built to [OWASP ASVS Level 2](SECURITY.md) standards. Not bolted on &mdash; baked in.
 
 - **Tool safety gate**: 4 risk tiers, 4 approval modes, 3 permission scopes
-- **16 hard-block patterns**: Catastrophic commands (rm -rf, fork bombs, disk wipes) blocked unconditionally
-- **Bash sandboxing**: Execution timeouts, output limits, path/command blocking, network/package restrictions
+- **16 hard-block patterns**: Catastrophic commands blocked unconditionally
+- **Bash sandboxing**: Execution timeouts, output limits, path/command blocking, network restrictions
 - **Prompt injection defense**: Trust classification, defensive XML envelopes, tag breakout prevention
-- **Structured audit log**: HMAC-SHA256 chained JSONL for tamper detection, SIEM-ready
-- **Session hardening**: Ed25519 identity, concurrent session limits, IP allowlisting, idle/absolute timeouts
-- **Token budgets**: Per-request, per-conversation, per-day limits (denial-of-wallet prevention)
+- **Tamper-evident audit log**: HMAC-SHA256 chained JSONL, daily rotation, content redaction, SIEM-ready
+- **Session hardening**: Ed25519 identity, concurrent session limits, IP allowlisting
+- **Token budgets**: Per-request, per-conversation, per-day limits (cost governance at scale)
 - **Sub-agent isolation**: Concurrency, depth, iteration, timeout, and output caps
-- **Team config enforcement**: Lock security settings across team members
-- **MCP SSRF protection**: DNS validation, metacharacter rejection, per-server tool filtering and trust levels
+- **Team config enforcement**: Lock security settings across the entire organization
+- **DLP**: Configurable data loss prevention rules
+
+---
+
+### Works with any LLM
+
+Any endpoint that speaks the OpenAI protocol:
+
+- **Azure OpenAI** &mdash; your enterprise deployment
+- **OpenAI** &mdash; GPT-4o, o1, o3, etc.
+- **Ollama / LM Studio** &mdash; fully offline, fully private
+- **vLLM / TGI** &mdash; self-hosted open models
+- **Any OpenAI-compatible API**
+
+---
+
+### Extensible via MCP
+
+Connect any [Model Context Protocol](https://modelcontextprotocol.io/) server. Databases, APIs, file systems, internal services &mdash; with per-server trust levels and tool filtering.
+
+```yaml
+# config.yaml
+mcp_servers:
+  - name: internal-tools
+    command: npx
+    args: ["-y", "@my-org/internal-tools"]
+    trust_level: trusted
+  - name: external-api
+    command: npx
+    args: ["-y", "@third-party/api"]
+    trust_level: untrusted
+```
+
+---
+
+### Planning mode
+
+For complex tasks, the AI explores first, writes a plan, then executes only after you approve. Works in both CLI and web UI.
+
+```
+> /plan build a REST API for user management
+  Planning... reading codebase, designing approach
+
+> /plan approve
+  Executing plan: 8 steps across 5 files...
+```
 
 ---
 
 ### Knowledge sources
 
-Upload documents (PDFs, DOCX, code, etc.) via CLI (`/upload <path>`) or web UI drag-and-drop. Text is automatically extracted from binary formats and indexed for semantic search. Sources persist across conversations and are searchable with local vector embeddings &mdash; no API key needed.
+Upload documents (PDFs, DOCX, code) via CLI or web UI drag-and-drop. Text is automatically extracted and indexed for semantic search with local vector embeddings &mdash; no external API needed.
 
 ```bash
 pip install anteroom[docs]        # adds PDF/DOCX text extraction
 pip install anteroom[embeddings]  # adds local vector search
 ```
-
----
-
-### Works with everything
-
-Any endpoint that speaks the OpenAI protocol:
-
-- **OpenAI** &mdash; GPT-4o, o1, etc.
-- **Azure OpenAI** &mdash; your enterprise deployment
-- **Ollama / LM Studio** &mdash; fully offline
-- **vLLM / TGI** &mdash; self-hosted open models
-- **Any OpenAI-compatible API**
 
 <br>
 
@@ -242,23 +287,15 @@ Any endpoint that speaks the OpenAI protocol:
 
 | | |
 |---|---|
-| **Web UI** | Conversations with auto-generated slugs, projects, folders, tags, attachments, canvas, themes, keyboard shortcuts |
-| **CLI** | REPL, one-shot, exec mode, planning, skills, @file references, Rich rendering, slug-based conversation lookup |
-| **Tools** | 12 built-in + 3 optional office tools + unlimited MCP tools, parallel execution, sub-agent orchestration |
-| **Tool Safety** | 4 risk tiers, 4 approval modes, 16 hard-block patterns, destructive command detection |
-| **Bash Sandbox** | Execution timeouts, output limits, path/command blocking, network/package restrictions, OS-level sandbox |
-| **Prompt Defense** | Trust classification, defensive XML envelopes, tag breakout prevention, per-server trust levels |
+| **Web UI** | Conversations, projects, folders, tags, attachments, canvas, themes, keyboard shortcuts |
+| **CLI** | REPL, one-shot, exec mode, planning, skills, @file references, Rich rendering |
+| **Tools** | 12 built-in + 3 optional office tools + unlimited MCP tools, parallel execution, sub-agents |
+| **Packs** | 7 artifact types, 6-layer precedence, git distribution, lock files, health checks |
+| **Spaces** | Workspace management, auto-discovery, repository cloning, per-space config overlays |
+| **Security** | OWASP ASVS L2, CSRF, CSP, HSTS, SRI, rate limiting, DLP, prompt injection defense |
 | **Audit** | HMAC-SHA256 chained JSONL, daily rotation, content redaction, SIEM integration |
-| **Token Budgets** | Per-request, per-conversation, per-day limits with configurable block/warn actions |
-| **Storage** | SQLite + FTS5 + optional vector search, fully local, no cloud |
-| **Security** | OWASP ASVS L2, CSRF, CSP, HSTS, SRI, rate limiting, parameterized queries |
-| **Identity** | Ed25519 keypairs, HMAC-SHA256 session tokens, stable across restarts |
-| **Sessions** | Memory or SQLite stores, idle/absolute timeouts, concurrent limits, IP allowlisting |
-| **Spaces** | Workspace management, auto-discovery from cwd, repository cloning, pack bootstrapping, per-space config overlays |
-| **Packs** | 7 artifact types, 6-layer precedence, pack manifests, git distribution, background refresh, lock files, health checks |
-| **Config** | YAML + env vars, per-project ANTEROOM.md conventions, team config enforcement, dynamic API key refresh |
-| **Teams** | Shared databases, team config with enforced fields, project configs with SHA-256 trust, skills system |
-| **Deployment** | `pip install anteroom` &mdash; one command, no infrastructure |
+| **Storage** | SQLite + FTS5 + optional vector search, fully local, optional SQLCipher encryption |
+| **Config** | YAML + env vars, ANTEROOM.md conventions, team enforcement, dynamic API key refresh |
 
 <br>
 
@@ -284,11 +321,22 @@ ruff format src/ tests/             # format
 
 <br>
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for architecture overview, dev setup, and contribution guidelines. Packs are the easiest way to contribute &mdash; no core changes needed.
+
+<br>
+
+---
+
+<br>
+
 <p align="center">
   <strong>MIT License</strong><br>
   <br>
   An <em>anteroom</em> is the private chamber just outside a larger hall &mdash;<br>
   a controlled space where you decide who enters and what leaves.<br>
   <br>
-  <a href="https://anteroom.readthedocs.io">anteroom.readthedocs.io</a>
+  <a href="https://anteroom.readthedocs.io">anteroom.readthedocs.io</a> &bull;
+  <a href="https://anteroom.ai">anteroom.ai</a>
 </p>

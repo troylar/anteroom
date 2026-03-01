@@ -11,14 +11,13 @@ Set up everything needed to begin implementing a GitHub issue.
 ## Usage
 
 ```
-/start-work 83                  # Start work on issue #83 (worktree, default)
-/start-work 83 --no-worktree    # Start on a branch in the current tree instead
+/start-work 83                  # Start work on issue #83 in a worktree
 /start-work 83 --plan-only      # Just create the plan, don't create a branch or worktree
 ```
 
 The argument is a GitHub issue number.
 
-By default, work is set up in a **git worktree** — a separate working directory linked to the same repo. This keeps your current branch clean and lets you work on multiple features simultaneously without stashing. Use `--no-worktree` if you prefer a traditional branch in the current tree.
+Work is **always** set up in a **git worktree** — a separate working directory linked to the same repo. This keeps the main checkout clean and lets you work on multiple features simultaneously without stashing. Never work directly on the main checkout.
 
 ## Workflow
 
@@ -123,7 +122,7 @@ Generate a branch name from the issue:
 
 If `--plan-only` was passed, skip branch/workspace creation.
 
-#### Default: Worktree
+#### Create Worktree
 
 Create a branch and set up a worktree in a sibling directory:
 
@@ -139,15 +138,10 @@ cd ../<repo-name>-<N>-<short-description> && pip install -e ".[dev]" -q
 ```
 
 The worktree path follows the pattern: `../<repo-name>-<N>-<short-description>` (sibling to the main repo directory).
-- Example: issue #95 "Add sub-agent orchestration" → `../parlor-95-subagent-orchestration`
+- Example: issue #95 "Add sub-agent orchestration" → `../anteroom-95-subagent-orchestration`
 - The `<short-description>` matches the branch name suffix for easy identification
 
-#### With `--no-worktree`: Traditional Branch
-
-```bash
-git checkout main && git pull origin main
-git checkout -b issue-<N>-<short-description>
-```
+**IMPORTANT:** Never create a branch in the main checkout. Always use a worktree.
 
 ### Step 4: Deep Code Exploration (parallel agents)
 
@@ -212,7 +206,7 @@ Print:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   🔀 Branch:     issue-<N>-<description>
-  📂 Worktree:   ../<repo>-<N>-<description>  (or "current directory" if --no-worktree)
+  📂 Worktree:   ../<repo>-<N>-<description>
   👤 Assigned:   @<user>
   🏷️ Status:     in-progress
   📋 Plan:       <number> steps across <number> files
