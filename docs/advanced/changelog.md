@@ -7,6 +7,19 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 1, 2026
 
+### v1.88.0
+
+**New:**
+
+- Bug Hunter agent added to `/submit-pr` and `/deploy` — deep correctness scan that fixes every issue automatically (#636)
+- License changed from MIT to Apache 2.0 for stronger patent protection (#636)
+
+**Improved:**
+
+- README messaging refreshed to align with landing page; test count updated to 4,800+ (#636)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.88.0)
+
 ### v1.87.0
 
 **New:**
