@@ -299,9 +299,15 @@ def cycle_verbosity() -> Verbosity:
     return _verbosity
 
 
+_fs_ai_turn_rendered: bool = False
+
+
 def clear_turn_history() -> None:
     """Clear current turn tool history. Called at start of each turn."""
+    global _fs_ai_turn_rendered, _streaming_buffer
     _current_turn_tools.clear()
+    _fs_ai_turn_rendered = False
+    _streaming_buffer = []
 
 
 def save_turn_history() -> None:
@@ -312,6 +318,50 @@ def save_turn_history() -> None:
     if _current_turn_tools:
         _tool_history.clear()
         _tool_history.extend(_current_turn_tools)
+
+
+_SEPARATOR_WIDTH = 60
+
+
+def render_user_turn(text: str) -> None:
+    """Render a styled user turn separator in fullscreen mode."""
+    if not (_fullscreen_mode and _fullscreen_layout):
+        return
+    truncated = text if len(text) <= 60 else text[:57] + "..."
+    remaining = max(0, _SEPARATOR_WIDTH - 6)  # 6 = "─── " + "You" + space before dashes
+    fragments: list[tuple[str, str]] = [
+        ("class:separator", "\u2500\u2500\u2500 "),
+        ("class:turn.user", "You"),
+        ("class:separator", " " + "\u2500" * remaining + "\n"),
+        ("class:turn.user.text", f"  {truncated}\n"),
+        ("class:output", "\n"),
+    ]
+    _fullscreen_layout.append_output_fragments(fragments)
+    if _fullscreen_invalidate:
+        _fullscreen_invalidate()
+
+
+def render_ai_turn_start() -> None:
+    """Render a styled AI turn separator in fullscreen mode.
+
+    Guarded by ``_fs_ai_turn_rendered`` flag to avoid duplicate separators
+    when ``start_thinking()`` is called multiple times per turn.
+    """
+    global _fs_ai_turn_rendered
+    if not (_fullscreen_mode and _fullscreen_layout):
+        return
+    if _fs_ai_turn_rendered:
+        return
+    _fs_ai_turn_rendered = True
+    remaining = max(0, _SEPARATOR_WIDTH - 5)  # 5 = "─── " + "AI" + space before dashes
+    fragments: list[tuple[str, str]] = [
+        ("class:separator", "\u2500\u2500\u2500 "),
+        ("class:turn.ai", "AI"),
+        ("class:separator", " " + "\u2500" * remaining + "\n"),
+    ]
+    _fullscreen_layout.append_output_fragments(fragments)
+    if _fullscreen_invalidate:
+        _fullscreen_invalidate()
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +391,7 @@ def _humanize_tool(tool_name: str, arguments: dict[str, Any]) -> str:
     elif name_lower in ("grep", "search", "ripgrep"):
         pattern = arguments.get("pattern", arguments.get("query", ""))
         return f"Searching for '{pattern}'"
-    elif name_lower in ("glob", "find_files"):
+    elif name_lower in ("glob", "glob_files", "find_files"):
         pattern = arguments.get("pattern", "")
         return f"Finding {pattern}"
     elif name_lower == "run_agent":
@@ -526,7 +576,8 @@ def start_thinking(*, newline: bool = False) -> None:
     # Reset plan written lines — the block will be freshly written
     _plan_written_lines = 0
     if _fullscreen_mode and _fullscreen_layout:
-        # Fullscreen: update status line, no raw ANSI
+        # Fullscreen: render AI separator on first call, update status line
+        render_ai_turn_start()
         _write_thinking_line(0.0)
         _spinner = None
     elif _repl_mode:
@@ -1005,8 +1056,13 @@ def flush_buffered_text() -> None:
 
     Called before tool calls start so the AI's task explanation
     (e.g. 'Let me review your auth files') renders before the tool output.
+
+    In fullscreen mode, stops the streaming cursor first to prevent
+    stale checkpoint issues where subsequent token updates would truncate
+    already-rendered content (tool frames, Markdown text).
     """
     global _streaming_buffer
+    _stop_streaming_cursor()
     text = "".join(_streaming_buffer)
     _streaming_buffer = []
     if not text.strip():
@@ -1028,14 +1084,66 @@ def _flush_dedup() -> None:
     _dedup_summary = ""
 
 
+# Streaming cursor state — checkpoint/truncate pattern for live cursor
+_streaming_cursor_active: bool = False
+_streaming_checkpoint: int = 0  # fragment count before cursor
+
+
+def _start_streaming_cursor() -> None:
+    """Begin showing a gold block cursor at the end of streaming text."""
+    global _streaming_cursor_active, _streaming_checkpoint
+    if not (_fullscreen_mode and _fullscreen_layout):
+        return
+    _streaming_cursor_active = True
+    _streaming_checkpoint = _fullscreen_layout.output.fragment_count
+
+
+def _update_streaming_cursor() -> None:
+    """Update the streaming cursor position — truncate to checkpoint, re-append text + cursor."""
+    if not (_streaming_cursor_active and _fullscreen_mode and _fullscreen_layout):
+        return
+    # Truncate to checkpoint (removes previous text + cursor)
+    frags = _fullscreen_layout.output._output_fragments
+    del frags[_streaming_checkpoint:]
+    # Re-append current buffered text + cursor
+    text = "".join(_streaming_buffer)
+    if text:
+        _fullscreen_layout.output._output_fragments.append(("class:output", text))
+    _fullscreen_layout.output._output_fragments.append(("class:streaming.cursor", "\u258a"))
+    _fullscreen_layout.output._scroll_offset = 0
+    if _fullscreen_invalidate:
+        _fullscreen_invalidate()
+
+
+def _stop_streaming_cursor() -> None:
+    """Remove the streaming cursor and clear checkpoint state."""
+    global _streaming_cursor_active, _streaming_checkpoint
+    if not _streaming_cursor_active:
+        return
+    if _fullscreen_mode and _fullscreen_layout:
+        # Truncate everything from checkpoint (text + cursor)
+        frags = _fullscreen_layout.output._output_fragments
+        del frags[_streaming_checkpoint:]
+    _streaming_cursor_active = False
+    _streaming_checkpoint = 0
+
+
 def render_token(content: str) -> None:
-    """Buffer token content silently (no streaming output)."""
+    """Buffer token content silently (no streaming output).
+
+    In fullscreen mode, also updates the live streaming cursor.
+    """
     _streaming_buffer.append(content)
+    if _fullscreen_mode and _fullscreen_layout:
+        if not _streaming_cursor_active:
+            _start_streaming_cursor()
+        _update_streaming_cursor()
 
 
 def render_response_end() -> None:
     """Render the complete buffered response with Rich Markdown."""
     global _streaming_buffer, _tool_batch_active
+    _stop_streaming_cursor()
     _flush_dedup()
     full_text = "".join(_streaming_buffer)
     _streaming_buffer = []
@@ -1287,14 +1395,13 @@ def render_tool_call_start(tool_name: str, arguments: dict[str, Any]) -> None:
     # Flush any buffered AI text so task explanations appear before tool output
     flush_buffered_text()
 
-    # Add spacing before the first tool call in a batch
-    if not _tool_batch_active:
-        console.print()
-        _tool_batch_active = True
-
     summary = _humanize_tool(tool_name, arguments)
 
-    # Store for history
+    _tool_start = time.monotonic()
+
+    # Store for history — include start time per-tool so parallel tool
+    # calls get correct elapsed times (the global _tool_start gets
+    # overwritten by each subsequent start).
     _current_turn_tools.append(
         {
             "tool_name": tool_name,
@@ -1302,10 +1409,24 @@ def render_tool_call_start(tool_name: str, arguments: dict[str, Any]) -> None:
             "summary": summary,
             "status": "running",
             "output": None,
+            "start_time": _tool_start,
         }
     )
 
-    _tool_start = time.monotonic()
+    if _fullscreen_mode and _fullscreen_layout:
+        # Fullscreen: defer all visual output to render_tool_call_end().
+        # Parallel tool calls (asyncio.as_completed) cause starts to stack
+        # before results arrive, disconnecting frames from their results.
+        # Instead, render a single self-contained line per tool at completion.
+        _tool_batch_active = True
+        if tool_name not in ("ask_user", "ask_human"):
+            start_tool_ticker(summary)
+        return
+
+    # Add spacing before the first tool call in a batch
+    if not _tool_batch_active:
+        console.print()
+        _tool_batch_active = True
 
     if _verbosity == Verbosity.VERBOSE:
         # Full output: tool name + raw args
@@ -1325,15 +1446,55 @@ def render_tool_call_start(tool_name: str, arguments: dict[str, Any]) -> None:
 def render_tool_call_end(tool_name: str, status: str, output: Any) -> None:
     """Show tool call result. Style depends on verbosity."""
     stop_tool_ticker_sync()
-    elapsed = time.monotonic() - _tool_start if _tool_start else 0
 
-    # Update history
-    if _current_turn_tools:
-        _current_turn_tools[-1]["status"] = status
-        _current_turn_tools[-1]["output"] = output
-        _current_turn_tools[-1]["elapsed"] = elapsed
+    # Update history — find the first *running* entry that matches tool_name.
+    # Using [-1] would grab the wrong entry when parallel tools complete
+    # out of order (asyncio.as_completed returns fastest-first).
+    matched_entry = None
+    for entry in _current_turn_tools:
+        if entry["tool_name"] == tool_name and entry["status"] == "running":
+            matched_entry = entry
+            break
+    if matched_entry is None and _current_turn_tools:
+        # Fallback: no running match (e.g. duplicate tool names all completed)
+        matched_entry = _current_turn_tools[-1]
 
-    summary = _current_turn_tools[-1]["summary"] if _current_turn_tools else tool_name
+    # Use per-tool start time for accurate parallel elapsed calculation
+    start = matched_entry.get("start_time", _tool_start) if matched_entry else _tool_start
+    elapsed = time.monotonic() - start if start else 0
+
+    if matched_entry:
+        matched_entry["status"] = status
+        matched_entry["output"] = output
+        matched_entry["elapsed"] = elapsed
+
+    summary = matched_entry["summary"] if matched_entry else tool_name
+
+    if _fullscreen_mode and _fullscreen_layout:
+        # Fullscreen: single self-contained line per tool call.
+        # No separate frame — parallel tools (asyncio.as_completed) would
+        # stack all frames before any results, making them useless.
+        if status == "success":
+            icon_style, icon = "class:tool.ok", "  \u2713 "
+        else:
+            icon_style, icon = "class:tool.err", "  \u2717 "
+        elapsed_str = f" ({elapsed:.1f}s)" if elapsed >= 0.1 else ""
+        detail = _output_summary(output) if status == "success" else _error_summary(output)
+        fragments: list[tuple[str, str]] = [
+            (icon_style, icon),
+            ("class:tool.name", summary),
+            ("class:tool.elapsed", elapsed_str),
+        ]
+        if detail:
+            fragments.append(("class:tool.detail", f" \u2014 {detail}"))
+        fragments.append(("class:output", "\n"))
+        _fullscreen_layout.append_output_fragments(fragments)
+        # Inline diff rendering still works via OutputPaneWriter
+        if status == "success" and _has_diff_data(tool_name, output):
+            _render_inline_diff(tool_name, output)
+        if _fullscreen_invalidate:
+            _fullscreen_invalidate()
+        return
 
     if _verbosity == Verbosity.VERBOSE:
         # Legacy-style
