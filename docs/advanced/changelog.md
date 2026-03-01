@@ -5,6 +5,25 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## March 1, 2026
+
+### v1.87.0
+
+**New:**
+
+- Fullscreen streaming pipeline with checkpoint-based rendering for clean Markdown output (#608)
+- Live plan checklist renders in-pane with step-by-step updates during agentic runs (#608)
+
+**Fixed:**
+
+- Duplicate output in fullscreen mode where raw text appeared alongside rendered Markdown (#608)
+- Plan checklist corruption during concurrent streaming and plan updates (#608)
+- Dead flush ticker removed — was consuming CPU without effect (#608)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.87.0)
+
+---
+
 ## February 28, 2026
 
 ### v1.86.0
