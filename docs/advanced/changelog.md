@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 1, 2026
 
+### v1.89.2
+
+**Fixed:**
+
+- Fixed `aroom chat` hanging when run from non-project directories like `~` — codebase index now checks for project markers before scanning (#672)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.89.2)
+
 ### v1.89.1
 
 **Fixed:**
