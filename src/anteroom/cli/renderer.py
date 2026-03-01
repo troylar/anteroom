@@ -1397,7 +1397,11 @@ def render_tool_call_start(tool_name: str, arguments: dict[str, Any]) -> None:
 
     summary = _humanize_tool(tool_name, arguments)
 
-    # Store for history
+    _tool_start = time.monotonic()
+
+    # Store for history — include start time per-tool so parallel tool
+    # calls get correct elapsed times (the global _tool_start gets
+    # overwritten by each subsequent start).
     _current_turn_tools.append(
         {
             "tool_name": tool_name,
@@ -1405,10 +1409,9 @@ def render_tool_call_start(tool_name: str, arguments: dict[str, Any]) -> None:
             "summary": summary,
             "status": "running",
             "output": None,
+            "start_time": _tool_start,
         }
     )
-
-    _tool_start = time.monotonic()
 
     if _fullscreen_mode and _fullscreen_layout:
         # Fullscreen: defer all visual output to render_tool_call_end().
@@ -1443,15 +1446,29 @@ def render_tool_call_start(tool_name: str, arguments: dict[str, Any]) -> None:
 def render_tool_call_end(tool_name: str, status: str, output: Any) -> None:
     """Show tool call result. Style depends on verbosity."""
     stop_tool_ticker_sync()
-    elapsed = time.monotonic() - _tool_start if _tool_start else 0
 
-    # Update history
-    if _current_turn_tools:
-        _current_turn_tools[-1]["status"] = status
-        _current_turn_tools[-1]["output"] = output
-        _current_turn_tools[-1]["elapsed"] = elapsed
+    # Update history — find the first *running* entry that matches tool_name.
+    # Using [-1] would grab the wrong entry when parallel tools complete
+    # out of order (asyncio.as_completed returns fastest-first).
+    matched_entry = None
+    for entry in _current_turn_tools:
+        if entry["tool_name"] == tool_name and entry["status"] == "running":
+            matched_entry = entry
+            break
+    if matched_entry is None and _current_turn_tools:
+        # Fallback: no running match (e.g. duplicate tool names all completed)
+        matched_entry = _current_turn_tools[-1]
 
-    summary = _current_turn_tools[-1]["summary"] if _current_turn_tools else tool_name
+    # Use per-tool start time for accurate parallel elapsed calculation
+    start = matched_entry.get("start_time", _tool_start) if matched_entry else _tool_start
+    elapsed = time.monotonic() - start if start else 0
+
+    if matched_entry:
+        matched_entry["status"] = status
+        matched_entry["output"] = output
+        matched_entry["elapsed"] = elapsed
+
+    summary = matched_entry["summary"] if matched_entry else tool_name
 
     if _fullscreen_mode and _fullscreen_layout:
         # Fullscreen: single self-contained line per tool call.
