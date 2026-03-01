@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 1, 2026
 
+### v1.89.4
+
+**Fixed:**
+
+- Fixed persistent "Session expired" banner when using web UI locally on macOS — IPv4/IPv6 loopback mismatch no longer invalidates sessions (#675)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.89.4)
+
 ### v1.89.3
 
 **Fixed:**
