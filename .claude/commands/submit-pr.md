@@ -204,7 +204,9 @@ This is **blocking** — if any error-severity findings are found, abort. Warnin
 
 ### Step 4: Test Coverage for New Code
 
-Check that new or modified Python source files have corresponding unit tests.
+Check that new or modified source files have corresponding tests at all levels.
+
+#### 4a: Unit Test Coverage
 
 1. Get the list of added/modified Python files under `src/`:
    ```bash
@@ -216,12 +218,37 @@ Check that new or modified Python source files have corresponding unit tests.
 3. For modified files (not new), check if the test file was also modified — warn if source changed but tests didn't.
 4. Flag any new Python modules under `src/` that have zero corresponding test files.
 
+#### 4b: UX Test Coverage
+
+Check whether changed files require UX-level tests (see `.claude/rules/ux-testing.md`):
+
+1. **Web UI changes** — files under `routers/`, `static/js/`, `static/css/`, `static/index.html`:
+   - Check for new/modified Playwright tests in `tests/e2e/test_ui_*.py`
+   - Check for new/modified JS unit tests if `static/js/*.js` changed
+   - Flag as ⚠️ if UI code changed but no UX tests added or modified
+
+2. **CLI changes** — files under `cli/repl.py`, `cli/commands.py`, `cli/layout.py`, `cli/renderer.py`, `cli/event_handlers.py`, `cli/pickers.py`, `cli/dialogs.py`:
+   - Check for new/modified integration tests in `tests/integration/test_repl_*.py`
+   - Check for new/modified snapshot tests if `cli/layout.py` or `cli/renderer.py` changed
+   - Flag as ⚠️ if CLI UX code changed but no UX tests added or modified
+
+3. **Shared core changes** — files under `services/agent_loop.py`, `tools/`:
+   - Both web UI and CLI UX tests should be checked
+   - Flag as ⚠️ if shared code changed but neither interface has UX test coverage
+
 Report format:
 ```
 🧪 Test Coverage:
-  src/anteroom/services/approvals.py  -> ❌ MISSING (no test file found)
-  src/anteroom/routers/chat.py        -> ⚠️ WARNING (source changed, tests unchanged)
-  src/anteroom/tools/canvas.py        -> ✅ OK (tests/unit/test_canvas.py exists)
+  Unit Tests:
+    src/anteroom/services/approvals.py  -> ❌ MISSING (no test file found)
+    src/anteroom/routers/chat.py        -> ⚠️ WARNING (source changed, tests unchanged)
+    src/anteroom/tools/canvas.py        -> ✅ OK (tests/unit/test_canvas.py exists)
+
+  UX Tests:
+    src/anteroom/routers/chat.py        -> ⚠️ WARNING (router changed, no Playwright test changes)
+    src/anteroom/static/js/chat.js      -> ⚠️ WARNING (JS changed, no JS unit test found)
+    src/anteroom/cli/commands.py        -> ⚠️ WARNING (CLI UX changed, no integration test changes)
+    src/anteroom/services/storage.py    -> ✅ OK (backend-only, no UX tests needed)
 ```
 
 ### Step 5: Deep Analysis (parallel agents, unless --skip-checks)
@@ -371,7 +398,8 @@ Display the full validation results locally in the chat:
   SAST (Semgrep):  ✅ / ❌ N findings / ⏭️ not installed
 
 🧪 Test Coverage
-  Test Files:     ✅ / ❌ N new modules missing tests
+  Unit Tests:     ✅ / ❌ N new modules missing tests
+  UX Tests:       ✅ / ⚠️ N UI changes missing UX tests
   Thoroughness:   GOOD / WEAK / POOR
 
 📝 Compliance
@@ -412,6 +440,7 @@ Details:
 - Uncommitted changes
 - Missing issue references on some commits
 - WEAK test thoroughness
+- UI code changed without corresponding UX tests
 - Outdated dependencies
 - New dependencies missing license or stale (>2 years since last release)
 - Documentation needs updates

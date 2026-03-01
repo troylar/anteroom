@@ -1,6 +1,6 @@
 # Feature Parity: CLI and Web UI
 
-> Vision principle: **"Two interfaces, one engine."** The web UI and CLI share the same agent loop, storage, and tools. Features work in both interfaces or have a clear reason why they don't. The CLI is not a second-class citizen.
+> Vision principle: **"Multiple interfaces, one engine."** The web UI and CLI share the same agent loop, storage, and tools. Features work in both interfaces or have a clear reason why they don't. The web UI is the primary interface for most users. The CLI is the developer power tool. Both are first-class.
 
 ## The Rule
 

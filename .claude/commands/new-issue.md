@@ -116,8 +116,12 @@ Create a structured issue body:
 
 - [ ] <Specific, testable criterion>
 - [ ] <Another criterion>
-- [ ] <Tests pass: `pytest tests/unit/ -v`>
-- [ ] <Lint passes: `ruff check src/ tests/`>
+- [ ] Works in CLI: <specific behavior, or N/A with parity exception reason>
+- [ ] Works in web UI: <specific behavior, or N/A with parity exception reason>
+- [ ] Behavior is equivalent across both interfaces
+- [ ] UX tests: <Playwright E2E for web UI changes, CLI integration for REPL changes, or N/A if backend-only>
+- [ ] Unit tests pass: `pytest tests/unit/ -v`
+- [ ] Lint passes: `ruff check src/ tests/`
 
 ## Implementation Notes
 
