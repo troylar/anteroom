@@ -4,6 +4,22 @@ Aligned with [VISION.md](VISION.md). Updated 2026-03-01.
 
 Directions match VISION.md Section "Direction (Current)." Issues are sorted by priority within each section. Checked items are completed.
 
+## Enterprise Infrastructure
+
+*SSO, RBAC, admin dashboard, Postgres backend, Docker/K8s deployment, health checks, log forwarding. Table stakes for getting Anteroom through a bank's architecture review.*
+
+### High
+
+- [ ] #639 — feat(auth): add SSO integration with SAML and OIDC
+- [ ] #640 — feat(auth): add RBAC with per-role tool access, token budgets, and approval modes
+- [ ] #641 — feat(routers): add admin dashboard for security controls, config, and audit visibility
+- [ ] #642 — feat(db): add Postgres backend for server-mode multi-user deployment
+- [ ] #643 — feat(deploy): add Docker image and Kubernetes manifests for enterprise deployment
+- [ ] #644 — feat(audit): add log forwarding for Splunk, ELK, and SIEM integration
+- [ ] #645 — feat(app): add multi-user support with session isolation and per-user storage
+- [ ] #626 — Add /healthz endpoint for operational monitoring
+- [ ] #628 — Add air-gapped installation documentation
+
 ## Governance and Audit
 
 *Making Anteroom the AI gateway that CISOs and CCOs can approve for the entire organization.*
@@ -18,8 +34,8 @@ Directions match VISION.md Section "Direction (Current)." Issues are sorted by p
 
 - [ ] #99 — Store sub-agent tool calls in database for audit trail
 - [ ] #627 — Emit audit events for egress domain checks
-- [ ] #626 — Add /healthz endpoint for operational monitoring
 - [ ] #230 — feat(tools): add glob-pattern bash permission rules
+- [ ] #501 — Surface error when project MCP servers are skipped due to untrusted config
 - [x] #310 — Add token budget warnings for usage self-regulation
 - [x] #297 — feat(tools): OS-level sandboxing for command execution (Windows)
 
@@ -31,11 +47,11 @@ Directions match VISION.md Section "Direction (Current)." Issues are sorted by p
 
 - [ ] #629 — feat(packs): add Office document Packs for Word, Excel, and PowerPoint workflows
 - [ ] #630 — feat(packs): add shareable Pack templates for common enterprise tasks
+- [ ] #633 — feat(static): add web UI onboarding flow for non-technical users
 
 ### Medium
 
 - [ ] #632 — feat: add data analysis workflow with CSV/Excel ingestion and summary generation
-- [ ] #633 — feat(static): add web UI onboarding flow for non-technical users
 - [ ] #607 — Enrich XLSX and DOCX read output with formatting context + add missing actions
 - [ ] #592 — Add file extension validation to Office tools
 - [x] #178 — Add document source scanning with folder watch and Confluence connector
@@ -92,11 +108,17 @@ Directions match VISION.md Section "Direction (Current)." Issues are sorted by p
 - [ ] #394 — Add recall tool for AI-mediated conversation retrieval
 - [ ] #373 — Add context budget tracking with per-component visibility
 - [ ] #625 — Add memory retention policy and eviction strategy
+- [ ] #336 — Return message-level search results with context
+- [ ] #345 — feat(cli): add note/document message editing and type conversion
+- [ ] #359 — Add conversation-to-knowledge extraction workflow
+- [ ] #456 — Add passive recall: surface related past conversations without explicit query
+- [ ] #457 — Epic: three-layer conversation memory (active, explicit, and passive recall)
 - [x] #212 — feat: add tree-sitter codebase index for token-efficient context
 - [x] #310 — Add token budget warnings for usage self-regulation
 
 ### Low
 
+- [ ] #358 — Add knowledge base export and import
 - [x] #72 — feat: Markdown journaling with auto-export and Obsidian compatibility
 
 ## Developer Workflow
@@ -108,8 +130,8 @@ Directions match VISION.md Section "Direction (Current)." Issues are sorted by p
 - [ ] #218 — feat(cli): add structured JSON output mode for agent events
 - [ ] #266 — feat(cli): render live plan checklist with execution progress
 - [ ] #272 — feat(web): add plan mode approval flow to web UI
-- [ ] #608 — feat(cli): migrate streaming pipeline to fullscreen output pane
 - [ ] #621 — feat(agent): add checkpoint/rollback for agent file modifications
+- [x] #608 — feat(cli): migrate streaming pipeline to fullscreen output pane
 - [x] #159 — fix(cli): collapse_long_input shows raw ANSI codes when pasting multiline content
 - [x] #267 — feat(cli): auto-invoke skills from natural language prompts
 
@@ -117,11 +139,16 @@ Directions match VISION.md Section "Direction (Current)." Issues are sorted by p
 
 - [ ] #114 — CLI: accessibility improvements (NO_COLOR, text markers, screen reader compat)
 - [ ] #228 — feat(config): add agent configuration profiles
-- [ ] #248 — feat(vscode): add @file/@folder mentions and partial file pasting in chat
 - [ ] #282 — Add API conversation type for tracking external tool calls
 - [ ] #298 — Add file change cards to web UI for write_file and edit_file results
 - [ ] #301 — feat(routers): add live plan checklist to web UI chat
 - [ ] #610 — Fix mypy type-check errors across codebase (499 errors)
+- [ ] #341 — feat(cli): add source management commands
+- [ ] #346 — feat(cli): add file attachments to chat messages
+- [ ] #347 — feat(cli): add database switching mid-session
+- [ ] #385 — Add favorite/starred support to conversations
+- [ ] #387 — Add conversation management to web UI sidebar
+- [ ] #393 — Add unified @ autocomplete for files and conversations
 - [x] #243 — Add VS Code extension for Anteroom
 - [x] #257 — feat(cli): redesign prompt with persistent status header and context bar
 - [x] #268 — feat: multi-pane AI-managed context panels for CLI and web
@@ -129,9 +156,12 @@ Directions match VISION.md Section "Direction (Current)." Issues are sorted by p
 
 ### Low
 
-- [ ] #235 — feat(cli): add conversation forking for branching explorations
 - [ ] #237 — feat: add VS Code extension with chat, code assistant, and conversation sync
 - [ ] #273 — Add real-time conversation sync between web UI and CLI
+- [ ] #328 — feat(cli): add config/instruction hierarchy visualization command
+- [ ] #342 — feat(cli): add conversation fork, export, and cross-DB copy
+- [ ] #343 — feat(cli): add folder and tag management commands
+- [ ] #348 — feat(cli): add canvas rendering with Rich panels
 - [x] #74 — feat: Conversation templates for recurring workflows
 - [x] #77 — feat: Scheduled/background conversations
 - [x] #79 — feat: Heartbeat agent — proactive AI that doesn't wait for you
@@ -154,7 +184,6 @@ Directions match VISION.md Section "Direction (Current)." Issues are sorted by p
 ### Low
 
 - [ ] #48 — Add MkDocs Material documentation site and /write-docs skill
-- [ ] #112 — Add WCAG 2.2 AA accessibility rules and PR validation
 - [ ] #116 — Add color theme support to CLI with color-blindness safe themes
 - [x] #57 — Web UI: infinite scroll for conversation list
 - [x] #58 — Web UI: bulk operations on conversations
