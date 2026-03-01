@@ -153,7 +153,7 @@ class TestCodebaseIndexService:
         service._available = False
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create a Python file
+            (Path(tmpdir) / ".git").mkdir()  # project marker
             (Path(tmpdir) / "hello.py").write_text("def greet(): pass\n")
             result = service.scan(tmpdir)
 
@@ -168,6 +168,7 @@ class TestCodebaseIndexService:
         service._available = False
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / ".git").mkdir()  # project marker
             (Path(tmpdir) / "hello.py").write_text("x = 1\n")
             hidden = Path(tmpdir) / "hidden"
             hidden.mkdir()
@@ -183,6 +184,7 @@ class TestCodebaseIndexService:
         service._available = False
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / ".git").mkdir()  # project marker
             (Path(tmpdir) / "hello.py").write_text("x = 1\n")
             (Path(tmpdir) / "app.js").write_text("let x = 1;\n")
             result = service.scan(tmpdir)
@@ -190,6 +192,42 @@ class TestCodebaseIndexService:
         paths = [f.path for f in result.files]
         assert "hello.py" in paths
         assert "app.js" not in paths
+
+    def test_scan_skips_non_project_directory(self) -> None:
+        service = CodebaseIndexService()
+        service._available = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # No project markers — should skip scan entirely
+            (Path(tmpdir) / "hello.py").write_text("x = 1\n")
+            result = service.scan(tmpdir)
+
+        assert isinstance(result, CodebaseMap)
+        assert result.files == []
+
+    def test_scan_runs_with_pyproject_toml_marker(self) -> None:
+        service = CodebaseIndexService()
+        service._available = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+            (Path(tmpdir) / "hello.py").write_text("x = 1\n")
+            result = service.scan(tmpdir)
+
+        assert len(result.files) == 1
+        assert result.files[0].path == "hello.py"
+
+    def test_scan_runs_with_package_json_marker(self) -> None:
+        service = CodebaseIndexService()
+        service._available = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "package.json").write_text("{}\n")
+            (Path(tmpdir) / "app.js").write_text("let x = 1;\n")
+            result = service.scan(tmpdir)
+
+        assert len(result.files) == 1
+        assert result.files[0].path == "app.js"
 
     def test_format_map_basic(self) -> None:
         service = CodebaseIndexService()
@@ -248,6 +286,7 @@ class TestCodebaseIndexService:
         service._available = False
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / ".git").mkdir()  # project marker
             (Path(tmpdir) / "hello.py").write_text("x = 1\n")
             result = service.get_map(tmpdir, token_budget=5000)
 
