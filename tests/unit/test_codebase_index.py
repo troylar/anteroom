@@ -229,6 +229,98 @@ class TestCodebaseIndexService:
         assert len(result.files) == 1
         assert result.files[0].path == "app.js"
 
+    def test_scan_runs_with_cargo_toml_marker(self) -> None:
+        service = CodebaseIndexService()
+        service._available = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "Cargo.toml").write_text("[package]\nname = 'test'\n")
+            (Path(tmpdir) / "main.rs").write_text("fn main() {}\n")
+            result = service.scan(tmpdir)
+
+        assert len(result.files) == 1
+        assert result.files[0].path == "main.rs"
+        assert result.files[0].language == "rust"
+
+    def test_scan_runs_with_go_mod_marker(self) -> None:
+        service = CodebaseIndexService()
+        service._available = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "go.mod").write_text("module example.com/test\n")
+            (Path(tmpdir) / "main.go").write_text("package main\n")
+            result = service.scan(tmpdir)
+
+        assert len(result.files) == 1
+        assert result.files[0].path == "main.go"
+        assert result.files[0].language == "go"
+
+    def test_scan_runs_with_makefile_marker(self) -> None:
+        service = CodebaseIndexService()
+        service._available = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "Makefile").write_text("all:\n\techo hello\n")
+            (Path(tmpdir) / "lib.py").write_text("x = 1\n")
+            result = service.scan(tmpdir)
+
+        assert len(result.files) == 1
+        assert result.files[0].path == "lib.py"
+
+    def test_scan_runs_with_cmakelists_marker(self) -> None:
+        service = CodebaseIndexService()
+        service._available = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)\n")
+            (Path(tmpdir) / "main.c").write_text("int main() { return 0; }\n")
+            result = service.scan(tmpdir)
+
+        assert len(result.files) == 1
+        assert result.files[0].path == "main.c"
+        assert result.files[0].language == "c"
+
+    def test_scan_skip_populates_scan_time(self) -> None:
+        service = CodebaseIndexService()
+        service._available = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "hello.py").write_text("x = 1\n")
+            result = service.scan(tmpdir)
+
+        assert result.scan_time >= 0.0
+
+    def test_scan_skip_sets_correct_root(self) -> None:
+        service = CodebaseIndexService()
+        service._available = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = service.scan(tmpdir)
+
+        assert result.root == str(Path(tmpdir).resolve())
+
+    def test_get_map_returns_empty_for_non_project(self) -> None:
+        service = CodebaseIndexService()
+        service._available = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "hello.py").write_text("x = 1\n")
+            result = service.get_map(tmpdir, token_budget=5000)
+
+        assert result == ""
+
+    def test_scan_with_deeply_nested_files_and_no_marker(self) -> None:
+        service = CodebaseIndexService()
+        service._available = False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            deep = Path(tmpdir) / "a" / "b" / "c"
+            deep.mkdir(parents=True)
+            (deep / "deep.py").write_text("x = 1\n")
+            result = service.scan(tmpdir)
+
+        assert result.files == []
+
     def test_format_map_basic(self) -> None:
         service = CodebaseIndexService()
         cmap = CodebaseMap(
