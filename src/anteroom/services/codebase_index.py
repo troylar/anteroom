@@ -19,6 +19,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Project root markers — if none exist in a directory, it's not a project and shouldn't be scanned.
+_PROJECT_MARKERS = {".git", "pyproject.toml", "package.json", "Cargo.toml", "go.mod", "Makefile", "CMakeLists.txt"}
+
 # Language detection from file extensions
 _EXTENSION_MAP: dict[str, str] = {
     ".py": "python",
@@ -313,6 +316,10 @@ class CodebaseIndexService:
         """Scan a directory and build the codebase symbol map."""
         root = Path(root_dir).resolve()
         start = time.monotonic()
+
+        if not any((root / marker).exists() for marker in _PROJECT_MARKERS):
+            logger.debug("Skipping codebase index: no project markers in %s", root)
+            return CodebaseMap(root=str(root), files=[], scan_time=time.monotonic() - start)
 
         source_files: list[tuple[Path, str]] = []
         for dirpath, dirnames, filenames in os.walk(root):
