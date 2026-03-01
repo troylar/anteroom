@@ -161,7 +161,12 @@ Launch parallel agents to understand the codebase context for this issue:
 **Agent C — Test landscape (Sonnet):**
 1. Find test files related to the affected modules
 2. Understand testing patterns: fixtures, mocking approach, async test setup
-3. Identify what new tests will be needed
+3. Identify what new unit tests will be needed
+4. Identify UX test needs per `.claude/rules/ux-testing.md`:
+   - If web UI code is affected: check existing Playwright tests in `tests/e2e/test_ui_*.py`, identify new Playwright tests needed
+   - If CLI UX code is affected: check existing integration tests in `tests/integration/`, identify new CLI integration tests needed
+   - If JS files are affected: check for existing JS unit tests, identify new Vitest tests needed
+   - If shared core is affected: flag both interfaces need UX coverage
 
 ### Step 5: Create Implementation Plan
 
@@ -189,9 +194,10 @@ N. Run tests: `pytest tests/unit/ -v`
 N+1. Run lint: `ruff check src/ tests/`
 
 ### Testing Strategy
-- <What to test, how to test it>
-- <Edge cases to cover>
-- <Integration points to verify>
+- **Unit tests**: <what to test, how to test it>
+- **UX tests**: <Playwright E2E for web UI changes, CLI integration for REPL changes, visual snapshots for renderer changes, JS unit tests for frontend logic — or "N/A: backend-only change">
+- **Edge cases**: <edge cases to cover>
+- **Integration points**: <integration points to verify>
 
 ### Risks & Considerations
 - <Anything tricky, breaking changes, migration needs>
@@ -210,7 +216,8 @@ Print:
   👤 Assigned:   @<user>
   🏷️ Status:     in-progress
   📋 Plan:       <number> steps across <number> files
-  🧪 Tests:      <number> existing, <number> new needed
+  🧪 Unit tests: <number> existing, <number> new needed
+  🎭 UX tests:   <Playwright / CLI integration / snapshots / JS unit — or "N/A: backend-only">
   🎯 Vision:     ✅ supports <principles>
 
 <The implementation plan from Step 5>

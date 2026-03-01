@@ -64,9 +64,9 @@ Launch 3 parallel Haiku agents:
 
 | Condition | Agents to run | Rationale |
 |-----------|--------------|-----------|
-| `submit_pr_ran = true` | #2 Bug scan, #4 Historical context, #5 Code comments | Submit-PR already ran compliance, docs, vision, security |
-| `small_pr = true` AND standalone | #2 Bug scan, #3 Security, #4 Historical context | Small PRs need fewer agents |
-| Standalone, large PR | All 7 agents | Full review needed |
+| `submit_pr_ran = true` | #2 Bug scan, #4 Historical context, #5 Code comments | Submit-PR already ran compliance, docs, vision, security, UX tests |
+| `small_pr = true` AND standalone | #1b UX tests, #2 Bug scan, #3 Security, #4 Historical context | Small PRs need fewer agents |
+| Standalone, large PR | All 8 agents | Full review needed |
 
 **Bug scan (#2) ALWAYS runs regardless of context — it is never skipped.**
 
@@ -91,6 +91,19 @@ Read CLAUDE.md files, check the diff:
 - [ ] New config fields have `AI_CHAT_` env var overrides documented
 - [ ] Error responses don't expose internals
 - [ ] Commits follow `type(scope): description (#issue)`
+
+---
+
+**Agent #1b — UX test coverage (Haiku):** *(skipped when `submit_pr_ran`)*
+
+Check whether changed files have corresponding UX tests per `.claude/rules/ux-testing.md`:
+- [ ] Web UI changes (`routers/`, `static/`) have Playwright tests in `tests/e2e/test_ui_*.py`
+- [ ] CLI UX changes (`cli/repl.py`, `cli/commands.py`, `cli/layout.py`, `cli/renderer.py`) have integration tests in `tests/integration/`
+- [ ] JS changes (`static/js/`) have JS unit tests
+- [ ] Shared core changes (`services/agent_loop.py`, `tools/`) have UX tests for both interfaces
+- [ ] Backend-only changes correctly skip UX tests
+
+Report as `(ux-tests: <file> — <missing test type>)`.
 
 ---
 

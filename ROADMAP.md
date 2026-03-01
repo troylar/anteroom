@@ -2,42 +2,88 @@
 
 Aligned with [VISION.md](VISION.md). Updated 2026-03-01.
 
-Directions match VISION.md Section "Direction (Current)." Issues are sorted by priority within each section. Checked items are completed.
+Directions match VISION.md Section "Direction (Current)." Issues are sorted by priority within each section. Checked items are completed. Enterprise Infrastructure is the **critical path** — other directions progress in parallel where they don't depend on it.
 
-## Enterprise Infrastructure
+## Enterprise Infrastructure *(Critical Path)*
 
-*SSO, RBAC, admin dashboard, Postgres backend, Docker/K8s deployment, health checks, log forwarding. Table stakes for getting Anteroom through a bank's architecture review.*
+*Server mode, Postgres, multi-user, SSO, RBAC, admin dashboard, Docker/K8s. Table stakes for getting Anteroom through a bank's architecture review.*
 
-### High
+**Build order is sequential — each item depends on the ones above it:**
 
-- [ ] #639 — feat(auth): add SSO integration with SAML and OIDC
-- [ ] #640 — feat(auth): add RBAC with per-role tool access, token budgets, and approval modes
-- [ ] #641 — feat(routers): add admin dashboard for security controls, config, and audit visibility
+### Phase 1: Foundation
+
+- [ ] #646 — feat(config): add deployment mode switch for local vs server behavior
 - [ ] #642 — feat(db): add Postgres backend for server-mode multi-user deployment
-- [ ] #643 — feat(deploy): add Docker image and Kubernetes manifests for enterprise deployment
-- [ ] #644 — feat(audit): add log forwarding for Splunk, ELK, and SIEM integration
-- [ ] #645 — feat(app): add multi-user support with session isolation and per-user storage
 - [ ] #626 — Add /healthz endpoint for operational monitoring
+
+### Phase 2: Identity & Isolation
+
+*Depends on: Phase 1 (#646, #642)*
+
+- [ ] #645 — feat(app): add multi-user support with session isolation and per-user storage
+- [ ] #639 — feat(auth): add SSO integration with SAML and OIDC
+- [ ] #647 — feat(cli): add device-flow auth for CLI connections to server-mode Anteroom
+
+### Phase 3: Authorization & Governance
+
+*Depends on: Phase 2 (#645, #639)*
+
+- [ ] #640 — feat(auth): add RBAC with per-role tool access, token budgets, and approval modes
+- [ ] #657 — feat(services): invalidate active sessions on role change or account deactivation
+- [ ] #624 — Enforce token budget limits per request, session, and per-user
+
+### Phase 4: Admin & Deployment
+
+*Depends on: Phase 3 (#640)*
+
+- [ ] #641 — feat(routers): add admin dashboard for security controls, config, and audit visibility
+- [ ] #644 — feat(audit): add log forwarding for Splunk, ELK, and SIEM integration
+- [ ] #643 — feat(deploy): add Docker image and Kubernetes manifests for enterprise deployment
+
+### Phase 5: Onboarding & Provisioning
+
+*Depends on: Phase 2-3*
+
+- [ ] #654 — feat: design solo-to-server migration path for enterprise onboarding
+- [ ] #656 — feat(auth): add SCIM user provisioning for enterprise identity lifecycle
+
+### Supporting
+
 - [ ] #628 — Add air-gapped installation documentation
 
 ## Governance and Audit
 
-*Making Anteroom the AI gateway that CISOs and CCOs can approve for the entire organization.*
+*DLP hardening, MCP governance, data isolation, audit enrichment, regulatory compliance. Making Anteroom the AI gateway that CISOs and CCOs can approve for the entire organization.*
 
 ### High
 
-- [ ] #624 — Enforce token budget limits per request and session
-- [ ] #213 — feat(agent): auto-validate edits with lint and test feedback loop
+- [ ] #649 — feat(services): harden DLP for server-mode with block-by-default and industry patterns
+- [ ] #650 — feat(services): restrict MCP server configuration to admin role in server mode
+- [ ] #648 — feat(services): add RAG and vector search tenant isolation for multi-user mode
+- [ ] #651 — feat(services): add minimum audit retention floor and extended default for server mode
 - [ ] #231 — feat(tools): add OS-level sandboxing for command execution (macOS/Linux)
 
 ### Medium
 
+- [ ] #652 — feat(services): add automated audit chain integrity verification with alerting
+- [ ] #653 — feat(services): add periodic access review export for compliance reporting
+- [ ] #655 — feat: add self-service token budget visibility for non-admin users
 - [ ] #99 — Store sub-agent tool calls in database for audit trail
-- [ ] #627 — Emit audit events for egress domain checks
+- [ ] #627 — Emit audit events for egress domain checks (+ enforcement in server mode)
 - [ ] #230 — feat(tools): add glob-pattern bash permission rules
 - [ ] #501 — Surface error when project MCP servers are skipped due to untrusted config
 - [x] #310 — Add token budget warnings for usage self-regulation
 - [x] #297 — feat(tools): OS-level sandboxing for command execution (Windows)
+
+## Accessibility
+
+*Section 508 compliance for government-adjacent enterprises. Required for enterprise adoption, not optional.*
+
+### Medium
+
+- [ ] #113 — Web UI: WCAG 2.2 AA compliance (ARIA, focus, contrast)
+- [ ] #114 — CLI: accessibility improvements (NO_COLOR, text markers, screen reader compat)
+- [ ] #116 — Add color theme support to CLI with color-blindness safe themes
 
 ## Enterprise Knowledge Work
 
@@ -63,7 +109,7 @@ Directions match VISION.md Section "Direction (Current)." Issues are sorted by p
 
 ## Extensibility
 
-*MCP ecosystem, custom tool authoring, shareable Packs. Making it easy for teams to build and distribute department-specific AI capabilities.*
+*MCP ecosystem (with admin governance in server mode), custom tool authoring, shareable Packs.*
 
 ### High
 
@@ -91,7 +137,7 @@ Directions match VISION.md Section "Direction (Current)." Issues are sorted by p
 
 ## Knowledge Management
 
-*Notebooks, documents, semantic search, RAG. Making Anteroom a second brain that remembers and retrieves context.*
+*Notebooks, documents, semantic search, RAG (with tenant isolation in server mode). Making Anteroom a second brain.*
 
 ### High
 
@@ -123,10 +169,11 @@ Directions match VISION.md Section "Direction (Current)." Issues are sorted by p
 
 ## Developer Workflow
 
-*VS Code extension, Git integration, project management tools. Deeper agentic capabilities: autonomous workflows, approval gates, long-running tasks, sub-agent orchestration.*
+*VS Code extension, Git integration, project management tools. Deeper agentic capabilities.*
 
 ### High
 
+- [ ] #213 — feat(agent): auto-validate edits with lint and test feedback loop
 - [ ] #218 — feat(cli): add structured JSON output mode for agent events
 - [ ] #266 — feat(cli): render live plan checklist with execution progress
 - [ ] #272 — feat(web): add plan mode approval flow to web UI
@@ -137,7 +184,6 @@ Directions match VISION.md Section "Direction (Current)." Issues are sorted by p
 
 ### Medium
 
-- [ ] #114 — CLI: accessibility improvements (NO_COLOR, text markers, screen reader compat)
 - [ ] #228 — feat(config): add agent configuration profiles
 - [ ] #282 — Add API conversation type for tracking external tool calls
 - [ ] #298 — Add file change cards to web UI for write_file and edit_file results
@@ -177,14 +223,9 @@ Directions match VISION.md Section "Direction (Current)." Issues are sorted by p
 
 ## Other
 
-### Medium
-
-- [ ] #113 — Web UI: WCAG 2.2 AA compliance (ARIA, focus, contrast)
-
 ### Low
 
 - [ ] #48 — Add MkDocs Material documentation site and /write-docs skill
-- [ ] #116 — Add color theme support to CLI with color-blindness safe themes
 - [x] #57 — Web UI: infinite scroll for conversation list
 - [x] #58 — Web UI: bulk operations on conversations
 - [x] #60 — Web UI: conversation import from markdown
