@@ -241,6 +241,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         skill_registry = SkillRegistry()
         skill_registry.load()
         app.state.skill_registry = skill_registry
+        if artifact_registry.count:
+            n = skill_registry.load_from_artifacts(artifact_registry)
+            if n:
+                logger.info("Skill registry: %d skills from artifacts", n)
         if skill_registry.list_skills():
             logger.info("Skill registry loaded: %d skills", len(skill_registry.list_skills()))
 

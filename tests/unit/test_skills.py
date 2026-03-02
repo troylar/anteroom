@@ -9,6 +9,7 @@ from anteroom.cli.skills import (
     _BUILTIN_COMMANDS,
     MAX_PROMPT_SIZE,
     MAX_SKILLS,
+    Skill,
     SkillRegistry,
     _expand_args,
     _load_skills_from_dir,
@@ -760,3 +761,73 @@ class TestSearchedDirs:
             assert "default" in sources
             assert "global" in sources
             assert "project" in sources
+
+
+class TestLoadFromArtifacts:
+    """SkillRegistry.load_from_artifacts() bridges artifacts into skills."""
+
+    def test_load_from_artifacts_adds_skills(self) -> None:
+        from unittest.mock import MagicMock
+
+        from anteroom.services.artifacts import ArtifactSource, ArtifactType
+
+        art = MagicMock()
+        art.name = "greet"
+        art.type = ArtifactType.SKILL
+        art.content = "name: greet\ndescription: Say hello\nprompt: Hello!\n"
+        art.source = ArtifactSource.GLOBAL
+        art.fqn = "@ns/skill/greet"
+
+        registry = MagicMock()
+        registry.list_all.return_value = [art]
+
+        sr = SkillRegistry()
+        added = sr.load_from_artifacts(registry)
+        assert added == 1
+        assert sr.has_skill("greet")
+        skill = sr.get("greet")
+        assert skill is not None
+        assert skill.description == "Say hello"
+        assert skill.prompt == "Hello!"
+
+    def test_filesystem_skills_take_precedence(self, tmp_path: Path) -> None:
+        from unittest.mock import MagicMock
+
+        from anteroom.services.artifacts import ArtifactSource, ArtifactType
+
+        art = MagicMock()
+        art.name = "greet"
+        art.type = ArtifactType.SKILL
+        art.content = "Artifact prompt"
+        art.source = ArtifactSource.GLOBAL
+        art.fqn = "@ns/skill/greet"
+
+        registry = MagicMock()
+        registry.list_all.return_value = [art]
+
+        sr = SkillRegistry()
+        sr._skills["greet"] = Skill(name="greet", description="FS skill", prompt="FS prompt", source="project")
+        added = sr.load_from_artifacts(registry)
+        assert added == 0
+        assert sr.get("greet").prompt == "FS prompt"
+
+    def test_artifact_skill_raw_content(self) -> None:
+        from unittest.mock import MagicMock
+
+        from anteroom.services.artifacts import ArtifactSource, ArtifactType
+
+        art = MagicMock()
+        art.name = "deploy"
+        art.type = ArtifactType.SKILL
+        art.content = "Just a raw prompt with no YAML structure"
+        art.source = ArtifactSource.PROJECT
+        art.fqn = "@ns/skill/deploy"
+
+        registry = MagicMock()
+        registry.list_all.return_value = [art]
+
+        sr = SkillRegistry()
+        sr.load_from_artifacts(registry)
+        skill = sr.get("deploy")
+        assert skill is not None
+        assert skill.prompt == "Just a raw prompt with no YAML structure"

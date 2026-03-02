@@ -1452,6 +1452,8 @@ async def run_cli(
 
         _artifact_registry = ArtifactRegistry()
         _artifact_registry.load_from_db(db)
+        if _artifact_registry.count:
+            skill_registry.load_from_artifacts(_artifact_registry)
     except Exception:
         pass
 

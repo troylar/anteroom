@@ -350,6 +350,35 @@ class SkillRegistry:
         """Return (name, description) pairs for all loaded skills, sorted by name."""
         return [(s.name, s.description) for s in self.list_skills()]
 
+    def load_from_artifacts(self, artifact_registry: Any) -> int:
+        """Load skill-type artifacts from the artifact registry.
+
+        Filesystem skills take precedence — artifact skills are only added for
+        names not already present. Returns the number of skills added.
+        """
+        added = 0
+        for art in artifact_registry.list_all(artifact_type="skill"):
+            key = art.name.lower()
+            if key in self._skills:
+                continue
+            description = art.name
+            prompt = art.content
+            try:
+                data = yaml.safe_load(art.content)
+                if isinstance(data, dict):
+                    description = data.get("description", art.name)
+                    prompt = data.get("prompt", art.content)
+            except yaml.YAMLError:
+                pass
+            self._skills[key] = Skill(
+                name=art.name,
+                description=description,
+                prompt=prompt,
+                source=f"artifact:{art.source.value}",
+            )
+            added += 1
+        return added
+
     def get_invoke_skill_definition(self) -> dict[str, Any] | None:
         """Return an OpenAI function schema for the invoke_skill tool.
 
