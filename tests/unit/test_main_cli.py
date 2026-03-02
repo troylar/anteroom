@@ -1365,11 +1365,15 @@ class TestRunSpaceDispatch:
         mock_config = _make_config()
         args = argparse.Namespace(space_action="list")
 
-        spaces = [{"name": "my-space", "file_path": "/home/user/.anteroom/spaces/my-space.yaml", "last_loaded_at": ""}]
+        spaces = [
+            {"id": "abc123", "name": "my-space", "file_path": "/home/.anteroom/my-space.yaml", "last_loaded_at": ""},
+        ]
 
         with (
             patch("anteroom.db.get_db") as mock_get_db,
             patch("anteroom.services.space_storage.list_spaces", return_value=spaces),
+            patch("anteroom.services.space_storage.count_space_conversations", return_value=0),
+            patch("anteroom.services.spaces.is_local_space", return_value=False),
         ):
             mock_get_db.return_value = MagicMock()
             _run_space(mock_config, args)
@@ -1432,23 +1436,22 @@ class TestRunSpaceDispatch:
         mock_config = _make_config()
         args = argparse.Namespace(space_action="create", name="my-space")
 
-        spaces_dir = tmp_path / "spaces"
-        spaces_dir.mkdir()
-
         mock_space = {"id": "abc12345-0000-0000-0000-000000000000", "name": "my-space"}
 
         with (
             patch("anteroom.db.get_db") as mock_get_db,
-            patch("anteroom.services.spaces.get_spaces_dir", return_value=spaces_dir),
-            patch("anteroom.services.spaces.write_space_file"),
+            patch("anteroom.services.spaces.write_space_template"),
             patch("anteroom.services.spaces.file_hash", return_value="fakehash"),
             patch("anteroom.services.space_storage.create_space", return_value=mock_space),
+            patch("anteroom.services.space_storage.sync_space_paths"),
+            patch("pathlib.Path.exists", return_value=False),
+            patch("pathlib.Path.cwd", return_value=tmp_path),
         ):
             mock_get_db.return_value = MagicMock()
             _run_space(mock_config, args)
 
         captured = capsys.readouterr()
-        assert "Created space" in captured.out
+        assert "Created local space" in captured.out
 
     def test_space_show_existing(self, capsys: pytest.CaptureFixture[str]) -> None:
         from anteroom.__main__ import _run_space
