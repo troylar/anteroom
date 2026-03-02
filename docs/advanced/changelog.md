@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 2, 2026
 
+### v1.90.1
+
+**Fixed:**
+
+- "Session expired. Could not recover automatically" banner no longer appears incorrectly on fresh page loads when multiple API calls hit 401 simultaneously (#687)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.90.1)
+
 ### v1.90.0
 
 **New:**
