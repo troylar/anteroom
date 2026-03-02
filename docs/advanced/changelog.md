@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 2, 2026
 
+### v1.92.0
+
+**New:**
+
+- Multi-provider support via LiteLLM — connect to 100+ LLM providers including OpenRouter, Together AI, Replicate, Cohere, and AWS Bedrock (#696)
+- OpenRouter preset added to setup wizard (`aroom init`) (#696)
+- AWS Bedrock support with native IAM/SSO/role-based auth — no API key needed (#696)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.92.0)
+
 ### v1.91.0
 
 **New:**
