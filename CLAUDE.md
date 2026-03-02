@@ -203,6 +203,15 @@ PyPI: `anteroom`. Deploy via `/deploy` skill (merge PR, CI, version bump, build,
 - **`office-com`** — `python-docx>=1.0`, `openpyxl>=3.1.0`, `python-pptx>=1.0`, `pywin32>=306` (Windows only). Full COM backend for native Office automation. Enable with: `pip install anteroom[office-com]`
 - **`encryption`** — `sqlcipher3>=0.5.0`. Required only if `config.storage.encrypt_at_rest: true`. Enable with: `pip install anteroom[encryption]`
 
+## Terminology
+
+- **Source** — a knowledge source (document, URL, text) used for RAG context injection. Managed via `services/storage.py`, API at `routers/sources.py`
+- **Artifact source** (`ArtifactSource` enum) — the origin layer of an artifact: `built_in`, `global`, `team`, `project`, `local`, `inline`. Determines precedence in the artifact registry
+- **Convention** / **Instruction** — project-level guidance loaded from `ANTEROOM.md`. The `/conventions` and `/instructions` REPL commands are aliases for the same feature
+- **Skill** — a YAML-defined prompt template invoked via `/skill_name` or the `invoke_skill` tool. Loaded from filesystem directories and the artifact registry
+- **Pack** — a named bundle of artifacts installed from a YAML manifest. Managed via `services/packs.py`
+- **Space** — a workspace binding that auto-detects project context from the working directory. Managed via `services/spaces.py` and `services/space_storage.py`
+
 ## Testing Patterns
 
 - **Unit tests** (`tests/unit/`, ~6,000 tests): fully mocked, no I/O. `@pytest.mark.asyncio` with `asyncio_mode = "auto"`

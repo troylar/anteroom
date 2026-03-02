@@ -1972,6 +1972,7 @@ async def _run_repl(
         "rewind": "undo messages",
         "compact": "compress context",
         "conventions": "show project conventions",
+        "instructions": "show project conventions (alias)",
         "tools": "list available tools",
         "skills": "list loaded skills",
         "reload-skills": "reload skill files",
@@ -2103,6 +2104,7 @@ async def _run_repl(
         "rewind",
         "compact",
         "conventions",
+        "instructions",
         "tools",
         "skills",
         "reload-skills",
@@ -3108,7 +3110,7 @@ async def _run_repl(
                 elif cmd == "/tools":
                     renderer.render_tools(all_tool_names)
                     continue
-                elif cmd == "/conventions":
+                elif cmd in ("/conventions", "/instructions"):
                     info = discover_conventions(working_dir)
                     if info.source == "none":
                         renderer.console.print(
