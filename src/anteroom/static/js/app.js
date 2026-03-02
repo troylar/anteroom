@@ -146,6 +146,7 @@ const App = (() => {
                     btn.textContent = 'Retry';
                     btn.style.cssText = 'background:#fff;color:#dc2626;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-weight:600;';
                     btn.onclick = () => {
+                        _recovering = true;
                         sessionStorage.removeItem(key);
                         sessionStorage.removeItem(retryKey);
                         banner.remove();
