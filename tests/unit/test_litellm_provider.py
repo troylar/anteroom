@@ -12,10 +12,49 @@ import pytest
 from anteroom.config import AIConfig
 from anteroom.services.token_provider import TokenProvider
 
+# Create mock exception hierarchy matching litellm's real exceptions.
+# These must exist before importing litellm_provider so the typed except blocks work.
+
+
+class _MockLiteLLMAPIError(Exception):
+    pass
+
+
+class _MockAuthError(_MockLiteLLMAPIError):
+    pass
+
+
+class _MockRateLimitError(_MockLiteLLMAPIError):
+    pass
+
+
+class _MockContextError(_MockLiteLLMAPIError):
+    pass
+
+
+class _MockBadRequestError(_MockLiteLLMAPIError):
+    pass
+
+
+class _MockConnectionError(_MockLiteLLMAPIError):
+    pass
+
+
 # Inject a mock litellm module before importing litellm_provider,
 # so that the try/except import succeeds and `litellm` is bound as a module attribute.
 _mock_litellm_module = MagicMock()
+
+# Wire up mock exceptions module
+_mock_exceptions = MagicMock()
+_mock_exceptions.AuthenticationError = _MockAuthError
+_mock_exceptions.RateLimitError = _MockRateLimitError
+_mock_exceptions.ContextWindowExceededError = _MockContextError
+_mock_exceptions.BadRequestError = _MockBadRequestError
+_mock_exceptions.APIConnectionError = _MockConnectionError
+_mock_litellm_module.exceptions = _mock_exceptions
+
 sys.modules.setdefault("litellm", _mock_litellm_module)
+sys.modules.setdefault("litellm.exceptions", _mock_exceptions)
 
 from anteroom.services.litellm_provider import LiteLLMService  # noqa: E402
 
@@ -287,7 +326,7 @@ class TestLiteLLMStreamErrors:
     async def test_auth_error(self) -> None:
         svc = _make_service()
         mock_litellm = MagicMock()
-        mock_litellm.acompletion = AsyncMock(side_effect=Exception("AuthenticationError: invalid api key"))
+        mock_litellm.acompletion = AsyncMock(side_effect=_MockAuthError("invalid api key"))
 
         with patch("anteroom.services.litellm_provider.litellm", mock_litellm):
             events: list[dict[str, Any]] = []
@@ -302,7 +341,7 @@ class TestLiteLLMStreamErrors:
     async def test_rate_limit_error(self) -> None:
         svc = _make_service()
         mock_litellm = MagicMock()
-        mock_litellm.acompletion = AsyncMock(side_effect=Exception("Rate limit exceeded"))
+        mock_litellm.acompletion = AsyncMock(side_effect=_MockRateLimitError("Rate limit exceeded"))
 
         with patch("anteroom.services.litellm_provider.litellm", mock_litellm):
             events: list[dict[str, Any]] = []
@@ -317,7 +356,7 @@ class TestLiteLLMStreamErrors:
     async def test_context_length_error(self) -> None:
         svc = _make_service()
         mock_litellm = MagicMock()
-        mock_litellm.acompletion = AsyncMock(side_effect=Exception("context length exceeded"))
+        mock_litellm.acompletion = AsyncMock(side_effect=_MockContextError("context length exceeded"))
 
         with patch("anteroom.services.litellm_provider.litellm", mock_litellm):
             events: list[dict[str, Any]] = []
@@ -344,6 +383,58 @@ class TestLiteLLMStreamErrors:
         error_events = [e for e in events if e["event"] == "error"]
         assert len(error_events) == 1
         assert error_events[0]["data"]["retryable"] is True
+
+    @pytest.mark.asyncio
+    async def test_bad_request_error(self) -> None:
+        svc = _make_service()
+        mock_litellm = MagicMock()
+        mock_litellm.acompletion = AsyncMock(side_effect=_MockBadRequestError("bad request"))
+
+        with patch("anteroom.services.litellm_provider.litellm", mock_litellm):
+            events: list[dict[str, Any]] = []
+            async for event in svc.stream_chat([{"role": "user", "content": "hi"}]):
+                events.append(event)
+
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 1
+        assert error_events[0]["data"]["code"] == "bad_request"
+        assert error_events[0]["data"]["retryable"] is False
+
+
+# ---------------------------------------------------------------------------
+# Extra system prompt
+# ---------------------------------------------------------------------------
+
+
+class TestLiteLLMExtraSystemPrompt:
+    @pytest.mark.asyncio
+    async def test_extra_system_prompt_prepended(self) -> None:
+        svc = _make_service()
+        done_chunk = MagicMock()
+        done_chunk.choices = [MagicMock()]
+        done_chunk.choices[0].delta.content = "ok"
+        done_chunk.choices[0].delta.tool_calls = None
+        done_chunk.choices[0].finish_reason = "stop"
+        done_chunk.usage = None
+
+        async def capture_call(**kwargs: Any) -> Any:
+            capture_call.messages = kwargs["messages"]
+            return _AsyncChunkIterator([done_chunk])
+
+        mock_litellm = MagicMock()
+        mock_litellm.acompletion = AsyncMock(side_effect=capture_call)
+
+        with patch("anteroom.services.litellm_provider.litellm", mock_litellm):
+            events: list[dict[str, Any]] = []
+            async for event in svc.stream_chat(
+                [{"role": "user", "content": "hi"}],
+                extra_system_prompt="Extra context here",
+            ):
+                events.append(event)
+
+        system_msg = capture_call.messages[0]
+        assert system_msg["role"] == "system"
+        assert system_msg["content"].startswith("Extra context here\n\n")
 
 
 # ---------------------------------------------------------------------------
@@ -496,7 +587,7 @@ class TestLiteLLMTokenProvider:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise Exception("AuthenticationError: invalid api key")
+                raise _MockAuthError("invalid api key")
             # Second call succeeds with a simple done stream
             done_chunk = MagicMock()
             done_chunk.choices = [MagicMock()]
@@ -526,7 +617,7 @@ class TestLiteLLMTokenProvider:
         svc._token_provider = mock_tp
 
         mock_litellm = MagicMock()
-        mock_litellm.acompletion = AsyncMock(side_effect=Exception("AuthenticationError: invalid api key"))
+        mock_litellm.acompletion = AsyncMock(side_effect=_MockAuthError("invalid api key"))
 
         with patch("anteroom.services.litellm_provider.litellm", mock_litellm):
             events: list[dict[str, Any]] = []

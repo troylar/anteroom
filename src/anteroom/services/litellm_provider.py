@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 
 try:
     import litellm
+    from litellm.exceptions import AuthenticationError as LiteLLMAuthError
+    from litellm.exceptions import BadRequestError as LiteLLMBadRequestError
+    from litellm.exceptions import ContextWindowExceededError as LiteLLMContextError
+    from litellm.exceptions import RateLimitError as LiteLLMRateLimitError
 
     HAS_LITELLM = True
 except ImportError:
@@ -129,14 +133,10 @@ class LiteLLMService:
 
                 current_tool_calls: dict[int, dict[str, Any]] = {}
                 usage_data: dict[str, Any] | None = None
-                first_chunk_received = False
 
                 async for chunk in stream:
                     if cancel_event and cancel_event.is_set():
                         return
-
-                    if not first_chunk_received:
-                        first_chunk_received = True
 
                     if hasattr(chunk, "usage") and chunk.usage is not None:
                         usage_data = {
@@ -209,63 +209,65 @@ class LiteLLMService:
                 yield {"event": "done", "data": {}}
                 return
 
-            except Exception as e:
+            except LiteLLMAuthError as e:
                 last_error = e
-                err_msg = str(e).lower()
-
-                # Authentication errors — try refresh once, then fail
-                if "auth" in err_msg or "401" in err_msg or "invalid api key" in err_msg:
-                    if _retry_on_auth and self._try_refresh_token():
-                        kwargs["api_key"] = self._resolve_api_key()
-                        async for event in self.stream_chat(
-                            messages, tools, cancel_event, extra_system_prompt, _retry_on_auth=False
-                        ):
-                            yield event
-                    else:
-                        yield {
-                            "event": "error",
-                            "data": {
-                                "message": "Authentication failed. Check your API key.",
-                                "code": "auth_failed",
-                                "retryable": False,
-                            },
-                        }
-                    return
-
-                # Context length errors — non-retryable
-                if "context" in err_msg and ("length" in err_msg or "too long" in err_msg):
+                if _retry_on_auth and self._try_refresh_token():
+                    kwargs["api_key"] = self._resolve_api_key()
+                    async for event in self.stream_chat(
+                        messages, tools, cancel_event, extra_system_prompt, _retry_on_auth=False
+                    ):
+                        yield event
+                else:
                     yield {
                         "event": "error",
                         "data": {
-                            "message": "Conversation too long for model context window.",
-                            "code": "context_length_exceeded",
+                            "message": "Authentication failed. Check your API key.",
+                            "code": "auth_failed",
                             "retryable": False,
                         },
                     }
-                    return
+                return
 
-                # Rate limit — non-retryable (let caller decide)
-                if "rate" in err_msg and "limit" in err_msg:
-                    if cancel_event and cancel_event.is_set():
-                        return
-                    yield {
-                        "event": "error",
-                        "data": {
-                            "message": "Rate limited by API provider",
-                            "code": "rate_limit",
-                            "retryable": True,
-                        },
-                    }
-                    return
+            except LiteLLMContextError as e:
+                last_error = e
+                yield {
+                    "event": "error",
+                    "data": {
+                        "message": "Conversation too long for model context window.",
+                        "code": "context_length_exceeded",
+                        "retryable": False,
+                    },
+                }
+                return
 
-                # Bad request — non-retryable
-                if "400" in err_msg or "bad request" in err_msg:
-                    yield {
-                        "event": "error",
-                        "data": {"message": "AI request error", "retryable": False},
-                    }
+            except LiteLLMRateLimitError as e:
+                last_error = e
+                if cancel_event and cancel_event.is_set():
                     return
+                yield {
+                    "event": "error",
+                    "data": {
+                        "message": "Rate limited by API provider",
+                        "code": "rate_limit",
+                        "retryable": True,
+                    },
+                }
+                return
 
+            except LiteLLMBadRequestError as e:
+                last_error = e
+                yield {
+                    "event": "error",
+                    "data": {
+                        "message": "AI request error",
+                        "code": "bad_request",
+                        "retryable": False,
+                    },
+                }
+                return
+
+            except Exception as e:
+                last_error = e
                 # Transient errors — retry
                 if attempt < max_attempts - 1:
                     delay = self.config.retry_backoff_base * (2**attempt)
@@ -296,6 +298,7 @@ class LiteLLMService:
                     continue
 
         # All retries exhausted
+        logger.error("All %d attempts failed: %s", max_attempts, type(last_error).__name__)
         yield {
             "event": "error",
             "data": {
