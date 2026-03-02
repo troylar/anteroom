@@ -315,6 +315,7 @@ def _build_tool_list(
     max_tools: int,
     read_only: bool = False,
     tier_overrides: dict[str, str] | None = None,
+    skill_registry: Any = None,
 ) -> tuple[list[dict[str, Any]], Path | None, str]:
     """Build the unified tool list (builtins + MCP) and return (tools, plan_path, plan_prompt).
 
@@ -339,6 +340,11 @@ def _build_tool_list(
         plan_path = get_plan_file_path(data_dir, conversation_id)
         tools_openai = [t for t in tools_openai if t.get("function", {}).get("name") in PLAN_MODE_ALLOWED_TOOLS]
         plan_prompt = "\n\n" + build_planning_system_prompt(plan_path)
+
+    if skill_registry is not None:
+        invoke_def = skill_registry.get_invoke_skill_definition()
+        if invoke_def:
+            tools_openai.append(invoke_def)
 
     from ..tools import cap_tools
 
@@ -367,6 +373,7 @@ async def _build_chat_system_prompt(
     embedding_service: Any = None,
     injection_detector: Any = None,
     artifact_registry: Any = None,
+    skill_registry: Any = None,
 ) -> str:
     """Assemble the extra system prompt from all context sources."""
     from ..services.context_trust import sanitize_trust_tags
@@ -409,6 +416,20 @@ async def _build_chat_system_prompt(
                         )
         if _artifact_parts:
             extra += "\n\n" + "\n".join(_artifact_parts)
+
+    # Skill catalog
+    if skill_registry is not None:
+        skill_descs = skill_registry.get_skill_descriptions()
+        if skill_descs:
+            skill_lines = [
+                "\n<available_skills>",
+                "The following skills are available. When the user's request clearly matches a skill, "
+                "use the invoke_skill tool to run it.",
+            ]
+            for sname, sdesc in skill_descs:
+                skill_lines.append(f"- {sname}: {sdesc}")
+            skill_lines.append("</available_skills>")
+            extra += "\n".join(skill_lines)
 
     # Plan mode prompt
     if plan_prompt:
@@ -679,6 +700,7 @@ class ToolExecutorContext:
     sa_config: Any
     request_config: Any
     rate_limiter: Any = None
+    skill_registry: Any = None
     subagent_counter: list[int] = field(default_factory=lambda: [0])
     max_subagent_events: int = 500
 
@@ -733,6 +755,22 @@ async def _execute_web_tool(ctx: ToolExecutorContext, tool_name: str, arguments:
             "_confirm_callback": _confirm,
             "_config": ctx.sa_config,
         }
+    elif tool_name == "invoke_skill":
+        skill_name = arguments.get("skill_name", "")
+        skill = ctx.skill_registry.get(skill_name) if ctx.skill_registry else None
+        if not skill:
+            return {"error": f"Unknown skill: {skill_name}"}
+        args = arguments.get("args", "")
+        prompt = skill.prompt
+        if args:
+            from ..cli.skills import _expand_args
+
+            args = args[:2000]
+            prompt = _expand_args(prompt, f"<skill_args>{args}</skill_args>")
+        queue = _message_queues.get(ctx.conversation_id)
+        if queue is not None:
+            await queue.put({"role": "user", "content": prompt})
+        return {"status": "skill_invoked", "skill": skill_name}
     elif tool_name == "ask_user":
         arguments = {**arguments, "_ask_callback": _ask_user}
     elif tool_name == "introspect":
@@ -741,7 +779,7 @@ async def _execute_web_tool(ctx: ToolExecutorContext, tool_name: str, arguments:
             "_config": ctx.request_config,
             "_mcp_manager": ctx.mcp_manager,
             "_tool_registry": ctx.tool_registry,
-            "_skill_registry": None,
+            "_skill_registry": ctx.skill_registry,
             "_instructions_info": None,
             "_tools_openai": ctx.tools_openai,
             "_working_dir": None,
@@ -1746,6 +1784,7 @@ async def chat(conversation_id: str, request: Request) -> Any:
         max_tools=request.app.state.config.ai.max_tools,
         read_only=request.app.state.config.safety.read_only,
         tier_overrides=request.app.state.config.safety.tool_tiers,
+        skill_registry=getattr(request.app.state, "skill_registry", None),
     )
 
     tools = tools_openai if tools_openai else None
@@ -1772,6 +1811,7 @@ async def chat(conversation_id: str, request: Request) -> Any:
         embedding_service=getattr(request.app.state, "embedding_service", None),
         injection_detector=getattr(request.app.state, "injection_detector", None),
         artifact_registry=getattr(request.app.state, "artifact_registry", None),
+        skill_registry=getattr(request.app.state, "skill_registry", None),
     )
 
     # Build per-request safety approval context
@@ -1828,6 +1868,7 @@ async def chat(conversation_id: str, request: Request) -> Any:
         sa_config=_sa_config,
         request_config=request.app.state.config,
         rate_limiter=_rate_limiter,
+        skill_registry=getattr(request.app.state, "skill_registry", None),
     )
 
     async def _tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:

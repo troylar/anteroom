@@ -241,3 +241,58 @@ class TestStaleStreamDetection:
             "cancel_event": asyncio.Event(),
         }
         assert _active_streams.get(cid)
+
+
+class TestBuildToolListWithSkills:
+    """_build_tool_list includes invoke_skill when skill_registry has skills."""
+
+    def test_invoke_skill_added_when_skills_exist(self) -> None:
+        from anteroom.routers.chat import _build_tool_list
+
+        tool_reg = MagicMock()
+        tool_reg.get_openai_tools.return_value = [
+            {"type": "function", "function": {"name": "read_file"}},
+        ]
+        tool_reg.list_tools.return_value = ["read_file"]
+        mcp = MagicMock()
+        mcp.get_openai_tools.return_value = []
+
+        skill_reg = MagicMock()
+        skill_reg.get_invoke_skill_definition.return_value = {
+            "type": "function",
+            "function": {"name": "invoke_skill"},
+        }
+
+        tools, _, _ = _build_tool_list(
+            tool_registry=tool_reg,
+            mcp_manager=mcp,
+            plan_mode=False,
+            conversation_id="c1",
+            data_dir=Path(tempfile.mkdtemp()),
+            max_tools=128,
+            skill_registry=skill_reg,
+        )
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "invoke_skill" in tool_names
+
+    def test_no_invoke_skill_when_no_registry(self) -> None:
+        from anteroom.routers.chat import _build_tool_list
+
+        tool_reg = MagicMock()
+        tool_reg.get_openai_tools.return_value = [
+            {"type": "function", "function": {"name": "read_file"}},
+        ]
+        tool_reg.list_tools.return_value = ["read_file"]
+        mcp = None
+
+        tools, _, _ = _build_tool_list(
+            tool_registry=tool_reg,
+            mcp_manager=mcp,
+            plan_mode=False,
+            conversation_id="c1",
+            data_dir=Path(tempfile.mkdtemp()),
+            max_tools=128,
+            skill_registry=None,
+        )
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "invoke_skill" not in tool_names
