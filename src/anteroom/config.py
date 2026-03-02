@@ -265,6 +265,8 @@ class AIConfig:
     seed: int | None = None  # None = provider default; any int for deterministic output
     allowed_domains: list[str] = field(default_factory=list)  # empty = no restriction
     block_localhost_api: bool = False  # when True, reject loopback/localhost base_url
+    provider: str = "openai"  # "openai" or "anthropic"
+    max_output_tokens: int = 4096  # required by Anthropic; used as max_tokens for Anthropic provider
 
 
 @dataclass
@@ -992,6 +994,15 @@ def load_config(
         except (ValueError, TypeError):
             seed = None
 
+    provider = str(ai_raw.get("provider", os.environ.get("AI_CHAT_PROVIDER", "openai")))
+    if provider not in ("openai", "anthropic"):
+        provider = "openai"
+
+    try:
+        max_output_tokens = int(ai_raw.get("max_output_tokens", os.environ.get("AI_CHAT_MAX_OUTPUT_TOKENS", 4096)))
+    except (ValueError, TypeError):
+        max_output_tokens = 4096
+
     _raw_allowed_domains = ai_raw.get("allowed_domains", [])
     if not isinstance(_raw_allowed_domains, list):
         _raw_allowed_domains = []
@@ -1035,6 +1046,8 @@ def load_config(
         seed=seed,
         allowed_domains=allowed_domains,
         block_localhost_api=block_localhost_api,
+        provider=provider,
+        max_output_tokens=max_output_tokens,
     )
 
     app_raw = raw.get("app", {})

@@ -34,9 +34,18 @@ class _StreamTimeoutError(Exception):
 
 
 def create_ai_service(config: AIConfig) -> "AIService":
-    """Factory: create an AIService with TokenProvider if api_key_command is configured."""
-    provider = TokenProvider(config.api_key_command) if config.api_key_command else None
-    return AIService(config, token_provider=provider)
+    """Factory: create an AI service based on provider config.
+
+    Returns AIService (OpenAI) or AnthropicService depending on config.provider.
+    """
+    token_prov = TokenProvider(config.api_key_command) if config.api_key_command else None
+
+    if config.provider == "anthropic":
+        from .anthropic_provider import AnthropicService
+
+        return AnthropicService(config, token_provider=token_prov)  # type: ignore[return-value]
+
+    return AIService(config, token_provider=token_prov)
 
 
 class AIService:
@@ -685,6 +694,27 @@ class AIService:
         except Exception:
             logger.exception("Failed to generate title")
             return "New Conversation"
+
+    async def complete(
+        self,
+        messages: list[dict[str, Any]],
+        max_completion_tokens: int = 1000,
+    ) -> str | None:
+        """Non-streaming completion for internal use (e.g. context compaction)."""
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.config.model,
+                messages=messages,
+                max_completion_tokens=max_completion_tokens,
+            )
+            return response.choices[0].message.content if response.choices else None
+        except AuthenticationError:
+            if self._try_refresh_token():
+                return await self.complete(messages, max_completion_tokens)
+            return None
+        except Exception:
+            logger.exception("Failed to generate completion")
+            return None
 
     async def validate_connection(self) -> tuple[bool, str, list[str]]:
         try:
