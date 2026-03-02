@@ -889,7 +889,9 @@ const App = (() => {
         spaces.forEach(s => {
             const item = document.createElement('div');
             item.className = 'project-item' + (state.currentSpaceId === s.id ? ' active' : '');
-            item.innerHTML = `<span>${DOMPurify.sanitize(s.name)}</span>`;
+            const origin = s.origin || '';
+            const originBadge = origin ? `<span class="space-origin">${DOMPurify.sanitize(origin)}</span>` : '';
+            item.innerHTML = `<span>${DOMPurify.sanitize(s.name)}${originBadge}</span>`;
             item.addEventListener('click', async () => {
                 state.currentSpaceId = s.id;
                 document.getElementById('space-select').value = s.id;
@@ -899,14 +901,26 @@ const App = (() => {
             list.appendChild(item);
         });
 
+        const chatIndicator = document.getElementById('chat-space-indicator');
+        const chatIndicatorName = document.getElementById('chat-space-indicator-name');
+        const chatIndicatorOrigin = document.getElementById('chat-space-indicator-origin');
+
         if (state.currentSpaceId) {
             const active = spaces.find(s => s.id === state.currentSpaceId);
             if (active && activeBar && activeName) {
                 activeName.textContent = active.name;
                 activeBar.style.display = 'flex';
             }
-        } else if (activeBar) {
-            activeBar.style.display = 'none';
+            if (active && chatIndicator && chatIndicatorName) {
+                chatIndicatorName.textContent = active.name;
+                if (chatIndicatorOrigin) {
+                    chatIndicatorOrigin.textContent = active.origin || '';
+                }
+                chatIndicator.style.display = 'flex';
+            }
+        } else {
+            if (activeBar) activeBar.style.display = 'none';
+            if (chatIndicator) chatIndicator.style.display = 'none';
         }
     }
 
