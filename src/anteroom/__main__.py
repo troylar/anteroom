@@ -1216,7 +1216,7 @@ def _run_space(config: AppConfig, args: argparse.Namespace) -> None:
     console = Console()
     action = getattr(args, "space_action", None)
     if not action:
-        console.print("Usage: aroom space {list,create,load,show,delete,refresh,clone,map,move-root}")
+        console.print("Usage: aroom space {list,create,init,load,show,delete,refresh,clone,map,move-root}")
         return
 
     db = get_db(config.app.data_dir / "anteroom.db")
@@ -1246,7 +1246,8 @@ def _run_space(config: AppConfig, args: argparse.Namespace) -> None:
         table.add_column("Conversations", justify="right")
         table.add_column("Last Loaded")
         for s in spaces:
-            origin = "local" if is_local_space(s["file_path"]) else "global"
+            fp = s["file_path"]
+            origin = "local" if (fp and is_local_space(fp)) else "global"
             count = count_space_conversations(db, s["id"])
             table.add_row(
                 s["name"],

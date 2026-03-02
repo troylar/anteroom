@@ -3628,7 +3628,8 @@ async def _run_repl(
                                 if (_active_space[0] and _active_space[0]["id"] == sp["id"])
                                 else ""
                             )
-                            origin = "local" if _is_local(sp["file_path"]) else "global"
+                            _fp = sp["file_path"]
+                            origin = "local" if (_fp and _is_local(_fp)) else "global"
                             renderer.console.print(
                                 f"  {sp['name']}{active}"
                                 f" [{MUTED}]{origin} · {cnt} conversations · {sp['id'][:8]}...[/{MUTED}]"
