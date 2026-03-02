@@ -115,14 +115,15 @@ class LiteLLMService:
         system_msg = {"role": "system", "content": system_content}
         full_messages = [system_msg] + messages
 
-        kwargs = self._build_kwargs(full_messages, stream=True, tools=tools)
-
         max_attempts = max(1, self.config.retry_max_attempts + 1)
         last_error: Exception | None = None
 
         for attempt in range(max_attempts):
             if cancel_event and cancel_event.is_set():
                 return
+
+            # Rebuild kwargs each attempt so api_key reflects any token refresh
+            kwargs = self._build_kwargs(full_messages, stream=True, tools=tools)
 
             try:
                 yield {"event": "phase", "data": {"phase": "connecting"}}
@@ -209,10 +210,8 @@ class LiteLLMService:
                 yield {"event": "done", "data": {}}
                 return
 
-            except LiteLLMAuthError as e:
-                last_error = e
+            except LiteLLMAuthError:
                 if _retry_on_auth and self._try_refresh_token():
-                    kwargs["api_key"] = self._resolve_api_key()
                     async for event in self.stream_chat(
                         messages, tools, cancel_event, extra_system_prompt, _retry_on_auth=False
                     ):
@@ -228,8 +227,7 @@ class LiteLLMService:
                     }
                 return
 
-            except LiteLLMContextError as e:
-                last_error = e
+            except LiteLLMContextError:
                 yield {
                     "event": "error",
                     "data": {
@@ -240,8 +238,7 @@ class LiteLLMService:
                 }
                 return
 
-            except LiteLLMRateLimitError as e:
-                last_error = e
+            except LiteLLMRateLimitError:
                 if cancel_event and cancel_event.is_set():
                     return
                 yield {
@@ -254,8 +251,7 @@ class LiteLLMService:
                 }
                 return
 
-            except LiteLLMBadRequestError as e:
-                last_error = e
+            except LiteLLMBadRequestError:
                 yield {
                     "event": "error",
                     "data": {

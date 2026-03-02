@@ -385,6 +385,39 @@ class TestLiteLLMStreamErrors:
         assert error_events[0]["data"]["retryable"] is True
 
     @pytest.mark.asyncio
+    async def test_transient_error_refreshes_api_key_each_attempt(self) -> None:
+        """Regression: kwargs must be rebuilt each retry so api_key reflects token refresh."""
+        svc = _make_service(_make_config(retry_max_attempts=1))
+        mock_tp = MagicMock(spec=TokenProvider)
+        call_count = 0
+
+        def rotating_token() -> str:
+            nonlocal call_count
+            call_count += 1
+            return f"key-{call_count}"
+
+        mock_tp.get_token = MagicMock(side_effect=rotating_token)
+        svc._token_provider = mock_tp
+
+        captured_keys: list[str] = []
+
+        async def capture_and_fail(**kwargs: Any) -> Any:
+            captured_keys.append(kwargs["api_key"])
+            raise Exception("transient failure")
+
+        mock_litellm = MagicMock()
+        mock_litellm.acompletion = AsyncMock(side_effect=capture_and_fail)
+
+        with patch("anteroom.services.litellm_provider.litellm", mock_litellm):
+            events: list[dict[str, Any]] = []
+            async for event in svc.stream_chat([{"role": "user", "content": "hi"}]):
+                events.append(event)
+
+        # Two attempts (1 initial + 1 retry), each should get a fresh key
+        assert len(captured_keys) == 2
+        assert captured_keys[0] != captured_keys[1]
+
+    @pytest.mark.asyncio
     async def test_bad_request_error(self) -> None:
         svc = _make_service()
         mock_litellm = MagicMock()
