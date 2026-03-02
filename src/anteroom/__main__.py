@@ -795,6 +795,20 @@ def _run_artifact(config: AppConfig, args: argparse.Namespace) -> None:
             console.print(f"[red]Error:[/red] {e}")
             sys.exit(1)
 
+    elif action == "delete":
+        from .services.artifacts import validate_fqn
+
+        fqn = args.fqn
+        if not validate_fqn(fqn):
+            console.print(f"[red]Invalid FQN format:[/red] {escape(fqn)}")
+            sys.exit(1)
+        art = artifact_storage.get_artifact_by_fqn(db, fqn)
+        if not art:
+            console.print(f"[red]Artifact not found:[/red] {escape(fqn)}")
+            sys.exit(1)
+        artifact_storage.delete_artifact(db, art["id"])
+        console.print(f"[green]Deleted[/green] {escape(fqn)}")
+
 
 def _run_artifact_check(config: AppConfig, args: argparse.Namespace, db: Any, console: Any) -> None:
     """Handle `aroom artifact check` subcommand."""
@@ -1877,6 +1891,9 @@ def main() -> None:
     art_create_parser.add_argument("type", choices=_art_types, help="Artifact type")
     art_create_parser.add_argument("name", help="Artifact name")
     art_create_parser.add_argument("--project", action="store_true", help="Create in project .anteroom/local/")
+
+    art_delete_parser = artifact_subparsers.add_parser("delete", help="Delete an artifact by FQN")
+    art_delete_parser.add_argument("fqn", help="Artifact FQN (e.g. @namespace/type/name)")
 
     args = parser.parse_args()
 

@@ -99,3 +99,32 @@ class TestGetArtifactEndpoint:
             resp = client.get("/api/artifacts/@no/skill/thing")
             assert resp.status_code == 404
             assert "@no/skill/thing" not in resp.json()["detail"]
+
+
+class TestDeleteArtifactEndpoint:
+    def test_delete_artifact_success(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.artifacts.artifact_storage") as mock_store:
+            mock_store.get_artifact_by_fqn.return_value = {"id": "a1", "fqn": "@ns/skill/greet"}
+            mock_store.delete_artifact.return_value = True
+            client = TestClient(app)
+            resp = client.delete("/api/artifacts/@ns/skill/greet")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "deleted"
+            assert data["fqn"] == "@ns/skill/greet"
+            mock_store.delete_artifact.assert_called_once_with(app.state.db, "a1")
+
+    def test_delete_artifact_not_found(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.artifacts.artifact_storage") as mock_store:
+            mock_store.get_artifact_by_fqn.return_value = None
+            client = TestClient(app)
+            resp = client.delete("/api/artifacts/@ns/skill/gone")
+            assert resp.status_code == 404
+
+    def test_delete_artifact_invalid_fqn(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.delete("/api/artifacts/bad-fqn")
+        assert resp.status_code == 400
