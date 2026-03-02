@@ -7,6 +7,29 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 2, 2026
 
+### v1.93.0
+
+**New:**
+
+- Skill support in web UI — skills can now be invoked during web chat, matching CLI behavior (#698)
+- Artifact & pack browser panel in web UI with type/source filtering and inline delete (#700)
+- `/artifact` and `/space clone/map` REPL commands for CLI artifact management (#702)
+- Skill-artifact bridge — skills stored as artifacts auto-load into the skill registry (#699)
+
+**Fixed:**
+
+- Pack install now sets correct artifact source (GLOBAL vs PROJECT) based on context (#703)
+- Prompt injection vulnerability in skill argument expansion (#698)
+- `invoke_skill` tool silently dropped when exceeding max tool count (#698)
+- Pack removal wrapped in transaction for atomicity (#704)
+
+**Improved:**
+
+- Deduplicated pack disambiguation logic in REPL (#706)
+- Added `/instructions` alias and terminology clarifications (#701)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.93.0)
+
 ### v1.92.0
 
 **New:**
