@@ -287,6 +287,245 @@ async def test_start_polling_seeds_last_seen_id(tmp_path):
     mgr.close_all()
 
 
+# --- Additional coverage tests (issue #689) ---
+
+
+@pytest.mark.asyncio
+async def test_publish_queue_full_drops_event():
+    """When a subscriber's queue is full, QueueFull is caught and event is dropped (lines 78-79)."""
+    bus = EventBus()
+    # Create a queue with capacity 1 and fill it so put_nowait raises QueueFull
+    full_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
+    full_queue.put_nowait({"type": "already_here"})
+
+    if "test:ch" not in bus._subscribers:
+        bus._subscribers["test:ch"] = set()
+    bus._subscribers["test:ch"].add(full_queue)
+
+    # Should not raise even though queue is full
+    await bus.publish("test:ch", {"type": "overflow"})
+
+    # Only the original item remains
+    assert full_queue.qsize() == 1
+    event = full_queue.get_nowait()
+    assert event["type"] == "already_here"
+
+
+@pytest.mark.asyncio
+async def test_persist_event_db_exception_is_swallowed(tmp_path):
+    """Exception during change_log INSERT is caught and logged without raising (lines 101-102)."""
+    from unittest.mock import MagicMock
+
+    bus = EventBus()
+    mock_db = MagicMock()
+    mock_db.execute.side_effect = Exception("disk full")
+
+    mock_mgr = MagicMock()
+    mock_mgr.get.return_value = mock_db
+    bus._db_manager = mock_mgr
+
+    # Must not raise
+    await bus.publish("global:personal", {"type": "test", "data": {}})
+
+
+def test_channel_to_db_name_non_global_returns_personal():
+    """Non-global channels fall back to 'personal' (line 109)."""
+    bus = EventBus()
+    assert bus._channel_to_db_name("conversation:abc123") == "personal"
+    assert bus._channel_to_db_name("anything:else") == "personal"
+    assert bus._channel_to_db_name("no_colon") == "personal"
+
+
+def test_channel_to_db_name_global_extracts_db_name():
+    """Global channels extract the db name after the colon."""
+    bus = EventBus()
+    assert bus._channel_to_db_name("global:team-alpha") == "team-alpha"
+    assert bus._channel_to_db_name("global:personal") == "personal"
+
+
+@pytest.mark.asyncio
+async def test_start_polling_seeds_zero_on_db_exception(tmp_path):
+    """If querying MAX(id) fails during start_polling, last_seen_ids defaults to 0 (lines 123-124)."""
+    from unittest.mock import MagicMock
+
+    mock_db = MagicMock()
+    mock_db.execute_fetchone.side_effect = Exception("table missing")
+
+    mock_mgr = MagicMock()
+    mock_mgr.list_databases.return_value = [{"name": "personal"}]
+    mock_mgr.get.return_value = mock_db
+
+    bus = EventBus()
+    bus.start_polling(mock_mgr)
+
+    assert bus._last_seen_ids.get("personal") == 0
+
+    bus.stop_polling()
+
+
+@pytest.mark.asyncio
+async def test_poll_loop_triggers_cleanup_after_threshold():
+    """_poll_loop increments _cleanup_counter and calls _cleanup_old_events when threshold reached (lines 137-141)."""
+    from unittest.mock import patch
+
+    from anteroom.services.event_bus import CLEANUP_INTERVAL_SECONDS, POLL_INTERVAL_SECONDS
+
+    bus = EventBus()
+    threshold = int(CLEANUP_INTERVAL_SECONDS / POLL_INTERVAL_SECONDS)
+
+    # Set counter just below threshold so the first iteration triggers cleanup
+    bus._cleanup_counter = threshold - 1
+
+    poll_calls = []
+    cleanup_calls = []
+
+    # Use a real asyncio.Event to stop the loop after one iteration
+    stop_event = asyncio.Event()
+
+    async def fake_sleep(_duration):
+        # After first sleep, stop the loop on the next iteration by cancelling
+        if len(poll_calls) > 0:
+            stop_event.set()
+            raise asyncio.CancelledError()
+
+    async def fake_poll():
+        poll_calls.append(True)
+
+    with (
+        patch.object(bus, "_poll_all_databases", side_effect=fake_poll),
+        patch.object(bus, "_cleanup_old_events", side_effect=lambda: cleanup_calls.append(True)),
+        patch("anteroom.services.event_bus.asyncio.sleep", side_effect=fake_sleep),
+    ):
+        await bus._poll_loop()
+
+    assert len(poll_calls) == 1
+    assert len(cleanup_calls) == 1
+    assert bus._cleanup_counter == 0
+
+
+@pytest.mark.asyncio
+async def test_poll_loop_exception_is_logged():
+    """An unexpected exception in _poll_loop is caught and logged (lines 144-145)."""
+    from unittest.mock import AsyncMock, patch
+
+    bus = EventBus()
+
+    call_count = 0
+
+    async def exploding_poll():
+        nonlocal call_count
+        call_count += 1
+        raise RuntimeError("unexpected crash")
+
+    with (
+        patch.object(bus, "_poll_all_databases", side_effect=exploding_poll),
+        patch("asyncio.sleep", new_callable=AsyncMock),
+    ):
+        # _poll_loop should catch Exception and not propagate
+        task = asyncio.ensure_future(bus._poll_loop())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        # give it a moment to process
+        await asyncio.sleep(0)
+        # The task should complete (not hang) after exception branch
+        try:
+            await asyncio.wait_for(task, timeout=1.0)
+        except asyncio.TimeoutError:
+            task.cancel()
+            await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+
+    assert call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_poll_all_databases_no_db_manager_returns_early():
+    """_poll_all_databases exits immediately when _db_manager is None (line 149)."""
+    bus = EventBus()
+    assert bus._db_manager is None
+    # Must not raise; just returns
+    await bus._poll_all_databases()
+
+
+@pytest.mark.asyncio
+async def test_poll_all_databases_queue_full_is_silenced(tmp_path):
+    """QueueFull during cross-process polling is silently dropped (lines 174-175)."""
+    db_path = tmp_path / "shared.db"
+
+    mgr_writer = DatabaseManager()
+    mgr_writer.add("personal", db_path)
+    writer = EventBus()
+    writer._db_manager = mgr_writer
+
+    mgr_reader = DatabaseManager()
+    mgr_reader.add("personal", db_path)
+    reader = EventBus()
+    reader._db_manager = mgr_reader
+    reader._last_seen_ids["personal"] = 0
+
+    # Create a full queue and inject it as a subscriber
+    full_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
+    full_queue.put_nowait({"type": "pre_filled"})
+    reader._subscribers["global:personal"] = {full_queue}
+
+    # Writer publishes from a different process
+    await writer.publish("global:personal", {"type": "overflow_event", "data": {}})
+
+    # Poll should not raise despite queue being full
+    await reader._poll_all_databases()
+
+    # Queue still has original item, overflow was silently dropped
+    assert full_queue.qsize() == 1
+
+    mgr_writer.close_all()
+    mgr_reader.close_all()
+
+
+@pytest.mark.asyncio
+async def test_poll_all_databases_db_exception_is_logged(tmp_path):
+    """DB exception during polling is caught and logged (lines 176-177)."""
+    from unittest.mock import MagicMock
+
+    mock_db = MagicMock()
+    mock_db.execute_fetchall.side_effect = Exception("connection lost")
+
+    mock_mgr = MagicMock()
+    mock_mgr.list_databases.return_value = [{"name": "personal"}]
+    mock_mgr.get.return_value = mock_db
+
+    bus = EventBus()
+    bus._db_manager = mock_mgr
+    bus._last_seen_ids["personal"] = 0
+
+    # Must not raise
+    await bus._poll_all_databases()
+
+
+def test_cleanup_old_events_no_db_manager_returns_early():
+    """_cleanup_old_events exits immediately when _db_manager is None (line 182)."""
+    bus = EventBus()
+    assert bus._db_manager is None
+    # Must not raise
+    bus._cleanup_old_events()
+
+
+def test_cleanup_old_events_db_exception_is_swallowed():
+    """DB exception during cleanup is caught and logged (lines 189-190)."""
+    from unittest.mock import MagicMock
+
+    mock_db = MagicMock()
+    mock_db.execute.side_effect = Exception("disk error")
+
+    mock_mgr = MagicMock()
+    mock_mgr.list_databases.return_value = [{"name": "personal"}]
+    mock_mgr.get.return_value = mock_db
+
+    bus = EventBus()
+    bus._db_manager = mock_mgr
+
+    # Must not raise
+    bus._cleanup_old_events()
+
+
 # --- db_auth tests ---
 
 

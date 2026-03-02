@@ -15,6 +15,7 @@ from anteroom.tools.introspect import (
     _gather_instructions,
     _gather_safety,
     _gather_skills,
+    _gather_spaces,
     _gather_tools,
     _redact,
     handle,
@@ -372,3 +373,371 @@ class TestHandle:
         )
         assert result["data"]["tool_definitions"]["count"] == 2
         assert result["data"]["total_fixed_tokens"] > 0
+
+
+# --- GatherConfig: config_files branch (line 91) ---
+
+
+class TestGatherConfigFiles:
+    """Tests for the config_files branch in _gather_config (issue #689)."""
+
+    def test_config_file_appended_when_exists(self, tmp_path: Any) -> None:
+        """Line 91: config_files.append() is hit when personal config exists."""
+        # Create a real config.yaml in a tmp dir so personal.exists() is True
+        config_yaml = tmp_path / "config.yaml"
+        config_yaml.write_text("model: gpt-4o\n")
+
+        config = FakeConfig(app=FakeAppSettings(data_dir=str(tmp_path)))
+        result = _gather_config(config)
+        assert any(f["layer"] == "personal" for f in result["config_files"])
+
+    def test_config_files_empty_when_not_exists(self, tmp_path: Any) -> None:
+        """config_files stays empty when the personal config file doesn't exist."""
+        # tmp_path exists but no config.yaml inside it
+        config = FakeConfig(app=FakeAppSettings(data_dir=str(tmp_path)))
+        result = _gather_config(config)
+        assert result["config_files"] == []
+
+    def test_config_files_empty_when_no_data_dir(self) -> None:
+        """config_files stays empty when data_dir is falsy."""
+        config = FakeConfig(app=FakeAppSettings(data_dir=""))
+        result = _gather_config(config)
+        assert result["config_files"] == []
+
+
+# --- GatherSafety: tool_tier_overrides (line 179) ---
+
+
+class TestGatherSafetyToolTierOverrides:
+    """Tests for the tool_tier_overrides branch in _gather_safety (issue #689)."""
+
+    def test_tool_tier_overrides_included_when_set(self) -> None:
+        """Line 179: result['tool_tier_overrides'] is set when tool_tiers is non-empty."""
+        safety = FakeSafetyConfig(tool_tiers={"bash": "execute", "read_file": "read"})
+        config = FakeConfig(safety=safety)
+        result = _gather_safety(config)
+        assert "tool_tier_overrides" in result
+        assert result["tool_tier_overrides"]["bash"] == "execute"
+        assert result["tool_tier_overrides"]["read_file"] == "read"
+
+    def test_tool_tier_overrides_absent_when_empty(self) -> None:
+        """tool_tier_overrides key is NOT present when tool_tiers is empty."""
+        safety = FakeSafetyConfig(tool_tiers={})
+        config = FakeConfig(safety=safety)
+        result = _gather_safety(config)
+        assert "tool_tier_overrides" not in result
+
+    def test_tool_tier_overrides_absent_when_none(self) -> None:
+        """tool_tier_overrides key is NOT present when tool_tiers is None."""
+        safety = FakeSafetyConfig(tool_tiers=None)  # type: ignore[arg-type]
+        config = FakeConfig(safety=safety)
+        result = _gather_safety(config)
+        assert "tool_tier_overrides" not in result
+
+
+# --- GatherSpaces (lines 271-326) ---
+
+
+class TestGatherSpaces:
+    """Tests for _gather_spaces covering all enrichment branches (issue #689)."""
+
+    def test_no_active_space_no_db(self) -> None:
+        """Base case: no active space and no db."""
+        result = _gather_spaces(active_space=None, db=None)
+        assert result["available"] is False
+        assert result["active"] is None
+        assert result["total"] == 0
+        assert result["names"] == []
+
+    def test_active_space_without_db(self) -> None:
+        """Lines 271-275: active_space info is set even when db is None."""
+        space = {"name": "my-space", "id": "abc-123", "file_path": "/path/space.yaml"}
+        result = _gather_spaces(active_space=space, db=None)
+        assert result["active"]["name"] == "my-space"
+        assert result["active"]["id"] == "abc-123"
+        assert result["active"]["file_path"] == "/path/space.yaml"
+
+    def test_active_space_with_db_enriches_repo_paths(self) -> None:
+        """Lines 277-284: repo_paths populated via get_space_paths."""
+        space = {"name": "ws", "id": "id-1", "file_path": "/f.yaml"}
+        db = MagicMock()
+
+        with (
+            pytest.MonkeyPatch().context() as mp,
+        ):
+            fake_paths = [{"local_path": "/repo/a"}, {"local_path": "/repo/b"}]
+            mp.setattr(
+                "anteroom.tools.introspect._gather_spaces",
+                _gather_spaces,  # keep original; patch the import inside
+            )
+            import anteroom.services.space_storage as ss_mod
+
+            orig_gsp = getattr(ss_mod, "get_space_paths", None)
+            ss_mod.get_space_paths = lambda _db, _id: fake_paths  # type: ignore[attr-defined]
+            try:
+                result = _gather_spaces(active_space=space, db=db)
+            finally:
+                if orig_gsp is None:
+                    del ss_mod.get_space_paths  # type: ignore[attr-defined]
+                else:
+                    ss_mod.get_space_paths = orig_gsp  # type: ignore[attr-defined]
+
+        assert result["active"]["repo_paths"] == ["/repo/a", "/repo/b"]
+
+    def test_active_space_with_db_repo_paths_exception_fallback(self) -> None:
+        """Lines 283-284: repo_paths falls back to [] when get_space_paths raises."""
+        space = {"name": "ws", "id": "id-1", "file_path": "/f.yaml"}
+        db = MagicMock()
+
+        import anteroom.services.space_storage as ss_mod
+
+        orig_gsp = getattr(ss_mod, "get_space_paths", None)
+        ss_mod.get_space_paths = lambda _db, _id: (_ for _ in ()).throw(RuntimeError("db error"))  # type: ignore[attr-defined]
+        try:
+            result = _gather_spaces(active_space=space, db=db)
+        finally:
+            if orig_gsp is None:
+                del ss_mod.get_space_paths  # type: ignore[attr-defined]
+            else:
+                ss_mod.get_space_paths = orig_gsp  # type: ignore[attr-defined]
+
+        assert result["active"]["repo_paths"] == []
+
+    def test_active_space_with_db_enriches_pack_count(self) -> None:
+        """Lines 285-291: pack_count populated via get_active_pack_ids_for_space."""
+        space = {"name": "ws", "id": "id-1", "file_path": "/f.yaml"}
+        db = MagicMock()
+
+        import anteroom.services.pack_attachments as pa_mod
+
+        orig = getattr(pa_mod, "get_active_pack_ids_for_space", None)
+        pa_mod.get_active_pack_ids_for_space = lambda _db, _id: ["p1", "p2", "p3"]  # type: ignore[attr-defined]
+        try:
+            result = _gather_spaces(active_space=space, db=db)
+        finally:
+            if orig is None:
+                del pa_mod.get_active_pack_ids_for_space  # type: ignore[attr-defined]
+            else:
+                pa_mod.get_active_pack_ids_for_space = orig  # type: ignore[attr-defined]
+
+        assert result["active"]["pack_count"] == 3
+
+    def test_active_space_with_db_pack_count_exception_fallback(self) -> None:
+        """Lines 290-291: pack_count falls back to 0 when the call raises."""
+        space = {"name": "ws", "id": "id-1", "file_path": "/f.yaml"}
+        db = MagicMock()
+
+        import anteroom.services.pack_attachments as pa_mod
+
+        orig = getattr(pa_mod, "get_active_pack_ids_for_space", None)
+        pa_mod.get_active_pack_ids_for_space = lambda _db, _id: (_ for _ in ()).throw(RuntimeError("boom"))  # type: ignore[attr-defined]
+        try:
+            result = _gather_spaces(active_space=space, db=db)
+        finally:
+            if orig is None:
+                del pa_mod.get_active_pack_ids_for_space  # type: ignore[attr-defined]
+            else:
+                pa_mod.get_active_pack_ids_for_space = orig  # type: ignore[attr-defined]
+
+        assert result["active"]["pack_count"] == 0
+
+    def test_active_space_with_db_enriches_source_count(self) -> None:
+        """Lines 292-298: source_count populated via get_space_sources."""
+        space = {"name": "ws", "id": "id-1", "file_path": "/f.yaml"}
+        db = MagicMock()
+
+        import anteroom.services.storage as storage_mod
+
+        orig = getattr(storage_mod, "get_space_sources", None)
+        storage_mod.get_space_sources = lambda _db, _id: [{"id": "s1"}, {"id": "s2"}]  # type: ignore[attr-defined]
+        try:
+            result = _gather_spaces(active_space=space, db=db)
+        finally:
+            if orig is None:
+                del storage_mod.get_space_sources  # type: ignore[attr-defined]
+            else:
+                storage_mod.get_space_sources = orig  # type: ignore[attr-defined]
+
+        assert result["active"]["source_count"] == 2
+
+    def test_active_space_with_db_source_count_exception_fallback(self) -> None:
+        """Lines 296-298: source_count falls back to 0 when the call raises."""
+        space = {"name": "ws", "id": "id-1", "file_path": "/f.yaml"}
+        db = MagicMock()
+
+        import anteroom.services.storage as storage_mod
+
+        orig = getattr(storage_mod, "get_space_sources", None)
+        storage_mod.get_space_sources = lambda _db, _id: (_ for _ in ()).throw(RuntimeError("fail"))  # type: ignore[attr-defined]
+        try:
+            result = _gather_spaces(active_space=space, db=db)
+        finally:
+            if orig is None:
+                del storage_mod.get_space_sources  # type: ignore[attr-defined]
+            else:
+                storage_mod.get_space_sources = orig  # type: ignore[attr-defined]
+
+        assert result["active"]["source_count"] == 0
+
+    def test_active_space_with_db_instructions_preview(self, tmp_path: Any) -> None:
+        """Lines 300-312: instructions_preview set when parse_space_file succeeds."""
+        space_file = tmp_path / "space.yaml"
+        space_file.write_text("name: ws\n")
+
+        space = {"name": "ws", "id": "id-1", "file_path": str(space_file)}
+        db = MagicMock()
+
+        fake_cfg = MagicMock()
+        fake_cfg.instructions = "Follow these project conventions carefully."
+
+        import anteroom.services.spaces as spaces_mod
+
+        orig = getattr(spaces_mod, "parse_space_file", None)
+        spaces_mod.parse_space_file = lambda _p: fake_cfg  # type: ignore[attr-defined]
+        try:
+            result = _gather_spaces(active_space=space, db=db)
+        finally:
+            if orig is None:
+                del spaces_mod.parse_space_file  # type: ignore[attr-defined]
+            else:
+                spaces_mod.parse_space_file = orig  # type: ignore[attr-defined]
+
+        assert result["active"]["instructions_preview"] == "Follow these project conventions carefully."
+
+    def test_active_space_instructions_preview_truncated(self, tmp_path: Any) -> None:
+        """Lines 308-310: long instructions are truncated to 200 chars + suffix."""
+        space_file = tmp_path / "space.yaml"
+        space_file.write_text("name: ws\n")
+
+        space = {"name": "ws", "id": "id-1", "file_path": str(space_file)}
+        db = MagicMock()
+
+        fake_cfg = MagicMock()
+        fake_cfg.instructions = "A" * 300
+
+        import anteroom.services.spaces as spaces_mod
+
+        orig = getattr(spaces_mod, "parse_space_file", None)
+        spaces_mod.parse_space_file = lambda _p: fake_cfg  # type: ignore[attr-defined]
+        try:
+            result = _gather_spaces(active_space=space, db=db)
+        finally:
+            if orig is None:
+                del spaces_mod.parse_space_file  # type: ignore[attr-defined]
+            else:
+                spaces_mod.parse_space_file = orig  # type: ignore[attr-defined]
+
+        assert result["active"]["instructions_preview"].endswith("... (truncated)")
+        assert len(result["active"]["instructions_preview"]) < 300
+
+    def test_active_space_no_instructions_when_empty(self, tmp_path: Any) -> None:
+        """instructions_preview is absent when cfg.instructions is falsy."""
+        space_file = tmp_path / "space.yaml"
+        space_file.write_text("name: ws\n")
+
+        space = {"name": "ws", "id": "id-1", "file_path": str(space_file)}
+        db = MagicMock()
+
+        fake_cfg = MagicMock()
+        fake_cfg.instructions = ""
+
+        import anteroom.services.spaces as spaces_mod
+
+        orig = getattr(spaces_mod, "parse_space_file", None)
+        spaces_mod.parse_space_file = lambda _p: fake_cfg  # type: ignore[attr-defined]
+        try:
+            result = _gather_spaces(active_space=space, db=db)
+        finally:
+            if orig is None:
+                del spaces_mod.parse_space_file  # type: ignore[attr-defined]
+            else:
+                spaces_mod.parse_space_file = orig  # type: ignore[attr-defined]
+
+        assert "instructions_preview" not in result["active"]
+
+    def test_active_space_instructions_parse_exception_ignored(self, tmp_path: Any) -> None:
+        """Lines 311-312: exception in parse_space_file is silently swallowed."""
+        space = {"name": "ws", "id": "id-1", "file_path": "/nonexistent/space.yaml"}
+        db = MagicMock()
+
+        import anteroom.services.spaces as spaces_mod
+
+        orig = getattr(spaces_mod, "parse_space_file", None)
+        spaces_mod.parse_space_file = lambda _p: (_ for _ in ()).throw(FileNotFoundError("missing"))  # type: ignore[attr-defined]
+        try:
+            result = _gather_spaces(active_space=space, db=db)
+        finally:
+            if orig is None:
+                del spaces_mod.parse_space_file  # type: ignore[attr-defined]
+            else:
+                spaces_mod.parse_space_file = orig  # type: ignore[attr-defined]
+
+        assert "instructions_preview" not in result["active"]
+
+    def test_list_spaces_with_db(self) -> None:
+        """Lines 318-323: list_spaces is called and total/names are populated."""
+        db = MagicMock()
+
+        import anteroom.services.space_storage as ss_mod
+
+        orig = getattr(ss_mod, "list_spaces", None)
+        ss_mod.list_spaces = lambda _db: [{"name": "alpha"}, {"name": "beta"}]  # type: ignore[attr-defined]
+        try:
+            result = _gather_spaces(active_space=None, db=db)
+        finally:
+            if orig is None:
+                del ss_mod.list_spaces  # type: ignore[attr-defined]
+            else:
+                ss_mod.list_spaces = orig  # type: ignore[attr-defined]
+
+        assert result["total"] == 2
+        assert result["names"] == ["alpha", "beta"]
+
+    def test_list_spaces_exception_fallback(self) -> None:
+        """Lines 324-326: list_spaces exception falls back to total=0, names=[]."""
+        db = MagicMock()
+
+        import anteroom.services.space_storage as ss_mod
+
+        orig = getattr(ss_mod, "list_spaces", None)
+        ss_mod.list_spaces = lambda _db: (_ for _ in ()).throw(RuntimeError("fail"))  # type: ignore[attr-defined]
+        try:
+            result = _gather_spaces(active_space=None, db=db)
+        finally:
+            if orig is None:
+                del ss_mod.list_spaces  # type: ignore[attr-defined]
+            else:
+                ss_mod.list_spaces = orig  # type: ignore[attr-defined]
+
+        assert result["total"] == 0
+        assert result["names"] == []
+
+    @pytest.mark.asyncio
+    async def test_handle_spaces_section(self) -> None:
+        """handle() dispatches to _gather_spaces when section='spaces'."""
+        result = await handle(section="spaces")
+        assert result["section"] == "spaces"
+        assert "data" in result
+        assert result["data"]["available"] is False
+
+    @pytest.mark.asyncio
+    async def test_handle_spaces_section_with_db(self) -> None:
+        """handle() passes _active_space and _db through to _gather_spaces."""
+        space = {"name": "test-space", "id": "sp-1", "file_path": "/f.yaml"}
+        db = MagicMock()
+
+        import anteroom.services.space_storage as ss_mod
+
+        orig = getattr(ss_mod, "list_spaces", None)
+        ss_mod.list_spaces = lambda _db: [{"name": "test-space"}]  # type: ignore[attr-defined]
+        try:
+            result = await handle(section="spaces", _active_space=space, _db=db)
+        finally:
+            if orig is None:
+                del ss_mod.list_spaces  # type: ignore[attr-defined]
+            else:
+                ss_mod.list_spaces = orig  # type: ignore[attr-defined]
+
+        assert result["data"]["available"] is True
+        assert result["data"]["active"]["name"] == "test-space"
+        assert result["data"]["total"] == 1

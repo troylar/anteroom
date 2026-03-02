@@ -936,3 +936,776 @@ class TestMcpToolFiltering:
         mgr._rebuild_tool_map()
         assert mgr.get_all_tools() == []
         assert mgr.get_openai_tools() is None
+
+
+# Additional tests for coverage of missed lines (#689)
+
+
+class TestValidateSseUrl:
+    """Tests for _validate_sse_url covering lines 37-59."""
+
+    def test_valid_https_url_passes(self) -> None:
+        from anteroom.services.mcp_manager import _validate_sse_url
+
+        # Should not raise — external reachable hostname
+        # We need a URL that won't be SSRF-blocked; use a known public IP
+        # but since DNS is live, use an IP directly instead
+        _validate_sse_url("https://93.184.216.34/sse")  # example.com IP
+
+    def test_invalid_scheme_raises(self) -> None:
+        from anteroom.services.mcp_manager import _validate_sse_url
+
+        with pytest.raises(ValueError, match="Unsupported URL scheme"):
+            _validate_sse_url("ftp://example.com/sse")
+
+    def test_localhost_hostname_blocked(self) -> None:
+        from anteroom.services.mcp_manager import _validate_sse_url
+
+        with pytest.raises(ValueError, match="Blocked internal hostname"):
+            _validate_sse_url("http://localhost/sse")
+
+    def test_gcp_metadata_hostname_blocked(self) -> None:
+        from anteroom.services.mcp_manager import _validate_sse_url
+
+        with pytest.raises(ValueError, match="Blocked internal hostname"):
+            _validate_sse_url("http://metadata.google.internal/sse")
+
+    def test_loopback_ip_blocked(self) -> None:
+        from anteroom.services.mcp_manager import _validate_sse_url
+
+        with pytest.raises(ValueError, match="Blocked internal IP"):
+            _validate_sse_url("http://127.0.0.1/sse")
+
+    def test_private_ip_10_x_blocked(self) -> None:
+        from anteroom.services.mcp_manager import _validate_sse_url
+
+        with pytest.raises(ValueError, match="Blocked internal IP"):
+            _validate_sse_url("http://10.0.0.1/sse")
+
+    def test_private_ip_192_168_blocked(self) -> None:
+        from anteroom.services.mcp_manager import _validate_sse_url
+
+        with pytest.raises(ValueError, match="Blocked internal IP"):
+            _validate_sse_url("http://192.168.1.1/sse")
+
+    def test_private_ip_172_16_blocked(self) -> None:
+        from anteroom.services.mcp_manager import _validate_sse_url
+
+        with pytest.raises(ValueError, match="Blocked internal IP"):
+            _validate_sse_url("http://172.16.0.1/sse")
+
+    def test_link_local_ip_blocked(self) -> None:
+        from anteroom.services.mcp_manager import _validate_sse_url
+
+        with pytest.raises(ValueError, match="Blocked internal IP"):
+            _validate_sse_url("http://169.254.169.254/sse")
+
+    def test_ipv6_loopback_blocked(self) -> None:
+        from anteroom.services.mcp_manager import _validate_sse_url
+
+        with pytest.raises(ValueError, match="Blocked internal IP"):
+            _validate_sse_url("http://[::1]/sse")
+
+    def test_unresolvable_hostname_raises(self) -> None:
+        from anteroom.services.mcp_manager import _validate_sse_url
+
+        with pytest.raises(ValueError, match="Cannot resolve hostname"):
+            _validate_sse_url("http://this-hostname-definitely-does-not-exist-xyzzy.invalid/sse")
+
+    def test_hostname_resolving_to_private_ip_blocked(self) -> None:
+        """Hostname that resolves to a private IP must be blocked (lines 51-57)."""
+        import socket
+
+        from anteroom.services.mcp_manager import _validate_sse_url
+
+        private_ip = "10.0.0.1"
+        with patch("anteroom.services.mcp_manager.socket.getaddrinfo") as mock_gai:
+            mock_gai.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (private_ip, 0))]
+            with pytest.raises(ValueError, match="resolves to blocked IP"):
+                _validate_sse_url("http://internal-service.example.com/sse")
+
+
+class TestValidateCommand:
+    """Tests for _validate_command covering lines 64-66."""
+
+    def test_existing_command_passes(self) -> None:
+        from anteroom.services.mcp_manager import _validate_command
+
+        with patch("anteroom.services.mcp_manager.shutil.which", return_value="/usr/bin/echo"):
+            _validate_command("echo")  # should not raise
+
+    def test_missing_command_raises(self) -> None:
+        from anteroom.services.mcp_manager import _validate_command
+
+        with patch("anteroom.services.mcp_manager.shutil.which", return_value=None):
+            with pytest.raises(ValueError, match="MCP command not found on PATH"):
+                _validate_command("nonexistent-mcp-tool")
+
+
+class TestIsReadyProperty:
+    """Tests for is_ready property covering lines 83-85."""
+
+    def test_is_ready_true_when_no_configs(self) -> None:
+        mgr = McpManager([])
+        assert mgr.is_ready is True
+
+    def test_is_ready_false_when_not_all_resolved(self) -> None:
+        configs = [
+            McpServerConfig(name="server-a", transport="stdio", command="echo"),
+            McpServerConfig(name="server-b", transport="stdio", command="echo"),
+        ]
+        mgr = McpManager(configs)
+        # Only one server has resolved status
+        mgr._server_status = {"server-a": {"status": "connected", "tool_count": 0}}
+        assert mgr.is_ready is False
+
+    def test_is_ready_true_when_all_resolved(self) -> None:
+        configs = [
+            McpServerConfig(name="server-a", transport="stdio", command="echo"),
+            McpServerConfig(name="server-b", transport="stdio", command="echo"),
+        ]
+        mgr = McpManager(configs)
+        mgr._server_status = {
+            "server-a": {"status": "connected", "tool_count": 2},
+            "server-b": {"status": "error", "tool_count": 0},
+        }
+        assert mgr.is_ready is True
+
+
+class TestStartupEmptyConfigs:
+    """Tests for startup early-return with no configs (line 89)."""
+
+    @pytest.mark.asyncio()
+    async def test_startup_empty_configs_returns_immediately(self) -> None:
+        mgr = McpManager([])
+        # Patch MCP import to ensure we don't accidentally exercise connection code
+        with patch.dict("sys.modules", {"mcp": MagicMock(), "mcp.client.stdio": MagicMock()}):
+            await mgr.startup()
+        assert mgr._server_status == {}
+        assert mgr.is_ready is True
+
+
+class TestStartupStatusCallback:
+    """Tests for status_callback invocations during startup (lines 102-103, 182)."""
+
+    @pytest.mark.asyncio()
+    async def test_startup_calls_connecting_status_callback(self) -> None:
+        """startup() must call status_callback with 'connecting' for each server (lines 102-103)."""
+        configs = [
+            McpServerConfig(name="server-a", transport="stdio", command="echo"),
+            McpServerConfig(name="server-b", transport="stdio", command="echo"),
+        ]
+        mgr = McpManager(configs)
+        received: list[tuple[str, dict]] = []
+
+        async def fake_connect_one(config: McpServerConfig, status_callback: Any = None) -> None:
+            mgr._server_status[config.name] = {"status": "connected", "tool_count": 0}
+
+        with (
+            patch.object(mgr, "_connect_one", side_effect=fake_connect_one),
+            patch.dict("sys.modules", {"mcp": MagicMock(), "mcp.client.stdio": MagicMock()}),
+        ):
+            await mgr.startup(status_callback=lambda name, status: received.append((name, status)))
+
+        connecting_calls = [(n, s) for n, s in received if s.get("status") == "connecting"]
+        assert len(connecting_calls) == 2
+        names = {n for n, _ in connecting_calls}
+        assert names == {"server-a", "server-b"}
+
+    @pytest.mark.asyncio()
+    async def test_connect_one_calls_status_callback_on_completion(self) -> None:
+        """_connect_one must call status_callback with final status (line 182)."""
+        config = McpServerConfig(name="srv", transport="stdio", command="echo")
+        mgr = McpManager([config])
+        callback_calls: list[tuple[str, dict]] = []
+
+        async def fake_do_connect(_config: McpServerConfig) -> None:
+            mgr._server_status[_config.name] = {"status": "connected", "tool_count": 1}
+
+        with patch.object(mgr, "_do_connect", side_effect=fake_do_connect):
+            await mgr._connect_one(config, status_callback=lambda n, s: callback_calls.append((n, s)))
+
+        assert len(callback_calls) == 1
+        name, status = callback_calls[0]
+        assert name == "srv"
+        assert status["status"] == "connected"
+
+    @pytest.mark.asyncio()
+    async def test_connect_one_timeout_calls_status_callback(self) -> None:
+        """status_callback must be called even when connection times out (line 182)."""
+        config = McpServerConfig(name="slow", transport="stdio", command="echo", timeout=0.05)
+        mgr = McpManager([config])
+        callback_calls: list[tuple[str, dict]] = []
+
+        async def hang_forever(_config: McpServerConfig) -> None:
+            await asyncio.sleep(999)
+
+        with patch.object(mgr, "_do_connect", side_effect=hang_forever):
+            await mgr._connect_one(
+                config, status_callback=lambda n, s: callback_calls.append((n, s))
+            )
+
+        assert len(callback_calls) == 1
+        name, status = callback_calls[0]
+        assert name == "slow"
+        assert status["status"] == "error"
+
+
+class TestDoConnectImportError:
+    """Tests for _do_connect MCP SDK ImportError path (lines 191-199)."""
+
+    @pytest.mark.asyncio()
+    async def test_do_connect_without_mcp_sdk_sets_error_status(self) -> None:
+        """_do_connect with no mcp package sets error status and returns (lines 191-199)."""
+        config = McpServerConfig(name="no-sdk", transport="stdio", command="echo")
+        mgr = McpManager([config])
+
+        with patch.dict("sys.modules", {"mcp": None, "mcp.client.stdio": None}):
+            await mgr._do_connect(config)
+
+        assert mgr._server_status["no-sdk"]["status"] == "error"
+        assert "not installed" in mgr._server_status["no-sdk"]["error_message"].lower()
+        assert "no-sdk" not in mgr._sessions
+
+
+class TestDoConnectSseTransport:
+    """Tests for SSE transport branch in _do_connect (lines 231-250)."""
+
+    @pytest.mark.asyncio()
+    async def test_sse_client_import_error_sets_error_status(self) -> None:
+        """When sse_client can't be imported, status must be set to error (lines 231-241)."""
+        config = McpServerConfig(name="sse-server", transport="sse", url="https://93.184.216.34/sse")
+        mgr = McpManager([config])
+
+        mcp_mock = MagicMock()
+        with patch.dict(
+            "sys.modules",
+            {"mcp": mcp_mock, "mcp.client.stdio": MagicMock(), "mcp.client.sse": None},
+        ):
+            await mgr._do_connect(config)
+
+        assert mgr._server_status["sse-server"]["status"] == "error"
+        assert "sse" in mgr._server_status["sse-server"]["error_message"].lower()
+
+    @pytest.mark.asyncio()
+    async def test_sse_url_validation_blocks_private_ip(self) -> None:
+        """_do_connect for SSE must reject private IPs via _validate_sse_url (line 243)."""
+        config = McpServerConfig(name="ssrf-attempt", transport="sse", url="https://mcp.example.com/sse")
+        mgr = McpManager([config])
+
+        mcp_mock = MagicMock()
+        # Make McpError a real class so isinstance() works during error handling
+        class FakeMcpError(Exception):
+            pass
+
+        mcp_mock.McpError = FakeMcpError
+        sse_mod_mock = MagicMock()
+
+        with (
+            patch.dict(
+                "sys.modules",
+                {"mcp": mcp_mock, "mcp.client.stdio": MagicMock(), "mcp.client.sse": sse_mod_mock},
+            ),
+            patch(
+                "anteroom.services.mcp_manager._validate_sse_url",
+                side_effect=ValueError("Blocked internal IP: 10.0.0.1"),
+            ),
+        ):
+            await mgr._do_connect(config)
+
+        assert mgr._server_status["ssrf-attempt"]["status"] == "error"
+        assert "Blocked internal IP" in mgr._server_status["ssrf-attempt"]["error_message"]
+
+    @pytest.mark.asyncio()
+    async def test_sse_connect_success(self) -> None:
+        """SSE transport happy path: session initialized, tools listed (lines 244-250)."""
+        config = McpServerConfig(name="sse-ok", transport="sse", url="https://93.184.216.34/sse")
+        mgr = McpManager([config])
+
+        mock_tool = MagicMock()
+        mock_tool.name = "sse_tool"
+        mock_tool.description = "An SSE tool"
+        mock_tool.inputSchema = {"type": "object"}
+
+        mock_session = AsyncMock()
+        mock_tools_result = MagicMock()
+        mock_tools_result.tools = [mock_tool]
+        mock_session.initialize = AsyncMock()
+        mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
+
+        mock_stack = AsyncMock(spec=AsyncExitStack)
+        mock_stack.enter_async_context = AsyncMock(side_effect=[(MagicMock(), MagicMock()), mock_session])
+        mock_stack.callback = MagicMock()
+        mock_stack.aclose = AsyncMock()
+
+        mcp_mock = MagicMock()
+        sse_mod_mock = MagicMock()
+        sse_mod_mock.sse_client = MagicMock()
+
+        with (
+            patch.dict(
+                "sys.modules",
+                {"mcp": mcp_mock, "mcp.client.stdio": MagicMock(), "mcp.client.sse": sse_mod_mock},
+            ),
+            patch("anteroom.services.mcp_manager.AsyncExitStack", return_value=mock_stack),
+            patch("anteroom.services.mcp_manager._validate_sse_url"),
+        ):
+            await mgr._do_connect(config)
+
+        assert mgr._server_status["sse-ok"]["status"] == "connected"
+        assert mgr._server_tools["sse-ok"][0]["name"] == "sse_tool"
+
+
+class TestDoConnectStdioSuccessPath:
+    """Tests for successful stdio connect path (lines 224-228, 266-301)."""
+
+    @pytest.mark.asyncio()
+    async def test_stdio_connect_success_sets_connected_status(self) -> None:
+        """Successful stdio connection populates session, tools, and connected status (lines 266-301)."""
+        config = McpServerConfig(name="stdio-ok", transport="stdio", command="echo")
+        mgr = McpManager([config])
+
+        mock_tool = MagicMock()
+        mock_tool.name = "my_tool"
+        mock_tool.description = "Does things"
+        mock_tool.inputSchema = {"type": "object", "properties": {}}
+
+        mock_session = AsyncMock()
+        mock_tools_result = MagicMock()
+        mock_tools_result.tools = [mock_tool]
+        mock_session.initialize = AsyncMock()
+        mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
+
+        mock_stack = AsyncMock(spec=AsyncExitStack)
+        # First enter_async_context returns (read, write) streams, second returns session
+        mock_stack.enter_async_context = AsyncMock(
+            side_effect=[(MagicMock(), MagicMock()), mock_session]
+        )
+        mock_stack.callback = MagicMock()
+        mock_stack.aclose = AsyncMock()
+
+        mcp_mock = MagicMock()
+        mcp_mock.ClientSession = MagicMock()
+        mcp_mock.StdioServerParameters = MagicMock()
+
+        with (
+            patch.dict(
+                "sys.modules",
+                {"mcp": mcp_mock, "mcp.client.stdio": MagicMock()},
+            ),
+            patch("anteroom.services.mcp_manager.AsyncExitStack", return_value=mock_stack),
+            patch("anteroom.services.mcp_manager.shutil.which", return_value="/usr/bin/echo"),
+        ):
+            await mgr._do_connect(config)
+
+        assert mgr._server_status["stdio-ok"]["status"] == "connected"
+        assert mgr._server_status["stdio-ok"]["tool_count"] == 1
+        assert mgr._server_tools["stdio-ok"][0]["name"] == "my_tool"
+        assert mgr._sessions["stdio-ok"] is mock_session
+
+    @pytest.mark.asyncio()
+    async def test_stdio_connect_with_filtered_tools_logs_filtered_count(self) -> None:
+        """When tools are filtered, status reflects allowed count (lines 292-299)."""
+        config = McpServerConfig(
+            name="filtered-ok",
+            transport="stdio",
+            command="echo",
+            tools_include=["allowed_tool"],
+        )
+        mgr = McpManager([config])
+
+        mock_tool_allowed = MagicMock()
+        mock_tool_allowed.name = "allowed_tool"
+        mock_tool_allowed.description = "Allowed"
+        mock_tool_allowed.inputSchema = {}
+
+        mock_tool_blocked = MagicMock()
+        mock_tool_blocked.name = "blocked_tool"
+        mock_tool_blocked.description = "Blocked"
+        mock_tool_blocked.inputSchema = {}
+
+        mock_session = AsyncMock()
+        mock_tools_result = MagicMock()
+        mock_tools_result.tools = [mock_tool_allowed, mock_tool_blocked]
+        mock_session.initialize = AsyncMock()
+        mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
+
+        mock_stack = AsyncMock(spec=AsyncExitStack)
+        mock_stack.enter_async_context = AsyncMock(
+            side_effect=[(MagicMock(), MagicMock()), mock_session]
+        )
+        mock_stack.callback = MagicMock()
+        mock_stack.aclose = AsyncMock()
+
+        mcp_mock = MagicMock()
+
+        with (
+            patch.dict("sys.modules", {"mcp": mcp_mock, "mcp.client.stdio": MagicMock()}),
+            patch("anteroom.services.mcp_manager.AsyncExitStack", return_value=mock_stack),
+            patch("anteroom.services.mcp_manager.shutil.which", return_value="/usr/bin/echo"),
+        ):
+            await mgr._do_connect(config)
+
+        # 1 allowed out of 2 total
+        assert mgr._server_status["filtered-ok"]["tool_count"] == 1
+        assert mgr._server_status["filtered-ok"]["total_tool_count"] == 2
+
+    @pytest.mark.asyncio()
+    async def test_stdio_connect_tool_with_no_input_schema_attribute(self) -> None:
+        """Tool without inputSchema attribute uses empty dict fallback (line 277)."""
+        config = McpServerConfig(name="no-schema", transport="stdio", command="echo")
+        mgr = McpManager([config])
+
+        mock_tool = MagicMock(spec=["name", "description"])  # no inputSchema
+        mock_tool.name = "simple_tool"
+        mock_tool.description = "No schema"
+
+        mock_session = AsyncMock()
+        mock_tools_result = MagicMock()
+        mock_tools_result.tools = [mock_tool]
+        mock_session.initialize = AsyncMock()
+        mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
+
+        mock_stack = AsyncMock(spec=AsyncExitStack)
+        mock_stack.enter_async_context = AsyncMock(
+            side_effect=[(MagicMock(), MagicMock()), mock_session]
+        )
+        mock_stack.callback = MagicMock()
+        mock_stack.aclose = AsyncMock()
+
+        mcp_mock = MagicMock()
+
+        with (
+            patch.dict("sys.modules", {"mcp": mcp_mock, "mcp.client.stdio": MagicMock()}),
+            patch("anteroom.services.mcp_manager.AsyncExitStack", return_value=mock_stack),
+            patch("anteroom.services.mcp_manager.shutil.which", return_value="/usr/bin/echo"),
+        ):
+            await mgr._do_connect(config)
+
+        assert mgr._server_tools["no-schema"][0]["input_schema"] == {}
+
+    @pytest.mark.asyncio()
+    async def test_stdio_connect_many_tools_truncates_log_names(self) -> None:
+        """More than 10 tools should have '...' in the log (lines 298, 305)."""
+        config = McpServerConfig(name="many-tools", transport="stdio", command="echo")
+        mgr = McpManager([config])
+
+        tools = []
+        for i in range(15):
+            t = MagicMock()
+            t.name = f"tool_{i}"
+            t.description = f"Tool {i}"
+            t.inputSchema = {}
+            tools.append(t)
+
+        mock_session = AsyncMock()
+        mock_tools_result = MagicMock()
+        mock_tools_result.tools = tools
+        mock_session.initialize = AsyncMock()
+        mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
+
+        mock_stack = AsyncMock(spec=AsyncExitStack)
+        mock_stack.enter_async_context = AsyncMock(
+            side_effect=[(MagicMock(), MagicMock()), mock_session]
+        )
+        mock_stack.callback = MagicMock()
+        mock_stack.aclose = AsyncMock()
+
+        mcp_mock = MagicMock()
+
+        with (
+            patch.dict("sys.modules", {"mcp": mcp_mock, "mcp.client.stdio": MagicMock()}),
+            patch("anteroom.services.mcp_manager.AsyncExitStack", return_value=mock_stack),
+            patch("anteroom.services.mcp_manager.shutil.which", return_value="/usr/bin/echo"),
+        ):
+            await mgr._do_connect(config)
+
+        assert mgr._server_status["many-tools"]["tool_count"] == 15
+
+
+class TestMcpErrorImportFailureDuringErrorHandling:
+    """Tests for the McpError import fallback in error handling (lines 329-330)."""
+
+    @pytest.mark.asyncio()
+    async def test_error_handling_when_mcp_error_import_fails(self) -> None:
+        """If 'from mcp import McpError' fails, error must still be recorded (lines 327-330)."""
+        config = McpServerConfig(name="no-mcp-error", transport="stdio", command="echo")
+        mgr = McpManager([config])
+
+        # Patch shutil.which to find the command, then AsyncExitStack to raise on enter
+        mock_stack = AsyncMock(spec=AsyncExitStack)
+        mock_stack.enter_async_context = AsyncMock(side_effect=OSError("broken pipe"))
+        mock_stack.aclose = AsyncMock()
+
+        # mcp module exists for first import but McpError import attempt fails
+        mcp_mock = MagicMock()
+        del mcp_mock.McpError  # make McpError unavailable
+
+        with (
+            patch.dict("sys.modules", {"mcp": mcp_mock, "mcp.client.stdio": MagicMock()}),
+            patch("anteroom.services.mcp_manager.AsyncExitStack", return_value=mock_stack),
+            patch("anteroom.services.mcp_manager.shutil.which", return_value="/usr/bin/echo"),
+        ):
+            await mgr._do_connect(config)
+
+        assert mgr._server_status["no-mcp-error"]["status"] == "error"
+        assert "OSError" in mgr._server_status["no-mcp-error"]["error_message"]
+
+
+class TestToolCollisionWarning:
+    """Tests for tool name collision warning in _rebuild_tool_map (line 367)."""
+
+    def test_tool_name_collision_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        import logging
+
+        mgr = McpManager([])
+        mgr._server_tools = {
+            "server-a": [_make_tool("shared_tool", "server-a")],
+            "server-b": [_make_tool("shared_tool", "server-b")],
+        }
+
+        with caplog.at_level(logging.WARNING, logger="anteroom.services.mcp_manager"):
+            mgr._rebuild_tool_map()
+
+        collision_records = [r for r in caplog.records if "collision" in r.message.lower()]
+        assert collision_records, "Expected a tool name collision warning"
+        assert "shared_tool" in collision_records[0].message
+
+    def test_tool_collision_last_server_wins(self) -> None:
+        mgr = McpManager([])
+        # Server iteration order: server-a first, then server-b (dicts are insertion-ordered in Python 3.7+)
+        mgr._server_tools = {
+            "server-a": [_make_tool("shared_tool", "server-a")],
+            "server-b": [_make_tool("shared_tool", "server-b")],
+        }
+        mgr._rebuild_tool_map()
+        # server-b overwrites server-a
+        assert mgr._tool_to_server["shared_tool"] == "server-b"
+
+
+class TestConnectServerWithExistingSession:
+    """Tests for connect_server reconnection path (lines 381-386)."""
+
+    @pytest.mark.asyncio()
+    async def test_connect_server_disconnects_first_if_already_connected(self) -> None:
+        """connect_server must disconnect before reconnecting if session exists (lines 381-382)."""
+        config = McpServerConfig(name="srv", transport="stdio", command="echo")
+        mgr = McpManager([config])
+        mgr._sessions["srv"] = AsyncMock()
+
+        disconnect_called = False
+        connect_called = False
+
+        async def fake_disconnect(name: str) -> None:
+            nonlocal disconnect_called
+            disconnect_called = True
+            mgr._sessions.pop(name, None)
+            mgr._server_status[name] = {"status": "disconnected", "tool_count": 0}
+
+        async def fake_connect_one(cfg: McpServerConfig, status_callback: Any = None) -> None:
+            nonlocal connect_called
+            connect_called = True
+            mgr._server_status[cfg.name] = {"status": "connected", "tool_count": 0}
+
+        with (
+            patch.object(mgr, "disconnect_server", side_effect=fake_disconnect),
+            patch.object(mgr, "_connect_one", side_effect=fake_connect_one),
+        ):
+            await mgr.connect_server("srv")
+
+        assert disconnect_called, "disconnect_server should have been called first"
+        assert connect_called, "_connect_one should have been called after disconnect"
+        assert "srv" not in mgr._disabled
+
+    @pytest.mark.asyncio()
+    async def test_connect_server_no_existing_session_skips_disconnect(self) -> None:
+        """connect_server without existing session should not call disconnect (line 381)."""
+        config = McpServerConfig(name="fresh", transport="stdio", command="echo")
+        mgr = McpManager([config])
+        # No existing session
+
+        disconnect_called = False
+
+        async def fake_disconnect(name: str) -> None:
+            nonlocal disconnect_called
+            disconnect_called = True
+
+        async def fake_connect_one(cfg: McpServerConfig, status_callback: Any = None) -> None:
+            mgr._server_status[cfg.name] = {"status": "connected", "tool_count": 0}
+
+        with (
+            patch.object(mgr, "disconnect_server", side_effect=fake_disconnect),
+            patch.object(mgr, "_connect_one", side_effect=fake_connect_one),
+        ):
+            await mgr.connect_server("fresh")
+
+        assert not disconnect_called, "disconnect_server should NOT be called for a fresh server"
+
+    @pytest.mark.asyncio()
+    async def test_connect_server_clears_disabled_flag(self) -> None:
+        """connect_server must clear the _disabled flag (line 384)."""
+        config = McpServerConfig(name="re-enable", transport="stdio", command="echo")
+        mgr = McpManager([config])
+        mgr._disabled.add("re-enable")
+
+        async def fake_connect_one(cfg: McpServerConfig, status_callback: Any = None) -> None:
+            mgr._server_status[cfg.name] = {"status": "connected", "tool_count": 0}
+
+        with patch.object(mgr, "_connect_one", side_effect=fake_connect_one):
+            await mgr.connect_server("re-enable")
+
+        assert "re-enable" not in mgr._disabled
+
+
+class TestReconnectServer:
+    """Tests for reconnect_server (line 413)."""
+
+    @pytest.mark.asyncio()
+    async def test_reconnect_server_delegates_to_connect_server(self) -> None:
+        """reconnect_server is a thin wrapper around connect_server (line 413)."""
+        config = McpServerConfig(name="srv", transport="stdio", command="echo")
+        mgr = McpManager([config])
+
+        connect_server_called_with: list[str] = []
+
+        async def fake_connect_server(name: str) -> None:
+            connect_server_called_with.append(name)
+
+        with patch.object(mgr, "connect_server", side_effect=fake_connect_server):
+            await mgr.reconnect_server("srv")
+
+        assert connect_server_called_with == ["srv"]
+
+
+class TestCallToolResultParsing:
+    """Tests for call_tool result content parsing (lines 463-466, 473)."""
+
+    @pytest.mark.asyncio()
+    async def test_call_tool_result_with_data_attribute(self) -> None:
+        """Items with .data (not .text) should be converted to str (line 463-464)."""
+        mgr = McpManager([])
+        mgr._tool_to_server = {"image_tool": "vision-server"}
+
+        item = MagicMock(spec=["data"])  # has .data, no .text
+        item.data = b"\x89PNG binary"
+
+        mock_result = MagicMock()
+        mock_result.content = [item]
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+        mgr._sessions = {"vision-server": mock_session}
+
+        result = await mgr.call_tool("image_tool", {})
+        assert "content" in result
+        assert str(b"\x89PNG binary") in result["content"]
+
+    @pytest.mark.asyncio()
+    async def test_call_tool_result_with_plain_item(self) -> None:
+        """Items with neither .text nor .data should fall through to str(item) (line 465-466)."""
+        mgr = McpManager([])
+        mgr._tool_to_server = {"plain_tool": "plain-server"}
+
+        class PlainItem:
+            def __str__(self) -> str:
+                return "plain string result"
+
+        mock_result = MagicMock()
+        mock_result.content = [PlainItem()]
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+        mgr._sessions = {"plain-server": mock_session}
+
+        result = await mgr.call_tool("plain_tool", {})
+        assert "content" in result
+        assert "plain string result" in result["content"]
+
+    @pytest.mark.asyncio()
+    async def test_call_tool_result_without_content_attribute(self) -> None:
+        """Result without .content falls back to str(result) (line 473)."""
+        mgr = McpManager([])
+        mgr._tool_to_server = {"raw_tool": "raw-server"}
+
+        class RawResult:
+            def __str__(self) -> str:
+                return "raw result string"
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=RawResult())
+        mgr._sessions = {"raw-server": mock_session}
+
+        result = await mgr.call_tool("raw_tool", {})
+        assert "result" in result
+        assert "raw result string" in result["result"]
+
+    @pytest.mark.asyncio()
+    async def test_call_tool_context_trust_from_config(self) -> None:
+        """call_tool should include _context_trust from the server config (lines 455-456)."""
+        config = McpServerConfig(name="trusted-server", transport="stdio", command="echo", trust_level="trusted")
+        mgr = McpManager([config])
+        mgr._tool_to_server = {"trusted_tool": "trusted-server"}
+
+        mock_result = MagicMock()
+        mock_result.content = [MagicMock(text="trusted response")]
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+        mgr._sessions = {"trusted-server": mock_session}
+
+        result = await mgr.call_tool("trusted_tool", {})
+        assert result["_context_trust"] == "trusted"
+        assert result["_context_origin"] == "mcp:trusted-server"
+
+    @pytest.mark.asyncio()
+    async def test_call_tool_default_trust_level_when_no_config(self) -> None:
+        """call_tool uses 'untrusted' when server config is missing (lines 455-456)."""
+        mgr = McpManager([])
+        mgr._tool_to_server = {"ghost_tool": "ghost-server"}
+        # No config for ghost-server
+
+        mock_result = MagicMock()
+        mock_result.content = [MagicMock(text="response")]
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+        mgr._sessions = {"ghost-server": mock_session}
+
+        result = await mgr.call_tool("ghost_tool", {})
+        assert result["_context_trust"] == "untrusted"
+
+
+class TestToolWarningThresholdWithFilters:
+    """Tests for tool warning threshold with active filters (line 136)."""
+
+    @pytest.mark.asyncio()
+    async def test_tool_warning_with_active_filter_changes_hint(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """When any server has an active filter and threshold is exceeded, the hint changes (line 136)."""
+        import logging
+
+        cfg = McpServerConfig(
+            name="jira",
+            transport="stdio",
+            command="echo",
+            tools_include=["tool0", "tool1", "tool2", "tool3", "tool4"],
+        )
+        mgr = McpManager([cfg], tool_warning_threshold=3)
+        mgr._server_tools = {"jira": [_make_tool(f"tool{i}", "jira") for i in range(5)]}
+        mgr._rebuild_tool_map()
+        mgr._server_status = {"jira": {"status": "connected", "tool_count": 5}}
+
+        async def noop(_config: McpServerConfig) -> None:
+            pass
+
+        with (
+            caplog.at_level(logging.WARNING, logger="anteroom.services.mcp_manager"),
+            patch.object(mgr, "_connect_one", side_effect=noop),
+            patch.dict("sys.modules", {"mcp": MagicMock(), "mcp.client.stdio": MagicMock()}),
+        ):
+            await mgr.startup()
+
+        warning_records = [r for r in caplog.records if "exceeds threshold" in r.message]
+        assert warning_records, "Expected tool threshold warning"
+        assert "not be restrictive enough" in warning_records[0].message
