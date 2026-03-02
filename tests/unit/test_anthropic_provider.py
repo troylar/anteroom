@@ -497,6 +497,171 @@ class TestCreateAiServiceFactory:
 # ---------------------------------------------------------------------------
 
 
+class TestValidateConnectionErrors:
+    @pytest.mark.asyncio
+    async def test_generic_error(self):
+        with (
+            patch("anteroom.services.anthropic_provider.anthropic"),
+            patch("anteroom.services.anthropic_provider.HAS_ANTHROPIC", True),
+        ):
+            config = _make_config()
+            from anteroom.services.anthropic_provider import AnthropicService
+
+            svc = AnthropicService(config)
+            svc.client.messages.create = AsyncMock(side_effect=Exception("connection refused"))
+
+            ok, msg, models = await svc.validate_connection()
+            assert ok is False
+            assert models == []
+
+    @pytest.mark.asyncio
+    async def test_empty_response_content(self):
+        with (
+            patch("anteroom.services.anthropic_provider.anthropic"),
+            patch("anteroom.services.anthropic_provider.HAS_ANTHROPIC", True),
+        ):
+            config = _make_config()
+            from anteroom.services.anthropic_provider import AnthropicService
+
+            svc = AnthropicService(config)
+            mock_response = MagicMock()
+            mock_response.content = []
+            svc.client.messages.create = AsyncMock(return_value=mock_response)
+
+            ok, msg, models = await svc.validate_connection()
+            assert ok is True
+
+
+class TestStreamChatKwargs:
+    @pytest.mark.asyncio
+    async def test_temperature_and_top_p_forwarded(self):
+        with (
+            patch("anteroom.services.anthropic_provider.anthropic"),
+            patch("anteroom.services.anthropic_provider.HAS_ANTHROPIC", True),
+        ):
+            config = _make_config(temperature=0.7, top_p=0.9)
+            from anteroom.services.anthropic_provider import AnthropicService
+
+            svc = AnthropicService(config)
+
+            msg_delta = MagicMock()
+            msg_delta.type = "message_delta"
+            msg_delta.delta = MagicMock()
+            msg_delta.delta.stop_reason = "end_turn"
+            msg_delta.usage = MagicMock()
+            msg_delta.usage.output_tokens = 1
+
+            svc.client.messages.stream = MagicMock(return_value=_make_mock_stream_context([msg_delta]))
+
+            events = []
+            async for event in svc.stream_chat([{"role": "user", "content": "Hi"}]):
+                events.append(event)
+
+            call_kwargs = svc.client.messages.stream.call_args[1]
+            assert call_kwargs["temperature"] == 0.7
+            assert call_kwargs["top_p"] == 0.9
+
+    @pytest.mark.asyncio
+    async def test_tools_converted_and_passed(self):
+        with (
+            patch("anteroom.services.anthropic_provider.anthropic"),
+            patch("anteroom.services.anthropic_provider.HAS_ANTHROPIC", True),
+        ):
+            config = _make_config()
+            from anteroom.services.anthropic_provider import AnthropicService
+
+            svc = AnthropicService(config)
+
+            msg_delta = MagicMock()
+            msg_delta.type = "message_delta"
+            msg_delta.delta = MagicMock()
+            msg_delta.delta.stop_reason = "end_turn"
+            msg_delta.usage = MagicMock()
+            msg_delta.usage.output_tokens = 1
+
+            svc.client.messages.stream = MagicMock(return_value=_make_mock_stream_context([msg_delta]))
+
+            tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "bash",
+                        "description": "Run a command",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ]
+
+            events = []
+            async for event in svc.stream_chat([{"role": "user", "content": "Hi"}], tools=tools):
+                events.append(event)
+
+            call_kwargs = svc.client.messages.stream.call_args[1]
+            assert "tools" in call_kwargs
+            assert call_kwargs["tools"][0]["name"] == "bash"
+
+
+class TestTokenRefresh:
+    def test_try_refresh_without_provider_returns_false(self):
+        with (
+            patch("anteroom.services.anthropic_provider.anthropic"),
+            patch("anteroom.services.anthropic_provider.HAS_ANTHROPIC", True),
+        ):
+            config = _make_config()
+            from anteroom.services.anthropic_provider import AnthropicService
+
+            svc = AnthropicService(config)
+            assert svc._try_refresh_token() is False
+
+    def test_resolve_api_key_from_config(self):
+        with (
+            patch("anteroom.services.anthropic_provider.anthropic"),
+            patch("anteroom.services.anthropic_provider.HAS_ANTHROPIC", True),
+        ):
+            config = _make_config(api_key="my-key")
+            from anteroom.services.anthropic_provider import AnthropicService
+
+            svc = AnthropicService(config)
+            assert svc._resolve_api_key() == "my-key"
+
+
+class TestCompleteEdgeCases:
+    @pytest.mark.asyncio
+    async def test_complete_empty_response_returns_none(self):
+        with (
+            patch("anteroom.services.anthropic_provider.anthropic"),
+            patch("anteroom.services.anthropic_provider.HAS_ANTHROPIC", True),
+        ):
+            config = _make_config()
+            from anteroom.services.anthropic_provider import AnthropicService
+
+            svc = AnthropicService(config)
+            mock_response = MagicMock()
+            mock_response.content = []
+            svc.client.messages.create = AsyncMock(return_value=mock_response)
+
+            result = await svc.complete([{"role": "user", "content": "test"}])
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_complete_passes_max_tokens(self):
+        with (
+            patch("anteroom.services.anthropic_provider.anthropic"),
+            patch("anteroom.services.anthropic_provider.HAS_ANTHROPIC", True),
+        ):
+            config = _make_config()
+            from anteroom.services.anthropic_provider import AnthropicService
+
+            svc = AnthropicService(config)
+            mock_response = MagicMock()
+            mock_response.content = [MagicMock(text="ok")]
+            svc.client.messages.create = AsyncMock(return_value=mock_response)
+
+            await svc.complete([{"role": "user", "content": "test"}], max_completion_tokens=500)
+            call_kwargs = svc.client.messages.create.call_args[1]
+            assert call_kwargs["max_tokens"] == 500
+
+
 class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_generic_error_yields_error_event(self):
