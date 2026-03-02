@@ -50,6 +50,9 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: troylar/anteroom
+          override_slug: troylar/anteroom
+          files: ./coverage.xml
+          fail_ci_if_error: true
 
   security-audit:
     name: Dependency audit

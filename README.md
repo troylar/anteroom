@@ -21,6 +21,7 @@
   <img src="https://img.shields.io/pypi/v/anteroom?style=for-the-badge&color=3b82f6&labelColor=0f1117" alt="PyPI Version">
   <img src="https://img.shields.io/badge/python-3.10%2B-10b981?style=for-the-badge&labelColor=0f1117" alt="Python 3.10+">
   <a href="https://codecov.io/gh/troylar/anteroom"><img src="https://img.shields.io/codecov/c/github/troylar/anteroom?style=for-the-badge&color=7c3aed&labelColor=0f1117&label=coverage" alt="Coverage"></a>
+  <img src="https://img.shields.io/badge/tests-4%2C900%2B-10b981?style=for-the-badge&labelColor=0f1117" alt="4,900+ Tests">
   <img src="https://img.shields.io/badge/license-Apache%202.0-e8913a?style=for-the-badge&labelColor=0f1117" alt="Apache 2.0 License">
 </p>
 
@@ -312,7 +313,7 @@ pip install anteroom[embeddings]  # adds local vector search
 ```bash
 git clone https://github.com/troylar/anteroom.git
 cd anteroom && pip install -e ".[dev]"
-pytest tests/ -v                    # 4800+ tests
+pytest tests/ -v                    # 4900+ tests
 ruff check src/ tests/              # lint
 ruff format src/ tests/             # format
 ```
