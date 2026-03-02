@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 2, 2026
 
+### v1.91.0
+
+**New:**
+
+- Native Anthropic/Claude API provider — connect directly without an OpenAI-compatible proxy (#694)
+- Anthropic (Claude) option added to `aroom init` setup wizard (#694)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.91.0)
+
 ### v1.90.3
 
 **Fixed:**
