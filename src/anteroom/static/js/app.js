@@ -18,6 +18,7 @@ const App = (() => {
     let _eventSource = null;
     let _esConnectedAt = 0;
     let _esFailCount = 0;
+    let _recovering = false;
     const _shownApprovalIds = new Set();
 
     // --- Theme System ---
@@ -122,6 +123,8 @@ const App = (() => {
     }
 
     function _handle401() {
+        if (_recovering) return;
+
         const now = Date.now();
         const key = '_anteroom_401_ts';
         const retryKey = '_anteroom_401_retries';
@@ -155,11 +158,13 @@ const App = (() => {
                 return;
             }
             // Auto-retry after a delay
+            _recovering = true;
             sessionStorage.setItem(retryKey, String(retries + 1));
             setTimeout(() => { window.location.href = '/'; }, 2000);
             return;
         }
         // First 401 — reset retry counter and redirect immediately
+        _recovering = true;
         sessionStorage.setItem(retryKey, '0');
         window.location.href = '/';
     }
@@ -735,6 +740,11 @@ const App = (() => {
         };
 
         _eventSource.onerror = () => {
+            if (_recovering) {
+                if (_eventSource) { _eventSource.close(); _eventSource = null; }
+                return;
+            }
+
             const elapsed = Date.now() - _esConnectedAt;
             _esFailCount++;
 
