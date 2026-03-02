@@ -144,12 +144,11 @@ async def _compact_messages(
     )
 
     try:
-        response = await ai_service.client.chat.completions.create(
-            model=ai_service.config.model,
+        result = await ai_service.complete(
             messages=[{"role": "user", "content": summary_prompt}],
             max_completion_tokens=1000,
         )
-        summary = response.choices[0].message.content or "Conversation summary unavailable."
+        summary = result or "Conversation summary unavailable."
     except Exception:
         logger.exception("Failed to generate compaction summary")
         return False

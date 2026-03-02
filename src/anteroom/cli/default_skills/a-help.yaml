@@ -104,6 +104,8 @@ prompt: |
   | retry_max_attempts      | int     | 3 (0-10)                   | AI_CHAT_RETRY_MAX_ATTEMPTS          |
   | retry_backoff_base      | float   | 1.0s (0.1-30.0)           | AI_CHAT_RETRY_BACKOFF_BASE          |
   | narration_cadence       | int     | 5 (0=off)                  | AI_CHAT_NARRATION_CADENCE           |
+  | provider                | str     | openai                     | AI_CHAT_PROVIDER                    |
+  | max_output_tokens       | int     | 4096                       | AI_CHAT_MAX_OUTPUT_TOKENS           |
   | allowed_domains         | list    | [] (no restriction)        | AI_CHAT_ALLOWED_DOMAINS             |
   | block_localhost_api     | bool    | false                      | AI_CHAT_BLOCK_LOCALHOST_API         |
 
