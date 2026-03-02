@@ -889,9 +889,15 @@ const App = (() => {
         spaces.forEach(s => {
             const item = document.createElement('div');
             item.className = 'project-item' + (state.currentSpaceId === s.id ? ' active' : '');
-            const origin = s.origin || '';
-            const originBadge = origin ? `<span class="space-origin">${DOMPurify.sanitize(origin)}</span>` : '';
-            item.innerHTML = `<span>${DOMPurify.sanitize(s.name)}${originBadge}</span>`;
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = s.name;
+            if (s.origin) {
+                const badge = document.createElement('span');
+                badge.className = 'space-origin';
+                badge.textContent = s.origin;
+                nameSpan.appendChild(badge);
+            }
+            item.appendChild(nameSpan);
             item.addEventListener('click', async () => {
                 state.currentSpaceId = s.id;
                 document.getElementById('space-select').value = s.id;

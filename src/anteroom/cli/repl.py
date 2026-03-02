@@ -3727,33 +3727,26 @@ async def _run_repl(
                             name = _slug(_cwd.name)
                             if not name:
                                 renderer.render_error(
-                                    "Cannot derive a space name from this directory. "
-                                    "Use /space create <name> instead."
+                                    "Cannot derive a space name from this directory. Use /space create <name> instead."
                                 )
                                 continue
                         else:
                             name = parts[2].strip() if len(parts) >= 3 else ""
                             if not name:
-                                renderer.console.print(
-                                    f"[{CHROME}]Usage: /space create <name>[/{CHROME}]\n"
-                                )
+                                renderer.console.print(f"[{CHROME}]Usage: /space create <name>[/{CHROME}]\n")
                                 continue
 
                         if not _re_mod.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$", name):
                             renderer.render_error(
-                                f"Invalid space name: {name!r} "
-                                "(must be alphanumeric, hyphens, underscores)"
+                                f"Invalid space name: {name!r} (must be alphanumeric, hyphens, underscores)"
                             )
                             continue
 
                         spath = _cwd / ".anteroom" / "space.yaml"
                         if spath.exists():
+                            renderer.console.print(f"[yellow]Space file already exists:[/yellow] {spath}")
                             renderer.console.print(
-                                f"[yellow]Space file already exists:[/yellow] {spath}"
-                            )
-                            renderer.console.print(
-                                "  Use [bold]/space load[/bold] to register it, "
-                                "or edit it directly.\n"
+                                "  Use [bold]/space load[/bold] to register it, or edit it directly.\n"
                             )
                             continue
 
@@ -3766,13 +3759,9 @@ async def _run_repl(
                         _update_conv_space(db, conv["id"], sp["id"])
                         _inject_space_instructions(sp)
 
-                        renderer.console.print(
-                            f"[green]Created local space: {sp['name']}[/green]\n"
-                        )
+                        renderer.console.print(f"[green]Created local space: {sp['name']}[/green]\n")
                         renderer.console.print(f"  File: {spath}")
-                        renderer.console.print(
-                            "  Edit the YAML to add instructions, packs, and config.\n"
-                        )
+                        renderer.console.print("  Edit the YAML to add instructions, packs, and config.\n")
 
                     elif sub == "load":
                         target = parts[2].strip() if len(parts) >= 3 else ""

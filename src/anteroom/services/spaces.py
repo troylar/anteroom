@@ -189,7 +189,7 @@ def is_local_space(file_path: str) -> bool:
     try:
         resolved = Path(file_path).expanduser().resolve()
         global_dir = get_spaces_dir().resolve()
-        return not str(resolved).startswith(str(global_dir) + "/") and resolved != global_dir
+        return not resolved.is_relative_to(global_dir)
     except Exception:
         return True
 
@@ -269,7 +269,7 @@ def write_space_template(path: Path, name: str) -> None:
     user can understand what's possible without consulting external docs.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_SPACE_TEMPLATE.format(name=name), encoding="utf-8")
+    path.write_text(_SPACE_TEMPLATE.replace("{name}", name), encoding="utf-8")
 
 
 def validate_space(config: SpaceConfig) -> list[str]:

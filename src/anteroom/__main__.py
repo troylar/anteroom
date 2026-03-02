@@ -1274,8 +1274,7 @@ def _run_space(config: AppConfig, args: argparse.Namespace) -> None:
 
         if not _re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$", name):
             console.print(
-                f"[red]Error:[/red] Invalid space name: {escape(name)!r} "
-                "(must be alphanumeric, hyphens, underscores)"
+                f"[red]Error:[/red] Invalid space name: {escape(name)!r} (must be alphanumeric, hyphens, underscores)"
             )
             return
 
