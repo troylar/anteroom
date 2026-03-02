@@ -108,7 +108,7 @@ CLI (cli/)         ──┘         │
 - **`services/space_watcher.py`** — Mtime-based space file watcher for hot-reload. TOCTOU-safe. Configurable interval (default 5s)
 
 #### Web UI (routers/)
-- **`routers/chat.py`** — SSE chat streaming with dataclass-based architecture: `ChatRequestContext`, `WebConfirmContext`, `ToolExecutorContext`, `StreamContext`. Extracted functions: `_parse_chat_request()`, `_resolve_sources()`, `_build_tool_list()`, `_build_chat_system_prompt()`, `_web_confirm_tool()`, `_execute_web_tool()`, `_stream_chat_events()`. Supports prompt queuing (max 10), source injection (50K char limit), plan mode, sub-agents
+- **`routers/chat.py`** — SSE chat streaming with dataclass-based architecture: `ChatRequestContext`, `WebConfirmContext`, `ToolExecutorContext`, `StreamContext`. Extracted functions: `_parse_chat_request()`, `_resolve_sources()`, `_build_tool_list()`, `_build_chat_system_prompt()`, `_web_confirm_tool()`, `_execute_web_tool()`, `_stream_chat_events()`. Supports prompt queuing (max 10), source injection (50K char limit), plan mode, sub-agents, skill registry integration (injects `invoke_skill` tool and `<available_skills>` catalog into system prompt)
 - **`routers/sources.py`** — Sources API: CRUD, file upload, tags, groups, project linking
 - **`routers/search.py`** — Semantic (vector) and hybrid (FTS5 + vector) search. Requires sqlite-vec
 - **`routers/proxy.py`** — OpenAI-compatible proxy for external tools. Opt-in via `proxy.enabled`
@@ -116,15 +116,15 @@ CLI (cli/)         ──┘         │
 - **`routers/events.py`** — SSE endpoint for real-time UI updates (canvas streaming, approvals)
 - **`routers/usage.py`** — Token usage statistics endpoint with per-model aggregation and cost estimates
 - **`routers/plan.py`** — Plan mode endpoints: read, approve, reject
-- **`routers/artifacts.py`** — Artifact API (read-only Phase 1): `GET /api/artifacts` (list with type/namespace/source filters), `GET /api/artifacts/{fqn}` (show with version history)
-- **`routers/artifact_health.py`** — Artifact health check endpoint: `POST /api/artifact-health` (triggers health check, optionally auto-fixes issues). Accepts `fix` boolean flag. Returns `HealthReport` JSON
+- **`routers/artifacts.py`** — Artifact API: `GET /api/artifacts` (list with type/namespace/source filters), `GET /api/artifacts/{fqn}` (show with version history), `DELETE /api/artifacts/{fqn}` (delete artifact and refresh registry)
+- **`routers/artifact_health.py`** — Artifact health check endpoint: `GET /api/artifacts/check` (triggers health check, no `fix` parameter). Returns `HealthReport` JSON
 - **`routers/packs.py`** — Pack API (read-only Phase 2): `GET /api/packs` (list with artifact counts), `GET /api/packs/{namespace}/{name}` (show with artifact details), `GET /api/packs/by-id/{pack_id}` (show by pack ID), `DELETE /api/packs/by-id/{pack_id}` (remove by pack ID). Strips `source_path` from responses to prevent info disclosure
 - **`routers/spaces.py`** — Spaces API: `GET/POST /api/spaces` (list/create), `GET/DELETE /api/spaces/{id}` (show/delete), `GET /api/spaces/{id}/paths` (mapped dirs), `POST /api/spaces/{id}/refresh` (re-parse YAML), `GET/POST/DELETE /api/spaces/{id}/sources` (source linking), `GET /api/spaces/{id}/packs` (attached packs). Each space response includes `origin` field indicating "local" (project-scoped, in `.anteroom/`) or "global" (user-scoped, in `~/.anteroom/spaces/`). Pydantic validation on name pattern and path traversal. Error messages sanitized to prevent path disclosure
 
 #### CLI Modules
-- **`cli/repl.py`** — Main REPL loop with prompt_toolkit. Orchestrates: system prompt building, project context, trust verification, plan mode, skill auto-invocation, fullscreen mode. Delegates slash commands to `commands.py`, agent turns to `agent_turn.py`, events to `event_handlers.py`. Manages `/project`, `/pack`, `/space` commands. Space auto-detection from cwd with parent walk-up. Skill args delimited with `<skill_args>` tags for injection defense
+- **`cli/repl.py`** — Main REPL loop with prompt_toolkit. Orchestrates: system prompt building, project context, trust verification, plan mode, skill auto-invocation, fullscreen mode. Delegates slash commands to `commands.py`, agent turns to `agent_turn.py`, events to `event_handlers.py`. Manages `/project`, `/pack`, `/space`, `/artifact` commands. `/instructions` alias for `/conventions`. Space auto-detection from cwd with parent walk-up. Skill args sanitized with `sanitize_trust_tags()` and delimited with `<skill_args>` tags for injection defense
 - **`cli/layout.py`** — Full-screen terminal layout: persistent header (model/dir/git branch), scrolling output pane, status footer, input area. `OutputControl` with checkpoint/truncate for streaming re-renders. Approval-mode-aware prompt colors
-- **`cli/commands.py`** — Slash command dispatch. `ReplSession` dataclass holds mutable state. `CommandResult` enum (CONTINUE/EXIT/FALL_THROUGH). `handle_slash_command()` handles 25+ commands: `/resume`, `/delete`, `/rename`, `/usage`, `/slug`, `/plan`, `/conventions`, `/model`, `/compact`, `/tools`, `/help`, etc.
+- **`cli/commands.py`** — Slash command dispatch. `ReplSession` dataclass holds mutable state. `CommandResult` enum (CONTINUE/EXIT/FALL_THROUGH). `handle_slash_command()` handles 27+ commands: `/resume`, `/delete`, `/rename`, `/usage`, `/slug`, `/plan`, `/conventions`, `/instructions`, `/model`, `/compact`, `/tools`, `/help`, etc.
 - **`cli/agent_turn.py`** — Agent turn execution. `AgentTurnContext` dataclass. `run_agent_turn()` orchestrates: RAG context injection, agent loop invocation, error/cancel handling with auto-retry. `RagEmbeddingCache` for session-scoped embedding reuse
 - **`cli/event_handlers.py`** — Agent loop event processing. `handle_repl_event()` dispatches thinking, content, tool_call, error, plan updates, and narration events to the renderer
 - **`cli/pickers.py`** — Conversation picker helpers: `picker_relative_time()`, `picker_type_badge()`, `picker_format_preview()`, `resolve_conversation()`, `show_resume_info()`, `show_resume_picker()` (interactive prompt_toolkit picker with preview panel)
@@ -134,7 +134,7 @@ CLI (cli/)         ──┘         │
 - **`cli/exec_mode.py`** — Non-interactive mode for scripting/CI. JSON output, timeout, fail-closed approval. Exit codes: 0/1/124
 - **`cli/plan.py`** — Planning mode helpers: `PLAN_MODE_ALLOWED_TOOLS`, plan file I/O, plan command parsing, `enter_plan_mode()`, `leave_plan_mode()`
 - **`cli/instructions.py`** — ANTEROOM.md discovery (`.anteroom.md` > `ANTEROOM.md`, walk-up from cwd), global instructions, token estimation
-- **`cli/skills.py`** — Skills registry: loads YAML from `cli/default_skills/` (built-in), `~/.anteroom/skills/` (global), `.anteroom/skills/` or `.claude/skills/` (project). `SkillRegistry` with `load()`, `reload()`, `resolve_input()`. Name validation, collision detection, `MAX_SKILLS` (100), `MAX_PROMPT_SIZE` (50KB). Auto-invocation via synthetic `invoke_skill` tool
+- **`cli/skills.py`** — Skills registry: loads YAML from `cli/default_skills/` (built-in), `~/.anteroom/skills/` (global), `.anteroom/skills/` or `.claude/skills/` (project). `SkillRegistry` with `load()`, `reload()`, `resolve_input()`, `load_from_artifacts()`. Name validation, collision detection, `MAX_SKILLS` (100), `MAX_PROMPT_SIZE` (50KB). Auto-invocation via synthetic `invoke_skill` tool. Artifact bridge: `load_from_artifacts(artifact_registry)` imports skill-type artifacts (filesystem skills take precedence)
 
 #### Tools
 - **`tools/`** — ToolRegistry: `_handlers` + `_definitions`. Built-in: read_file, write_file, edit_file, bash, glob_files, grep, create_canvas, update_canvas, patch_canvas, run_agent, ask_user, introspect. Optional (with `anteroom[office]`): docx, xlsx, pptx. Safety gate: tier check → pattern detection → hard-block. File-modifying tools return `_old_content`/`_new_content` for diff rendering (stripped before LLM)
@@ -202,6 +202,15 @@ PyPI: `anteroom`. Deploy via `/deploy` skill (merge PR, CI, version bump, build,
 - **`office`** — `python-docx>=1.0`, `openpyxl>=3.1.0`, `python-pptx>=1.0`. Required for built-in docx/xlsx/pptx tools. Enable with: `pip install anteroom[office]`
 - **`office-com`** — `python-docx>=1.0`, `openpyxl>=3.1.0`, `python-pptx>=1.0`, `pywin32>=306` (Windows only). Full COM backend for native Office automation. Enable with: `pip install anteroom[office-com]`
 - **`encryption`** — `sqlcipher3>=0.5.0`. Required only if `config.storage.encrypt_at_rest: true`. Enable with: `pip install anteroom[encryption]`
+
+## Terminology
+
+- **Source** — a knowledge source (document, URL, text) used for RAG context injection. Managed via `services/storage.py`, API at `routers/sources.py`
+- **Artifact source** (`ArtifactSource` enum) — the origin layer of an artifact: `built_in`, `global`, `team`, `project`, `local`, `inline`. Determines precedence in the artifact registry
+- **Convention** / **Instruction** — project-level guidance loaded from `ANTEROOM.md`. The `/conventions` and `/instructions` REPL commands are aliases for the same feature
+- **Skill** — a YAML-defined prompt template invoked via `/skill_name` or the `invoke_skill` tool. Loaded from filesystem directories and the artifact registry
+- **Pack** — a named bundle of artifacts installed from a YAML manifest. Managed via `services/packs.py`
+- **Space** — a workspace binding that auto-detects project context from the working directory. Managed via `services/spaces.py` and `services/space_storage.py`
 
 ## Testing Patterns
 

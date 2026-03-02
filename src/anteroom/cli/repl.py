@@ -900,6 +900,67 @@ async def _run_mcp_startup_live(
         renderer.console.print(f"  [{MUTED}]MCP: {', '.join(parts)}[/{MUTED}]\n")
 
 
+async def _resolve_pack_interactive(
+    db: Any,
+    ns: str,
+    name: str,
+    *,
+    escape_markup: bool = False,
+) -> dict[str, Any] | None:
+    """Resolve a pack by namespace/name, prompting the user to disambiguate if needed.
+
+    Returns the pack dict on success, ``None`` if not found or user cancels.
+    When *escape_markup* is True, Rich markup characters in ``ns``/``name`` are
+    escaped in console output (used by attach/detach which accept arbitrary input).
+    """
+    _pm, _pc = packs_service.resolve_pack(db, ns, name)
+    if not _pm and _pc:
+        if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
+            _pk_body: list[tuple[str, str]] = [
+                ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
+            ]
+            for _pi, _c in enumerate(_pc, 1):
+                _pk_body.append(
+                    (
+                        "class:dialog.body",
+                        f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
+                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
+                    )
+                )
+            _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
+                title="Select Pack",
+                body_fragments=_pk_body,
+            )
+            if _pk_ans is not None:
+                try:
+                    _idx = int(_pk_ans.strip()) - 1
+                    if 0 <= _idx < len(_pc):
+                        _pm = _pc[_idx]
+                except ValueError:
+                    pass
+        else:
+            if escape_markup:
+                from rich.markup import escape as rich_escape
+
+                display_ns, display_name = rich_escape(ns), rich_escape(name)
+            else:
+                display_ns, display_name = ns, name
+            renderer.console.print(f"\nMultiple packs match @{display_ns}/{display_name}:")
+            for _pi, _c in enumerate(_pc, 1):
+                renderer.console.print(
+                    f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
+                    f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
+                )
+            try:
+                _ch = input(f"Select (1-{len(_pc)}): ").strip()
+                _idx = int(_ch) - 1
+                if 0 <= _idx < len(_pc):
+                    _pm = _pc[_idx]
+            except (ValueError, EOFError, KeyboardInterrupt):
+                pass
+    return _pm
+
+
 async def run_cli(
     config: AppConfig,
     prompt: str | None = None,
@@ -1285,11 +1346,11 @@ async def run_cli(
             prompt = skill.prompt
             if args:
                 # Trust boundary: args originate from the LLM, not the user.
-                # Truncate and delimit to limit injection surface; the skill
-                # prompt itself is from trusted local YAML files.
+                # Truncate, sanitize trust tags to prevent envelope breakout,
+                # and delimit to limit injection surface.
                 from .skills import _expand_args
 
-                args = args[:2000]
+                args = sanitize_trust_tags(args[:2000])
                 prompt = _expand_args(prompt, f"<skill_args>{args}</skill_args>")
             await queue.put({"role": "user", "content": prompt})
             return {"status": "skill_invoked", "skill": skill_name}
@@ -1391,6 +1452,8 @@ async def run_cli(
 
         _artifact_registry = ArtifactRegistry()
         _artifact_registry.load_from_db(db)
+        if _artifact_registry.count:
+            skill_registry.load_from_artifacts(_artifact_registry)
     except Exception:
         pass
 
@@ -1909,6 +1972,7 @@ async def _run_repl(
         "rewind": "undo messages",
         "compact": "compress context",
         "conventions": "show project conventions",
+        "instructions": "show project conventions (alias)",
         "tools": "list available tools",
         "skills": "list loaded skills",
         "reload-skills": "reload skill files",
@@ -1926,8 +1990,17 @@ async def _run_repl(
         "verbose": "cycle verbosity",
         "detail": "tool call details",
         "help": "show help",
+        "artifact": "manage artifacts",
+        "artifacts": "list artifacts",
+        "artifact-check": "artifact health check",
         "quit": "exit",
         "exit": "exit",
+    }
+
+    _subcommand_completions: dict[str, list[str]] = {
+        "artifact": ["list", "show", "delete", "import", "create"],
+        "pack": ["list", "show", "install", "remove", "sources", "attach", "detach", "update", "add-source", "refresh"],
+        "space": ["list", "show", "switch", "create", "load", "refresh", "clear", "init", "clone", "map"],
     }
 
     class AnteroomCompleter(Completer):
@@ -1985,6 +2058,11 @@ async def _run_repl(
                 if cmd_name in self._slug_commands and len(parts) <= 2:
                     partial = parts[1] if len(parts) == 2 else ""
                     yield from self._get_slug_completions(partial)
+                elif cmd_name in _subcommand_completions and len(parts) <= 2:
+                    partial = parts[1] if len(parts) == 2 else ""
+                    for sc in _subcommand_completions[cmd_name]:
+                        if sc.startswith(partial):
+                            yield Completion(sc + " ", start_position=-len(partial))
             elif "@" in word:
                 # Complete file paths after @
                 at_idx = word.rfind("@")
@@ -2026,9 +2104,13 @@ async def _run_repl(
         "rewind",
         "compact",
         "conventions",
+        "instructions",
         "tools",
         "skills",
         "reload-skills",
+        "artifact",
+        "artifacts",
+        "artifact-check",
         "pack",
         "packs",
         "project",
@@ -3028,7 +3110,7 @@ async def _run_repl(
                 elif cmd == "/tools":
                     renderer.render_tools(all_tool_names)
                     continue
-                elif cmd == "/conventions":
+                elif cmd in ("/conventions", "/instructions"):
                     info = discover_conventions(working_dir)
                     if info.source == "none":
                         renderer.console.print(
@@ -3794,11 +3876,77 @@ async def _run_repl(
                             f"[green]Loaded space: {sp['name']}[/green] [{MUTED}]{sp['id'][:8]}...[/{MUTED}]\n"
                         )
 
+                    elif sub == "clone":
+                        _clone_name = parts[2].strip() if len(parts) >= 3 else ""
+                        if not _clone_name:
+                            renderer.console.print(f"[{CHROME}]Usage: /space clone <name>[/{CHROME}]\n")
+                            continue
+                        from ..services.space_storage import (
+                            get_space_paths as _get_sp_paths,
+                        )
+                        from ..services.space_storage import (
+                            resolve_space as _resolve_sp,
+                        )
+
+                        _sp_match, _sp_cands = _resolve_sp(db, _clone_name)
+                        if not _sp_match:
+                            renderer.console.print(f"[{CHROME}]Space not found: {_clone_name}[/{CHROME}]\n")
+                            continue
+                        try:
+                            from ..services.space_bootstrap import bootstrap_space as _boot_space
+                            from ..services.spaces import parse_space_file as _psf_clone
+
+                            sp_file = _sp_match.get("file_path")
+                            if not sp_file or not Path(sp_file).is_file():
+                                renderer.render_error("Space has no valid YAML file to clone from.")
+                                continue
+                            scfg = _psf_clone(Path(sp_file))
+                            result = _boot_space(db, scfg, None, config.app.data_dir)
+                            if result.errors:
+                                for err in result.errors:
+                                    renderer.render_error(err)
+                            else:
+                                renderer.console.print(f"[green]Cloned space: {_sp_match['name']}[/green]\n")
+                        except Exception as e:
+                            renderer.render_error(str(e))
+
+                    elif sub == "map":
+                        _map_dir = parts[2].strip() if len(parts) >= 3 else ""
+                        if not _map_dir:
+                            renderer.console.print(f"[{CHROME}]Usage: /space map <directory>[/{CHROME}]\n")
+                            continue
+                        if not _active_space[0]:
+                            renderer.console.print(
+                                f"[{CHROME}]No active space. Switch first: /space switch <name>[/{CHROME}]\n"
+                            )
+                            continue
+                        from ..services.space_storage import (
+                            get_space_paths as _get_sp_paths2,
+                        )
+                        from ..services.space_storage import (
+                            sync_space_paths as _sync_sp_paths,
+                        )
+
+                        _map_path = Path(_map_dir).expanduser().resolve()
+                        if not _map_path.is_dir():
+                            renderer.render_error(f"Not a directory: {_map_path}")
+                            continue
+                        try:
+                            existing = _get_sp_paths2(db, _active_space[0]["id"])
+                            existing.append({"local_path": str(_map_path), "repo_url": ""})
+                            _sync_sp_paths(db, _active_space[0]["id"], existing)
+                            renderer.console.print(
+                                f"[green]Mapped[/green] {_map_path} to space {_active_space[0]['name']}\n"
+                            )
+                        except Exception as e:
+                            renderer.render_error(str(e))
+
                     else:
                         if _active_space[0]:
                             renderer.console.print(f"[{CHROME}]Active space: {_active_space[0]['name']}[/{CHROME}]")
                         renderer.console.print(
-                            f"[{CHROME}]Usage: /space [list|show|switch|create|load|refresh|clear][/{CHROME}]\n"
+                            f"[{CHROME}]Usage: /space [list|show|switch|create|load|refresh|clear|"
+                            f"clone|map][/{CHROME}]\n"
                         )
                     continue
                 elif cmd in ("/packs", "/pack"):
@@ -3833,46 +3981,7 @@ async def _run_repl(
                         ns, _, name = ref.rpartition("/")
                         if not ns:
                             ns = "default"
-                        _pm, _pc = packs_service.resolve_pack(db, ns, name)
-                        if not _pm and _pc:
-                            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
-                                _pk_body: list[tuple[str, str]] = [
-                                    ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
-                                ]
-                                for _pi, _c in enumerate(_pc, 1):
-                                    _pk_body.append(
-                                        (
-                                            "class:dialog.body",
-                                            f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                            f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
-                                        )
-                                    )
-                                _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
-                                    title="Select Pack",
-                                    body_fragments=_pk_body,
-                                )
-                                if _pk_ans is not None:
-                                    try:
-                                        _idx = int(_pk_ans.strip()) - 1
-                                        if 0 <= _idx < len(_pc):
-                                            _pm = _pc[_idx]
-                                    except ValueError:
-                                        pass
-                            else:
-                                renderer.console.print(f"\nMultiple packs match @{ns}/{name}:")
-                                for _pi, _c in enumerate(_pc, 1):
-                                    renderer.console.print(
-                                        f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
-                                    )
-                                try:
-                                    _ch = input(f"Select (1-{len(_pc)}): ").strip()
-                                    _idx = int(_ch) - 1
-                                    if 0 <= _idx < len(_pc):
-                                        _pm = _pc[_idx]
-                                except (ValueError, EOFError, KeyboardInterrupt):
-                                    continue
-                        pack_info = _pm
+                        pack_info = await _resolve_pack_interactive(db, ns, name)
                         if not pack_info:
                             renderer.console.print(f"[{CHROME}]Pack @{ns}/{name} not found.[/{CHROME}]\n")
                             continue
@@ -3920,45 +4029,7 @@ async def _run_repl(
                         ns, _, name = ref.rpartition("/")
                         if not ns:
                             ns = "default"
-                        _pm, _pc = packs_service.resolve_pack(db, ns, name)
-                        if not _pm and _pc:
-                            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
-                                _pk_body: list[tuple[str, str]] = [
-                                    ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
-                                ]
-                                for _pi, _c in enumerate(_pc, 1):
-                                    _pk_body.append(
-                                        (
-                                            "class:dialog.body",
-                                            f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                            f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
-                                        )
-                                    )
-                                _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
-                                    title="Select Pack",
-                                    body_fragments=_pk_body,
-                                )
-                                if _pk_ans is not None:
-                                    try:
-                                        _idx = int(_pk_ans.strip()) - 1
-                                        if 0 <= _idx < len(_pc):
-                                            _pm = _pc[_idx]
-                                    except ValueError:
-                                        pass
-                            else:
-                                renderer.console.print(f"\nMultiple packs match @{ns}/{name}:")
-                                for _pi, _c in enumerate(_pc, 1):
-                                    renderer.console.print(
-                                        f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
-                                    )
-                                try:
-                                    _ch = input(f"Select (1-{len(_pc)}): ").strip()
-                                    _idx = int(_ch) - 1
-                                    if 0 <= _idx < len(_pc):
-                                        _pm = _pc[_idx]
-                                except (ValueError, EOFError, KeyboardInterrupt):
-                                    continue
+                        _pm = await _resolve_pack_interactive(db, ns, name)
                         if not _pm:
                             renderer.console.print(f"[{CHROME}]Pack @{ns}/{name} not found.[/{CHROME}]\n")
                             continue
@@ -4058,47 +4129,7 @@ async def _run_repl(
 
                         from ..services.pack_attachments import attach_pack
 
-                        _pm, _pc = packs_service.resolve_pack(db, ns, name)
-                        if not _pm and _pc:
-                            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
-                                _pk_body: list[tuple[str, str]] = [
-                                    ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
-                                ]
-                                for _pi, _c in enumerate(_pc, 1):
-                                    _pk_body.append(
-                                        (
-                                            "class:dialog.body",
-                                            f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                            f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
-                                        )
-                                    )
-                                _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
-                                    title="Select Pack",
-                                    body_fragments=_pk_body,
-                                )
-                                if _pk_ans is not None:
-                                    try:
-                                        _idx = int(_pk_ans.strip()) - 1
-                                        if 0 <= _idx < len(_pc):
-                                            _pm = _pc[_idx]
-                                    except ValueError:
-                                        pass
-                            else:
-                                renderer.console.print(
-                                    f"\nMultiple packs match @{rich_escape(ns)}/{rich_escape(name)}:"
-                                )
-                                for _pi, _c in enumerate(_pc, 1):
-                                    renderer.console.print(
-                                        f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
-                                    )
-                                try:
-                                    _ch = input(f"Select (1-{len(_pc)}): ").strip()
-                                    _idx = int(_ch) - 1
-                                    if 0 <= _idx < len(_pc):
-                                        _pm = _pc[_idx]
-                                except (ValueError, EOFError, KeyboardInterrupt):
-                                    continue
+                        _pm = await _resolve_pack_interactive(db, ns, name, escape_markup=True)
                         if not _pm:
                             renderer.console.print(
                                 f"[{CHROME}]Pack @{rich_escape(ns)}/{rich_escape(name)} not found.[/{CHROME}]\n"
@@ -4130,47 +4161,7 @@ async def _run_repl(
 
                         from ..services.pack_attachments import detach_pack
 
-                        _pm, _pc = packs_service.resolve_pack(db, ns, name)
-                        if not _pm and _pc:
-                            if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
-                                _pk_body: list[tuple[str, str]] = [
-                                    ("class:dialog.body", f"  Multiple packs match @{ns}/{name}:\n\n"),
-                                ]
-                                for _pi, _c in enumerate(_pc, 1):
-                                    _pk_body.append(
-                                        (
-                                            "class:dialog.body",
-                                            f"  [{_pi}] {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                            f"v{_c.get('version', '')} [{_c['id'][:8]}...]\n",
-                                        )
-                                    )
-                                _pk_ans = await renderer.get_fullscreen_layout().show_dialog(
-                                    title="Select Pack",
-                                    body_fragments=_pk_body,
-                                )
-                                if _pk_ans is not None:
-                                    try:
-                                        _idx = int(_pk_ans.strip()) - 1
-                                        if 0 <= _idx < len(_pc):
-                                            _pm = _pc[_idx]
-                                    except ValueError:
-                                        pass
-                            else:
-                                renderer.console.print(
-                                    f"\nMultiple packs match @{rich_escape(ns)}/{rich_escape(name)}:"
-                                )
-                                for _pi, _c in enumerate(_pc, 1):
-                                    renderer.console.print(
-                                        f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} "
-                                        f"v{_c.get('version', '')} [{_c['id'][:8]}...]"
-                                    )
-                                try:
-                                    _ch = input(f"Select (1-{len(_pc)}): ").strip()
-                                    _idx = int(_ch) - 1
-                                    if 0 <= _idx < len(_pc):
-                                        _pm = _pc[_idx]
-                                except (ValueError, EOFError, KeyboardInterrupt):
-                                    continue
+                        _pm = await _resolve_pack_interactive(db, ns, name, escape_markup=True)
                         if not _pm:
                             renderer.console.print(
                                 f"[{CHROME}]Pack @{rich_escape(ns)}/{rich_escape(name)} not found.[/{CHROME}]\n"
@@ -4220,6 +4211,88 @@ async def _run_repl(
                             f" [list|show|install|update|remove|attach|detach|sources|refresh|add-source][/{CHROME}]\n"
                         )
                     continue
+                elif cmd in ("/artifact", "/artifacts"):
+                    from ..services import artifact_storage as _art_store
+                    from ..services.artifacts import validate_fqn as _validate_fqn
+
+                    parts = user_input.split(maxsplit=2)
+                    sub = parts[1].lower() if len(parts) >= 2 else ""
+                    if cmd == "/artifacts":
+                        sub = "list"
+
+                    if sub == "list" or not sub:
+                        _atype = None
+                        _asource = None
+                        _rest = parts[2] if len(parts) >= 3 else ""
+                        for _tok in _rest.split():
+                            if _tok.startswith("--type="):
+                                _atype = _tok.split("=", 1)[1]
+                            elif _tok.startswith("--source="):
+                                _asource = _tok.split("=", 1)[1]
+                        arts = _art_store.list_artifacts(db, artifact_type=_atype, source=_asource)
+                        if not arts:
+                            renderer.console.print(f"[{CHROME}]No artifacts found.[/{CHROME}]\n")
+                            continue
+                        renderer.console.print("\n[bold]Artifacts:[/bold]")
+                        for a in arts:
+                            renderer.console.print(f"  {a['fqn']}  [{a.get('type', '?')}]  ({a.get('source', '?')})")
+                        renderer.console.print()
+
+                    elif sub == "show":
+                        _fqn = parts[2].strip() if len(parts) >= 3 else ""
+                        if not _fqn:
+                            renderer.console.print(f"[{CHROME}]Usage: /artifact show <fqn>[/{CHROME}]\n")
+                            continue
+                        if not _validate_fqn(_fqn):
+                            renderer.console.print(f"[{CHROME}]Invalid FQN format.[/{CHROME}]\n")
+                            continue
+                        art = _art_store.get_artifact_by_fqn(db, _fqn)
+                        if not art:
+                            renderer.console.print(f"[{CHROME}]Artifact not found.[/{CHROME}]\n")
+                            continue
+                        from rich.markup import escape as _art_esc
+
+                        renderer.console.print(f"\n[bold]FQN:[/bold]       {_art_esc(art['fqn'])}")
+                        renderer.console.print(f"[bold]Type:[/bold]      {_art_esc(art['type'])}")
+                        renderer.console.print(f"[bold]Source:[/bold]    {_art_esc(art['source'])}")
+                        renderer.console.print(f"[bold]Hash:[/bold]      {_art_esc(art['content_hash'])}")
+                        renderer.console.print(f"[bold]Updated:[/bold]   {_art_esc(art.get('updated_at', ''))}")
+                        renderer.console.print()
+                        renderer.console.print("[bold]Content:[/bold]")
+                        renderer.console.print(_art_esc(art["content"]))
+                        renderer.console.print()
+
+                    elif sub == "delete":
+                        _fqn = parts[2].strip() if len(parts) >= 3 else ""
+                        if not _fqn:
+                            renderer.console.print(f"[{CHROME}]Usage: /artifact delete <fqn>[/{CHROME}]\n")
+                            continue
+                        if not _validate_fqn(_fqn):
+                            renderer.console.print(f"[{CHROME}]Invalid FQN format.[/{CHROME}]\n")
+                            continue
+                        art = _art_store.get_artifact_by_fqn(db, _fqn)
+                        if not art:
+                            renderer.console.print(f"[{CHROME}]Artifact not found.[/{CHROME}]\n")
+                            continue
+                        _art_store.delete_artifact(db, art["id"])
+                        renderer.console.print(f"[green]Deleted[/green] {_fqn}\n")
+
+                    elif sub == "import":
+                        renderer.console.print(
+                            f"[{CHROME}]Use the CLI: aroom artifact import --skills|--instructions|--all[/{CHROME}]\n"
+                        )
+
+                    elif sub == "create":
+                        renderer.console.print(
+                            f"[{CHROME}]Use the CLI: aroom artifact create <type> <name>[/{CHROME}]\n"
+                        )
+
+                    else:
+                        renderer.console.print(
+                            f"[{CHROME}]Usage: /artifact {{list,show,delete,import,create}}[/{CHROME}]\n"
+                        )
+                    continue
+
                 elif cmd == "/artifact-check":
                     from .services import artifact_health
 

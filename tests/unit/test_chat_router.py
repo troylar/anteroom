@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -241,3 +242,132 @@ class TestStaleStreamDetection:
             "cancel_event": asyncio.Event(),
         }
         assert _active_streams.get(cid)
+
+
+class TestBuildToolListWithSkills:
+    """_build_tool_list includes invoke_skill when skill_registry has skills."""
+
+    def test_invoke_skill_added_when_skills_exist(self) -> None:
+        from anteroom.routers.chat import _build_tool_list
+
+        tool_reg = MagicMock()
+        tool_reg.get_openai_tools.return_value = [
+            {"type": "function", "function": {"name": "read_file"}},
+        ]
+        tool_reg.list_tools.return_value = ["read_file"]
+        mcp = MagicMock()
+        mcp.get_openai_tools.return_value = []
+
+        skill_reg = MagicMock()
+        skill_reg.get_invoke_skill_definition.return_value = {
+            "type": "function",
+            "function": {"name": "invoke_skill"},
+        }
+
+        tools, _, _ = _build_tool_list(
+            tool_registry=tool_reg,
+            mcp_manager=mcp,
+            plan_mode=False,
+            conversation_id="c1",
+            data_dir=Path(tempfile.mkdtemp()),
+            max_tools=128,
+            skill_registry=skill_reg,
+        )
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "invoke_skill" in tool_names
+
+    def test_no_invoke_skill_when_no_registry(self) -> None:
+        from anteroom.routers.chat import _build_tool_list
+
+        tool_reg = MagicMock()
+        tool_reg.get_openai_tools.return_value = [
+            {"type": "function", "function": {"name": "read_file"}},
+        ]
+        tool_reg.list_tools.return_value = ["read_file"]
+        mcp = None
+
+        tools, _, _ = _build_tool_list(
+            tool_registry=tool_reg,
+            mcp_manager=mcp,
+            plan_mode=False,
+            conversation_id="c1",
+            data_dir=Path(tempfile.mkdtemp()),
+            max_tools=128,
+            skill_registry=None,
+        )
+        tool_names = [t["function"]["name"] for t in tools]
+        assert "invoke_skill" not in tool_names
+
+
+class TestExecuteWebToolInvokeSkill:
+    """_execute_web_tool handles invoke_skill correctly."""
+
+    @pytest.mark.asyncio
+    async def test_invoke_skill_no_queue_returns_error(self) -> None:
+        from anteroom.routers.chat import ToolExecutorContext, WebConfirmContext, _execute_web_tool, _message_queues
+
+        skill_reg = MagicMock()
+        skill = MagicMock()
+        skill.prompt = "Do the thing"
+        skill_reg.get.return_value = skill
+
+        ctx = ToolExecutorContext(
+            tool_registry=MagicMock(),
+            mcp_manager=None,
+            confirm_ctx=MagicMock(spec=WebConfirmContext),
+            ai_service=MagicMock(),
+            cancel_event=asyncio.Event(),
+            db=MagicMock(),
+            uid=None,
+            uname=None,
+            conversation_id="no-queue-conv",
+            tools_openai=[],
+            subagent_events={},
+            subagent_limiter=MagicMock(),
+            sa_config=MagicMock(),
+            request_config=MagicMock(),
+            skill_registry=skill_reg,
+        )
+
+        _message_queues.pop("no-queue-conv", None)
+
+        result = await _execute_web_tool(ctx, "invoke_skill", {"skill_name": "test"})
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_invoke_skill_with_queue_succeeds(self) -> None:
+        from anteroom.routers.chat import ToolExecutorContext, WebConfirmContext, _execute_web_tool, _message_queues
+
+        skill_reg = MagicMock()
+        skill = MagicMock()
+        skill.prompt = "Do the thing"
+        skill_reg.get.return_value = skill
+
+        queue: asyncio.Queue = asyncio.Queue()
+        conv_id = "queued-conv"
+
+        ctx = ToolExecutorContext(
+            tool_registry=MagicMock(),
+            mcp_manager=None,
+            confirm_ctx=MagicMock(spec=WebConfirmContext),
+            ai_service=MagicMock(),
+            cancel_event=asyncio.Event(),
+            db=MagicMock(),
+            uid=None,
+            uname=None,
+            conversation_id=conv_id,
+            tools_openai=[],
+            subagent_events={},
+            subagent_limiter=MagicMock(),
+            sa_config=MagicMock(),
+            request_config=MagicMock(),
+            skill_registry=skill_reg,
+        )
+
+        _message_queues[conv_id] = queue
+        try:
+            result = await _execute_web_tool(ctx, "invoke_skill", {"skill_name": "test"})
+            assert result["status"] == "skill_invoked"
+            assert not queue.empty()
+        finally:
+            _message_queues.pop(conv_id, None)

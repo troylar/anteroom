@@ -1,4 +1,4 @@
-"""Artifact API endpoints (read-only for Phase 1)."""
+"""Artifact API endpoints."""
 
 from __future__ import annotations
 
@@ -44,3 +44,26 @@ async def get_artifact(
     versions = artifact_storage.list_artifact_versions(db, art["id"])
     art["versions"] = versions
     return art
+
+
+@router.delete("/artifacts/{fqn:path}")
+async def delete_artifact(
+    request: Request,
+    fqn: str,
+) -> dict[str, str]:
+    """Delete an artifact by FQN."""
+    if not validate_fqn(fqn):
+        raise HTTPException(status_code=400, detail="Invalid artifact FQN format")
+
+    db = request.app.state.db
+    art = artifact_storage.get_artifact_by_fqn(db, fqn)
+    if not art:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    artifact_storage.delete_artifact(db, art["id"])
+
+    registry = getattr(request.app.state, "artifact_registry", None)
+    if registry is not None:
+        registry.remove(fqn)
+
+    return {"status": "deleted", "fqn": fqn}
