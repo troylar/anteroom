@@ -108,7 +108,7 @@ CLI (cli/)         ──┘         │
 - **`services/space_watcher.py`** — Mtime-based space file watcher for hot-reload. TOCTOU-safe. Configurable interval (default 5s)
 
 #### Web UI (routers/)
-- **`routers/chat.py`** — SSE chat streaming with dataclass-based architecture: `ChatRequestContext`, `WebConfirmContext`, `ToolExecutorContext`, `StreamContext`. Extracted functions: `_parse_chat_request()`, `_resolve_sources()`, `_build_tool_list()`, `_build_chat_system_prompt()`, `_web_confirm_tool()`, `_execute_web_tool()`, `_stream_chat_events()`. Supports prompt queuing (max 10), source injection (50K char limit), plan mode, sub-agents
+- **`routers/chat.py`** — SSE chat streaming with dataclass-based architecture: `ChatRequestContext`, `WebConfirmContext`, `ToolExecutorContext`, `StreamContext`. Extracted functions: `_parse_chat_request()`, `_resolve_sources()`, `_build_tool_list()`, `_build_chat_system_prompt()`, `_web_confirm_tool()`, `_execute_web_tool()`, `_stream_chat_events()`. Supports prompt queuing (max 10), source injection (50K char limit), plan mode, sub-agents, skill registry integration (injects `invoke_skill` tool and `<available_skills>` catalog into system prompt)
 - **`routers/sources.py`** — Sources API: CRUD, file upload, tags, groups, project linking
 - **`routers/search.py`** — Semantic (vector) and hybrid (FTS5 + vector) search. Requires sqlite-vec
 - **`routers/proxy.py`** — OpenAI-compatible proxy for external tools. Opt-in via `proxy.enabled`
@@ -116,7 +116,7 @@ CLI (cli/)         ──┘         │
 - **`routers/events.py`** — SSE endpoint for real-time UI updates (canvas streaming, approvals)
 - **`routers/usage.py`** — Token usage statistics endpoint with per-model aggregation and cost estimates
 - **`routers/plan.py`** — Plan mode endpoints: read, approve, reject
-- **`routers/artifacts.py`** — Artifact API (read-only Phase 1): `GET /api/artifacts` (list with type/namespace/source filters), `GET /api/artifacts/{fqn}` (show with version history)
+- **`routers/artifacts.py`** — Artifact API: `GET /api/artifacts` (list with type/namespace/source filters), `GET /api/artifacts/{fqn}` (show with version history), `DELETE /api/artifacts/{fqn}` (delete artifact and refresh registry)
 - **`routers/artifact_health.py`** — Artifact health check endpoint: `GET /api/artifacts/check` (triggers health check). Returns `HealthReport` JSON
 - **`routers/packs.py`** — Pack API (read-only Phase 2): `GET /api/packs` (list with artifact counts), `GET /api/packs/{namespace}/{name}` (show with artifact details), `GET /api/packs/by-id/{pack_id}` (show by pack ID), `DELETE /api/packs/by-id/{pack_id}` (remove by pack ID). Strips `source_path` from responses to prevent info disclosure
 - **`routers/spaces.py`** — Spaces API: `GET/POST /api/spaces` (list/create), `GET/DELETE /api/spaces/{id}` (show/delete), `GET /api/spaces/{id}/paths` (mapped dirs), `POST /api/spaces/{id}/refresh` (re-parse YAML), `GET/POST/DELETE /api/spaces/{id}/sources` (source linking), `GET /api/spaces/{id}/packs` (attached packs). Each space response includes `origin` field indicating "local" (project-scoped, in `.anteroom/`) or "global" (user-scoped, in `~/.anteroom/spaces/`). Pydantic validation on name pattern and path traversal. Error messages sanitized to prevent path disclosure
@@ -134,7 +134,7 @@ CLI (cli/)         ──┘         │
 - **`cli/exec_mode.py`** — Non-interactive mode for scripting/CI. JSON output, timeout, fail-closed approval. Exit codes: 0/1/124
 - **`cli/plan.py`** — Planning mode helpers: `PLAN_MODE_ALLOWED_TOOLS`, plan file I/O, plan command parsing, `enter_plan_mode()`, `leave_plan_mode()`
 - **`cli/instructions.py`** — ANTEROOM.md discovery (`.anteroom.md` > `ANTEROOM.md`, walk-up from cwd), global instructions, token estimation
-- **`cli/skills.py`** — Skills registry: loads YAML from `cli/default_skills/` (built-in), `~/.anteroom/skills/` (global), `.anteroom/skills/` or `.claude/skills/` (project). `SkillRegistry` with `load()`, `reload()`, `resolve_input()`. Name validation, collision detection, `MAX_SKILLS` (100), `MAX_PROMPT_SIZE` (50KB). Auto-invocation via synthetic `invoke_skill` tool
+- **`cli/skills.py`** — Skills registry: loads YAML from `cli/default_skills/` (built-in), `~/.anteroom/skills/` (global), `.anteroom/skills/` or `.claude/skills/` (project). `SkillRegistry` with `load()`, `reload()`, `resolve_input()`, `load_from_artifacts()`. Name validation, collision detection, `MAX_SKILLS` (100), `MAX_PROMPT_SIZE` (50KB). Auto-invocation via synthetic `invoke_skill` tool. Artifact bridge: `load_from_artifacts(artifact_registry)` imports skill-type artifacts (filesystem skills take precedence)
 
 #### Tools
 - **`tools/`** — ToolRegistry: `_handlers` + `_definitions`. Built-in: read_file, write_file, edit_file, bash, glob_files, grep, create_canvas, update_canvas, patch_canvas, run_agent, ask_user, introspect. Optional (with `anteroom[office]`): docx, xlsx, pptx. Safety gate: tier check → pattern detection → hard-block. File-modifying tools return `_old_content`/`_new_content` for diff rendering (stripped before LLM)

@@ -764,8 +764,9 @@ async def _execute_web_tool(ctx: ToolExecutorContext, tool_name: str, arguments:
         prompt = skill.prompt
         if args:
             from ..cli.skills import _expand_args
+            from ..services.context_trust import sanitize_trust_tags
 
-            args = args[:2000]
+            args = sanitize_trust_tags(args[:2000])
             prompt = _expand_args(prompt, f"<skill_args>{args}</skill_args>")
         queue = _message_queues.get(ctx.conversation_id)
         if queue is not None:

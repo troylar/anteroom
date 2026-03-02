@@ -1346,11 +1346,11 @@ async def run_cli(
             prompt = skill.prompt
             if args:
                 # Trust boundary: args originate from the LLM, not the user.
-                # Truncate and delimit to limit injection surface; the skill
-                # prompt itself is from trusted local YAML files.
+                # Truncate, sanitize trust tags to prevent envelope breakout,
+                # and delimit to limit injection surface.
                 from .skills import _expand_args
 
-                args = args[:2000]
+                args = sanitize_trust_tags(args[:2000])
                 prompt = _expand_args(prompt, f"<skill_args>{args}</skill_args>")
             await queue.put({"role": "user", "content": prompt})
             return {"status": "skill_invoked", "skill": skill_name}

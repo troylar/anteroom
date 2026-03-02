@@ -233,7 +233,7 @@ const Artifacts = (() => {
             const delBtn = document.getElementById('artifact-delete-btn');
             if (delBtn) {
                 delBtn.addEventListener('click', async () => {
-                    if (!confirm('Delete artifact ' + art.fqn + '?')) return;
+                    if (!confirm('Delete artifact ' + _escapeHtml(art.fqn) + '?')) return;
                     try {
                         await App.api('/api/artifacts/' + encodeURIComponent(art.fqn), { method: 'DELETE' });
                         _showListView();
@@ -286,7 +286,7 @@ const Artifacts = (() => {
             });
 
             document.getElementById('pack-delete-btn').addEventListener('click', async () => {
-                if (!confirm('Remove pack ' + namespace + '/' + name + '?')) return;
+                if (!confirm('Remove pack ' + _escapeHtml(namespace) + '/' + _escapeHtml(name) + '?')) return;
                 try {
                     await App.api('/api/packs/' + encodeURIComponent(namespace) + '/' + encodeURIComponent(name), { method: 'DELETE' });
                     _showListView();
