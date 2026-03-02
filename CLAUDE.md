@@ -201,7 +201,7 @@ PyPI: `anteroom`. Deploy via `/deploy` skill (merge PR, CI, version bump, build,
 
 ## Testing Patterns
 
-- **Unit tests** (`tests/unit/`, ~2,500 tests): fully mocked, no I/O. `@pytest.mark.asyncio` with `asyncio_mode = "auto"`
+- **Unit tests** (`tests/unit/`, ~5,700 tests): fully mocked, no I/O. `@pytest.mark.asyncio` with `asyncio_mode = "auto"`
 - **Integration** (`tests/integration/`): real SQLite databases
 - **E2e** (`tests/e2e/`): real servers, mock AI. Markers: `e2e`, `requires_mcp`
 - **Agent evals** (`tests/e2e/test_agent_evals.py`): 10 tests with real AI via `aroom exec --json`. Marker: `real_ai`. Auto-skip without API key. Uses `--temperature 0 --seed 42` for reproducibility
