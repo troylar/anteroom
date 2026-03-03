@@ -88,10 +88,12 @@ const Sources = (() => {
                 e.preventDefault();
                 fileDrop.classList.remove('dragover');
                 if (e.dataTransfer.files.length > 1) {
-                    _selectedFiles = Array.from(e.dataTransfer.files);
+                    _selectedFiles = Array.from(e.dataTransfer.files).slice(0, 20);
                     _selectedFile = null;
-                    document.getElementById('source-file-name').textContent =
-                        `${_selectedFiles.length} files selected`;
+                    const dropLabel = _selectedFiles.length < e.dataTransfer.files.length
+                        ? `${_selectedFiles.length} files selected (max 20)`
+                        : `${_selectedFiles.length} files selected`;
+                    document.getElementById('source-file-name').textContent = dropLabel;
                 } else if (e.dataTransfer.files.length === 1) {
                     _selectedFile = e.dataTransfer.files[0];
                     _selectedFiles = [];
@@ -100,10 +102,12 @@ const Sources = (() => {
             });
             fileInput.addEventListener('change', () => {
                 if (fileInput.files.length > 1) {
-                    _selectedFiles = Array.from(fileInput.files);
+                    _selectedFiles = Array.from(fileInput.files).slice(0, 20);
                     _selectedFile = null;
-                    document.getElementById('source-file-name').textContent =
-                        `${_selectedFiles.length} files selected`;
+                    const inputLabel = _selectedFiles.length < fileInput.files.length
+                        ? `${_selectedFiles.length} files selected (max 20)`
+                        : `${_selectedFiles.length} files selected`;
+                    document.getElementById('source-file-name').textContent = inputLabel;
                 } else if (fileInput.files.length === 1) {
                     _selectedFile = fileInput.files[0];
                     _selectedFiles = [];

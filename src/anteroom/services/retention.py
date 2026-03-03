@@ -180,13 +180,16 @@ class RetentionWorker:
         if count:
             logger.info("Retention: purged %d conversation(s) older than %d days", count, self._retention_days)
 
-        orphaned = purge_orphaned_attachments(self._data_dir, self._db)
-        if orphaned:
-            logger.info("Retention: removed %d orphaned attachment dir(s)", orphaned)
+        orphaned = 0
+        orphaned_sources = 0
+        if self._purge_attachments:
+            orphaned = purge_orphaned_attachments(self._data_dir, self._db)
+            if orphaned:
+                logger.info("Retention: removed %d orphaned attachment dir(s)", orphaned)
 
-        orphaned_sources = purge_orphaned_sources(self._data_dir, self._db)
-        if orphaned_sources:
-            logger.info("Retention: removed %d orphaned source dir(s)", orphaned_sources)
+            orphaned_sources = purge_orphaned_sources(self._data_dir, self._db)
+            if orphaned_sources:
+                logger.info("Retention: removed %d orphaned source dir(s)", orphaned_sources)
 
         return count + orphaned + orphaned_sources
 

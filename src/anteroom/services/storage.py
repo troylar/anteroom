@@ -1619,13 +1619,9 @@ def delete_embedding_for_message(db: ThreadSafeConnection, message_id: str) -> N
 
     try:
         raw_conn = db._conn if hasattr(db, "_conn") else db
-        if not has_vec_support(raw_conn):
-            db.execute("DELETE FROM message_embeddings WHERE message_id = ?", (message_id,))
-            db.commit()
-            return
-
         with db.transaction() as conn:
-            conn.execute("DELETE FROM vec_messages WHERE message_id = ?", (message_id,))
+            if has_vec_support(raw_conn):
+                conn.execute("DELETE FROM vec_messages WHERE message_id = ?", (message_id,))
             conn.execute("DELETE FROM message_embeddings WHERE message_id = ?", (message_id,))
     except (sqlite3.OperationalError, sqlite3.DatabaseError):
         logger.warning("Failed to delete embedding for message %s (table may not exist)", message_id)
