@@ -4780,8 +4780,13 @@ async def _run_repl(
                             renderer.console.print(
                                 f"  [{MUTED}][RAG: {len(_rag_chunks)} relevant chunk(s) retrieved][/{MUTED}]"
                             )
+                        else:
+                            renderer.console.print(f"  [{MUTED}][RAG: no relevant context found][/{MUTED}]")
+                    else:
+                        renderer.console.print(f"  [{MUTED}][RAG: embedding service unavailable][/{MUTED}]")
                 except Exception:
                     logger.debug("RAG retrieval failed in CLI", exc_info=True)
+                    renderer.console.print(f"  [{MUTED}][RAG: retrieval failed][/{MUTED}]")
 
             # Build message queue for queued follow-ups during agent loop
             msg_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
