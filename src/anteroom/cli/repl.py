@@ -3729,6 +3729,7 @@ async def _run_repl(
                             renderer.render_error(f"Space '{target}' not found. Run /spaces to list available spaces.")
                             continue
                         _active_space[0] = sp
+                        conv["space_id"] = sp["id"]
                         _update_conv_space(db, conv["id"], sp["id"])
                         _inject_space_instructions(sp)
                         renderer.console.print(f"[green]Active space: {sp['name']}[/green]\n")
@@ -3788,6 +3789,7 @@ async def _run_repl(
                             continue
                         old_name = _active_space[0]["name"]
                         _active_space[0] = None
+                        conv["space_id"] = None
                         _update_conv_space(db, conv["id"], None)
                         extra_system_prompt = _strip_space_instructions(extra_system_prompt)
                         renderer.console.print(f"[{CHROME}]Cleared space: {old_name}[/{CHROME}]\n")
@@ -3850,6 +3852,7 @@ async def _run_repl(
 
                         # Auto-activate the new space
                         _active_space[0] = sp
+                        conv["space_id"] = sp["id"]
                         _update_conv_space(db, conv["id"], sp["id"])
                         _inject_space_instructions(sp)
 
@@ -4771,7 +4774,7 @@ async def _run_repl(
                             config=config.rag,
                             current_conversation_id=conv["id"],
                             space_id=conv.get("space_id"),
-                            project_id=conv.get("project_id") or project_id,
+                            project_id=conv.get("project_id"),
                         )
                         # Strip any previous RAG context and inject fresh
                         extra_system_prompt = strip_rag_context(extra_system_prompt)

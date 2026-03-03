@@ -289,6 +289,8 @@ def _resolve_sources(
     if source_tag:
         tagged = storage.list_sources(db, tag_id=source_tag, limit=20)
         for src in tagged:
+            if _allowed_ids is not None and src["id"] not in _allowed_ids:
+                continue
             if src.get("content") and src["id"] not in {s["id"] for s in _referenced_sources}:
                 full = storage.get_source(db, src["id"])
                 if full and full.get("content"):
@@ -296,6 +298,8 @@ def _resolve_sources(
     if source_group_id:
         grouped = storage.list_sources(db, group_id=source_group_id, limit=20)
         for src in grouped:
+            if _allowed_ids is not None and src["id"] not in _allowed_ids:
+                continue
             if src.get("content") and src["id"] not in {s["id"] for s in _referenced_sources}:
                 full = storage.get_source(db, src["id"])
                 if full and full.get("content"):

@@ -1627,8 +1627,8 @@ def delete_embedding_for_message(db: ThreadSafeConnection, message_id: str) -> N
         with db.transaction() as conn:
             conn.execute("DELETE FROM vec_messages WHERE message_id = ?", (message_id,))
             conn.execute("DELETE FROM message_embeddings WHERE message_id = ?", (message_id,))
-    except Exception:
-        logger.debug("Failed to delete embedding for message %s (table may not exist)", message_id)
+    except (sqlite3.OperationalError, sqlite3.DatabaseError):
+        logger.warning("Failed to delete embedding for message %s (table may not exist)", message_id)
 
 
 def delete_embeddings_for_conversation(db: ThreadSafeConnection, conversation_id: str) -> None:
@@ -2478,14 +2478,13 @@ def create_source_from_attachment(
             except OSError:
                 pass
 
+    # Always hash raw bytes for consistency with save_source_file (enables
+    # cross-path deduplication between uploads and attachment promotion).
     content_hash = None
-    if content:
-        content_hash = hashlib.sha256(content.encode()).hexdigest()
-    else:
-        try:
-            content_hash = hashlib.sha256(full_path.read_bytes()).hexdigest()
-        except FileNotFoundError:
-            pass
+    try:
+        content_hash = hashlib.sha256(full_path.read_bytes()).hexdigest()
+    except FileNotFoundError:
+        pass
 
     source = create_source(
         db,
@@ -2573,7 +2572,7 @@ def search_similar_source_chunks(
 
     # Over-fetch when project/space filtering so we still return enough
     # results after post-filter (KNN is computed before the JOIN).
-    fetch_limit = limit * 3 if (project_id or space_id) else limit
+    fetch_limit = min(limit * 3, _MAX_SEARCH_LIMIT) if (project_id or space_id) else limit
 
     if source_id:
         rows = db.execute_fetchall(

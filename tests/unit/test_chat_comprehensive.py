@@ -315,6 +315,55 @@ class TestResolveSources:
             _resolve_sources(db, sids, None, None)
         assert call_count <= 20
 
+    def test_tag_sources_scoped_by_space(self) -> None:
+        """Tag-resolved sources outside the space's allowed set are excluded."""
+        db = MagicMock()
+        tag_id = str(uuid.uuid4())
+        space_id = str(uuid.uuid4())
+        allowed_src = str(uuid.uuid4())
+        denied_src = str(uuid.uuid4())
+        with patch("anteroom.routers.chat.storage") as mock_storage:
+            mock_storage.get_space_sources.return_value = [{"id": allowed_src}]
+            mock_storage.list_sources.return_value = [
+                {"id": allowed_src, "content": "ok"},
+                {"id": denied_src, "content": "blocked"},
+            ]
+            mock_storage.get_source.return_value = {
+                "id": allowed_src,
+                "title": "Allowed",
+                "content": "ok",
+            }
+            result = _resolve_sources(db, [], tag_id, None, space_id=space_id)
+        assert "Allowed" in result
+        # get_source should only be called for the allowed source
+        calls = mock_storage.get_source.call_args_list
+        fetched_ids = {c[0][1] for c in calls}
+        assert denied_src not in fetched_ids
+
+    def test_group_sources_scoped_by_project(self) -> None:
+        """Group-resolved sources outside the project's allowed set are excluded."""
+        db = MagicMock()
+        group_id = str(uuid.uuid4())
+        project_id = str(uuid.uuid4())
+        allowed_src = str(uuid.uuid4())
+        denied_src = str(uuid.uuid4())
+        with patch("anteroom.routers.chat.storage") as mock_storage:
+            mock_storage.get_project_sources.return_value = [{"id": allowed_src}]
+            mock_storage.list_sources.return_value = [
+                {"id": allowed_src, "content": "ok"},
+                {"id": denied_src, "content": "nope"},
+            ]
+            mock_storage.get_source.return_value = {
+                "id": allowed_src,
+                "title": "Allowed",
+                "content": "ok",
+            }
+            result = _resolve_sources(db, [], None, group_id, project_id=project_id)
+        assert "Allowed" in result
+        calls = mock_storage.get_source.call_args_list
+        fetched_ids = {c[0][1] for c in calls}
+        assert denied_src not in fetched_ids
+
 
 # ---------------------------------------------------------------------------
 # _build_tool_list
