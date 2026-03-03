@@ -20,7 +20,7 @@ prompt: |
   Anteroom loads configuration from multiple layers, merged in this order (later wins):
 
   ```
-  defaults < team config < project config < personal config < env vars < CLI flags
+  defaults < team config < space config < personal config < env vars < CLI flags
   ```
 
   | Layer            | Location                                    | Purpose                                  |
@@ -36,7 +36,7 @@ prompt: |
   parent directories until it finds a matching file. This is how team config, space
   instructions (ANTEROOM.md), and skills directories are discovered.
 
-  **Deep merge**: nested config sections merge recursively — a project config that sets
+  **Deep merge**: nested config sections merge recursively — a space config that sets
   `safety.approval_mode` doesn't wipe out the rest of `safety`. Scalar values from
   higher-priority layers replace lower ones; lists and dicts merge.
 
