@@ -7,6 +7,15 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 3, 2026
 
+### v1.94.2
+
+**Fixed:**
+
+- File upload on Windows now shows extensions and filters correctly in the file dialog (#722)
+- Page refresh on Windows no longer hangs due to SSE connection pool exhaustion (#723)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.94.2)
+
 ### v1.94.1
 
 **Fixed:**
