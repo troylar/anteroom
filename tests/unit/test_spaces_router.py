@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from anteroom.routers.spaces import SpaceCreateRequest, SpaceSourceLinkRequest, router
+from anteroom.routers.spaces import SpaceCreateRequest, SpaceSourceLinkRequest, SpaceUpdateRequest, router
 
 
 def _make_app() -> FastAPI:
@@ -675,3 +675,218 @@ class TestGetSpacePacksEndpoint:
         assert len(data) == 2
         names = {p["name"] for p in data}
         assert names == {"pack-a", "pack-b"}
+
+
+class TestSpaceUpdateRequestValidation:
+    def test_valid_name(self) -> None:
+        req = SpaceUpdateRequest(name="new-name")
+        assert req.name == "new-name"
+
+    def test_none_name_allowed(self) -> None:
+        req = SpaceUpdateRequest(name=None, instructions="hello")
+        assert req.name is None
+        assert req.instructions == "hello"
+
+    def test_invalid_name_rejected(self) -> None:
+        import pytest
+
+        with pytest.raises(Exception):
+            SpaceUpdateRequest(name="has space")
+
+    def test_all_fields(self) -> None:
+        req = SpaceUpdateRequest(name="updated", instructions="do things", model="gpt-4")
+        assert req.name == "updated"
+        assert req.instructions == "do things"
+        assert req.model == "gpt-4"
+
+
+_UUID1 = "a0000000-0000-4000-8000-000000000001"
+
+
+class TestUpdateSpaceEndpoint:
+    def test_update_name(self) -> None:
+        app = _make_app()
+        existing = {"id": _UUID1, "name": "old", "source_file": "", "source_hash": ""}
+        updated = {"id": _UUID1, "name": "new-name", "source_file": "", "source_hash": ""}
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=existing),
+            patch("anteroom.routers.spaces.update_space", return_value=updated),
+        ):
+            client = TestClient(app)
+            resp = client.patch(f"/api/spaces/{_UUID1}", json={"name": "new-name"})
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "new-name"
+
+    def test_update_instructions(self) -> None:
+        app = _make_app()
+        existing = {"id": _UUID1, "name": "work", "source_file": "", "source_hash": ""}
+        updated = {**existing, "instructions": "Be helpful"}
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=existing),
+            patch("anteroom.routers.spaces.update_space", return_value=updated),
+        ):
+            client = TestClient(app)
+            resp = client.patch(f"/api/spaces/{_UUID1}", json={"instructions": "Be helpful"})
+        assert resp.status_code == 200
+        assert resp.json()["instructions"] == "Be helpful"
+
+    def test_update_not_found(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.spaces.get_space", return_value=None):
+            client = TestClient(app)
+            resp = client.patch(f"/api/spaces/{_UUID1}", json={"name": "new"})
+        assert resp.status_code == 404
+
+    def test_update_empty_body_returns_existing(self) -> None:
+        app = _make_app()
+        existing = {"id": _UUID1, "name": "work", "source_file": "", "source_hash": ""}
+        with patch("anteroom.routers.spaces.get_space", return_value=existing):
+            client = TestClient(app)
+            resp = client.patch(f"/api/spaces/{_UUID1}", json={})
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "work"
+
+    def test_update_invalid_uuid_returns_400(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.patch("/api/spaces/not-a-uuid", json={"name": "x"})
+        assert resp.status_code == 400
+
+
+class TestSyncSpaceEndpoint:
+    def test_sync_success(self) -> None:
+        app = _make_app()
+        synced = {"id": "sp-1", "name": "myspace", "source_file": "/tmp/space.yaml", "source_hash": "abc"}
+        with patch("anteroom.services.spaces.sync_space_from_file", return_value=synced):
+            with patch("pathlib.Path.is_file", return_value=True):
+                client = TestClient(app)
+                resp = client.post(
+                    "/api/spaces/sync",
+                    json={"file_path": "/tmp/space.yaml"},
+                    headers={"Content-Type": "application/json"},
+                )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "myspace"
+
+    def test_sync_missing_file_path(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/api/spaces/sync",
+            json={},
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+        assert "file_path" in resp.json()["detail"]
+
+    def test_sync_path_traversal_rejected(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/api/spaces/sync",
+            json={"file_path": "/tmp/../etc/passwd"},
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+        assert "traversal" in resp.json()["detail"].lower()
+
+    def test_sync_path_traversal_backslash(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/api/spaces/sync",
+            json={"file_path": "C:\\Users\\..\\etc\\passwd"},
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+
+    def test_sync_wrong_content_type(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/api/spaces/sync",
+            content='{"file_path": "/tmp/space.yaml"}',
+            headers={"Content-Type": "text/plain"},
+        )
+        assert resp.status_code == 415
+
+    def test_sync_file_not_found(self) -> None:
+        app = _make_app()
+        with patch("pathlib.Path.is_file", return_value=False):
+            client = TestClient(app)
+            resp = client.post(
+                "/api/spaces/sync",
+                json={"file_path": "/nonexistent/space.yaml"},
+                headers={"Content-Type": "application/json"},
+            )
+        assert resp.status_code == 400
+
+
+class TestExportSpaceEndpoint:
+    def test_export_success(self) -> None:
+        from anteroom.services.spaces import SpaceConfig
+
+        app = _make_app()
+        space = {"id": _UUID1, "name": "work", "source_file": "", "source_hash": ""}
+        cfg = SpaceConfig(name="work", instructions="Be helpful", config={"model": "gpt-4"})
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=space),
+            patch("anteroom.services.spaces.export_space_to_yaml", return_value=cfg),
+        ):
+            client = TestClient(app)
+            resp = client.get(f"/api/spaces/{_UUID1}/export")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "work"
+        assert data["instructions"] == "Be helpful"
+        assert data["config"]["model"] == "gpt-4"
+
+    def test_export_not_found(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.spaces.get_space", return_value=None):
+            client = TestClient(app)
+            resp = client.get(f"/api/spaces/{_UUID1}/export")
+        assert resp.status_code == 404
+
+    def test_export_invalid_uuid(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.get("/api/spaces/not-a-uuid/export")
+        assert resp.status_code == 400
+
+    def test_export_minimal_space(self) -> None:
+        from anteroom.services.spaces import SpaceConfig
+
+        app = _make_app()
+        space = {"id": _UUID1, "name": "minimal", "source_file": "", "source_hash": ""}
+        cfg = SpaceConfig(name="minimal")
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=space),
+            patch("anteroom.services.spaces.export_space_to_yaml", return_value=cfg),
+        ):
+            client = TestClient(app)
+            resp = client.get(f"/api/spaces/{_UUID1}/export")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "minimal"
+        assert "instructions" not in data
+        assert "config" not in data
+
+
+class TestEnrichOriginLocal:
+    def test_local_space_origin(self) -> None:
+        app = _make_app()
+        space = {
+            "id": "sp-1",
+            "name": "local",
+            "source_file": "/projects/myapp/.anteroom/space.yaml",
+            "source_hash": "abc",
+        }
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=space),
+            patch("anteroom.routers.spaces.is_local_space", return_value=True),
+        ):
+            client = TestClient(app)
+            resp = client.get("/api/spaces/sp-1")
+        assert resp.status_code == 200
+        assert resp.json()["origin"] == "local"
