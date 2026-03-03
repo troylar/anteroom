@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 3, 2026
 
+### v1.94.7
+
+**New:**
+
+- Ctrl-S toggle for mouse mode in CLI fullscreen — switch between scroll mode and native text selection (#736)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.94.7)
+
 ### v1.94.6
 
 **Fixed:**
