@@ -20,6 +20,7 @@ DEFAULT_INTERVAL = 30.0
 MAX_INTERVAL = 300.0
 BACKOFF_MULTIPLIER = 2.0
 MAX_CONSECUTIVE_FAILURES = 10
+WARNING_THRESHOLD = 7  # Warn when approaching disable threshold
 MAX_STORE_RETRIES = 3
 RECOVERY_PROBE_INTERVAL = 600.0  # 10 minutes between recovery probes
 
@@ -78,6 +79,12 @@ class EmbeddingWorker:
             self._disabled = True
             self._disabled_reason = f"Auto-disabled after {self._consecutive_failures} consecutive failures"
             logger.error("Embedding worker auto-disabled: %s", self._disabled_reason)
+        elif self._consecutive_failures >= WARNING_THRESHOLD:
+            logger.warning(
+                "Embedding worker approaching disable threshold: %d/%d failures",
+                self._consecutive_failures,
+                MAX_CONSECUTIVE_FAILURES,
+            )
 
     def _disable_permanent(self, reason: str) -> None:
         self._disabled = True

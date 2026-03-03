@@ -345,6 +345,11 @@ const Chat = (() => {
                 hideThinking();
                 finalizeAssistant();
                 break;
+            case 'prompt_meta':
+                if (data.sources_truncated) {
+                    showToast('Source content was truncated to fit the 50KB limit.');
+                }
+                break;
             case 'budget_warning':
                 showToast(data.message || 'Token budget warning');
                 break;

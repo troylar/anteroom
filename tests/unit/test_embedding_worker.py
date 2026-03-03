@@ -1163,3 +1163,20 @@ class TestEmbeddingWorkerRecovery:
 
         assert result is False
         assert worker._disabled
+
+    def test_warning_emitted_at_threshold(self) -> None:
+        """Verify warning is logged when approaching disable threshold."""
+        from anteroom.services.embedding_worker import WARNING_THRESHOLD
+
+        worker = self._make_worker()
+        worker._consecutive_failures = WARNING_THRESHOLD - 1
+        worker._current_interval = 30.0
+
+        with patch("anteroom.services.embedding_worker.logger") as mock_logger:
+            worker._apply_backoff()
+
+        assert worker._consecutive_failures == WARNING_THRESHOLD
+        assert not worker._disabled
+        mock_logger.warning.assert_called()
+        warn_msg = mock_logger.warning.call_args[0][0]
+        assert "approaching disable threshold" in warn_msg
