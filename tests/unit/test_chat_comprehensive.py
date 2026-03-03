@@ -1049,6 +1049,96 @@ class TestBuildChatSystemPrompt:
         assert meta["rag_status"] == "disabled"
         assert meta["rag_chunks"] == 0
 
+    @pytest.mark.asyncio
+    async def test_attachment_filenames_inject_guidance(self) -> None:
+        from anteroom.routers.chat import _build_chat_system_prompt
+
+        ai_service = MagicMock()
+        ai_service.config.model = "gpt-4o"
+        tool_registry = MagicMock()
+        tool_registry.list_tools.return_value = []
+        tool_registry._working_dir = None
+        mcp_manager = MagicMock()
+        mcp_manager.get_server_statuses.return_value = []
+        config = MagicMock()
+        config.app.tls = False
+        config.rag = None
+        config.codebase_index.map_tokens = 1000
+        db = MagicMock()
+        conv_id = str(uuid.uuid4())
+
+        with (
+            patch("anteroom.routers.chat.build_runtime_context", return_value="RUNTIME_CTX"),
+            patch("anteroom.routers.chat.load_instructions", return_value=None),
+            patch("anteroom.routers.chat.storage") as mock_storage,
+            patch("anteroom.services.codebase_index.create_index_service", return_value=None),
+        ):
+            mock_storage.get_canvas_for_conversation.return_value = None
+            result, _meta = await _build_chat_system_prompt(
+                ai_service=ai_service,
+                tool_registry=tool_registry,
+                mcp_manager=mcp_manager,
+                config=config,
+                db=db,
+                conversation_id=conv_id,
+                project_instructions=None,
+                plan_prompt="",
+                plan_mode=False,
+                message_text="summarize this",
+                source_ids=[],
+                source_tag=None,
+                source_group_id=None,
+                attachment_filenames=["deck.pptx", "data.xlsx"],
+            )
+
+        assert "deck.pptx" in result
+        assert "data.xlsx" in result
+        assert "Attached Files" in result
+        assert "Do NOT use file tools" in result
+
+    @pytest.mark.asyncio
+    async def test_no_attachment_guidance_when_no_files(self) -> None:
+        from anteroom.routers.chat import _build_chat_system_prompt
+
+        ai_service = MagicMock()
+        ai_service.config.model = "gpt-4o"
+        tool_registry = MagicMock()
+        tool_registry.list_tools.return_value = []
+        tool_registry._working_dir = None
+        mcp_manager = MagicMock()
+        mcp_manager.get_server_statuses.return_value = []
+        config = MagicMock()
+        config.app.tls = False
+        config.rag = None
+        config.codebase_index.map_tokens = 1000
+        db = MagicMock()
+        conv_id = str(uuid.uuid4())
+
+        with (
+            patch("anteroom.routers.chat.build_runtime_context", return_value="RUNTIME_CTX"),
+            patch("anteroom.routers.chat.load_instructions", return_value=None),
+            patch("anteroom.routers.chat.storage") as mock_storage,
+            patch("anteroom.services.codebase_index.create_index_service", return_value=None),
+        ):
+            mock_storage.get_canvas_for_conversation.return_value = None
+            result, _meta = await _build_chat_system_prompt(
+                ai_service=ai_service,
+                tool_registry=tool_registry,
+                mcp_manager=mcp_manager,
+                config=config,
+                db=db,
+                conversation_id=conv_id,
+                project_instructions=None,
+                plan_prompt="",
+                plan_mode=False,
+                message_text="hello",
+                source_ids=[],
+                source_tag=None,
+                source_group_id=None,
+            )
+
+        assert "Attached Files" not in result
+
 
 # ---------------------------------------------------------------------------
 # _web_confirm_tool
