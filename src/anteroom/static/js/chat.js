@@ -345,7 +345,7 @@ const Chat = (() => {
                 }
                 break;
             case 'user_message':
-                if (_currentUserEl) {
+                if (_currentUserEl && typeof data.id === 'string' && Number.isInteger(data.position)) {
                     addMessageActions(_currentUserEl, 'user', _lastSentText, data, { isLast: false });
                     _currentUserEl = null;
                 }
@@ -400,7 +400,7 @@ const Chat = (() => {
         renderMath(contentEl);
         addCodeCopyButtons(contentEl);
         let msgData = null;
-        if (doneData && doneData.assistant_message_id) {
+        if (doneData && typeof doneData.assistant_message_id === 'string' && Number.isInteger(doneData.assistant_message_position)) {
             msgData = { id: doneData.assistant_message_id, position: doneData.assistant_message_position };
         }
         addMessageActions(currentAssistantEl, 'assistant', currentAssistantContent, msgData, { isLast: true });

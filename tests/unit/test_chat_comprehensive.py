@@ -1322,6 +1322,77 @@ class TestStreamChatEventsKinds:
         assert len(done_events) == 1
 
     @pytest.mark.asyncio
+    async def test_user_message_event_emitted_when_user_msg_set(self) -> None:
+        ctx = _make_stream_context()
+        ctx.user_msg = {"id": "umsg-1", "position": 0}
+        events = [_make_agent_event("done", {})]
+
+        async def fake_agent_gen(*args: Any, **kwargs: Any) -> Any:
+            for ev in events:
+                yield ev
+
+        with (
+            patch("anteroom.services.agent_loop.run_agent_loop", side_effect=fake_agent_gen),
+            patch("anteroom.routers.chat.storage") as mock_storage,
+        ):
+            mock_storage.get_conversation_token_total.return_value = 0
+            mock_storage.get_daily_token_total.return_value = 0
+            result = await _collect_events(_stream_chat_events(ctx))
+
+        user_msg_events = [e for e in result if isinstance(e, dict) and e.get("event") == "user_message"]
+        assert len(user_msg_events) == 1
+        payload = json.loads(user_msg_events[0]["data"])
+        assert payload == {"id": "umsg-1", "position": 0}
+
+    @pytest.mark.asyncio
+    async def test_user_message_event_absent_when_user_msg_none(self) -> None:
+        ctx = _make_stream_context()
+        assert ctx.user_msg is None
+        events = [_make_agent_event("done", {})]
+
+        async def fake_agent_gen(*args: Any, **kwargs: Any) -> Any:
+            for ev in events:
+                yield ev
+
+        with (
+            patch("anteroom.services.agent_loop.run_agent_loop", side_effect=fake_agent_gen),
+            patch("anteroom.routers.chat.storage") as mock_storage,
+        ):
+            mock_storage.get_conversation_token_total.return_value = 0
+            mock_storage.get_daily_token_total.return_value = 0
+            result = await _collect_events(_stream_chat_events(ctx))
+
+        user_msg_events = [e for e in result if isinstance(e, dict) and e.get("event") == "user_message"]
+        assert len(user_msg_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_done_event_includes_assistant_message_metadata(self) -> None:
+        ctx = _make_stream_context()
+        events = [
+            _make_agent_event("assistant_message", {"content": "Hello"}),
+            _make_agent_event("done", {}),
+        ]
+
+        async def fake_agent_gen(*args: Any, **kwargs: Any) -> Any:
+            for ev in events:
+                yield ev
+
+        with (
+            patch("anteroom.services.agent_loop.run_agent_loop", side_effect=fake_agent_gen),
+            patch("anteroom.routers.chat.storage") as mock_storage,
+        ):
+            mock_storage.create_message.return_value = {"id": "amsg-1", "position": 1}
+            mock_storage.get_conversation_token_total.return_value = 0
+            mock_storage.get_daily_token_total.return_value = 0
+            result = await _collect_events(_stream_chat_events(ctx))
+
+        done_events = [e for e in result if isinstance(e, dict) and e.get("event") == "done"]
+        assert len(done_events) == 1
+        payload = json.loads(done_events[0]["data"])
+        assert payload["assistant_message_id"] == "amsg-1"
+        assert payload["assistant_message_position"] == 1
+
+    @pytest.mark.asyncio
     async def test_tool_call_start_emitted(self) -> None:
         ctx = _make_stream_context()
         tool_id = "call_abc123"
