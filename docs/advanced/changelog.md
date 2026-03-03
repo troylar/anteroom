@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 3, 2026
 
+### v1.94.1
+
+**Fixed:**
+
+- Console window no longer flashes on Windows during background server operation (#720)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.94.1)
+
 ### v1.94.0
 
 **New:**
