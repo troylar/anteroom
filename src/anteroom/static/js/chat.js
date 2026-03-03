@@ -8,6 +8,7 @@ const Chat = (() => {
     let _rewindPosition = null;
     let _rewindMsgEl = null;
     let _lastSentText = '';
+    let _currentUserEl = null;
     let _conversationType = 'chat';
 
     // Remote collaboration state
@@ -136,7 +137,9 @@ const Chat = (() => {
         }
 
         _lastSentText = text;
+        _currentUserEl = null;
         const msgEl = appendMessage('user', text);
+        _currentUserEl = msgEl;
         input.value = '';
         input.style.height = 'auto';
 
@@ -341,9 +344,15 @@ const Chat = (() => {
                     App._showPlanContent(data.content);
                 }
                 break;
+            case 'user_message':
+                if (_currentUserEl) {
+                    addMessageActions(_currentUserEl, 'user', _lastSentText, data, { isLast: false });
+                    _currentUserEl = null;
+                }
+                break;
             case 'done':
                 hideThinking();
-                finalizeAssistant();
+                finalizeAssistant(data);
                 break;
             case 'prompt_meta':
                 if (data.sources_truncated) {
@@ -384,13 +393,17 @@ const Chat = (() => {
         scrollToBottom();
     }
 
-    function finalizeAssistant() {
+    function finalizeAssistant(doneData) {
         if (!currentAssistantEl) return;
         const contentEl = currentAssistantEl.querySelector('.message-content');
         contentEl.innerHTML = renderMarkdown(currentAssistantContent);
         renderMath(contentEl);
         addCodeCopyButtons(contentEl);
-        addMessageActions(currentAssistantEl, 'assistant', currentAssistantContent, null, { isLast: true });
+        let msgData = null;
+        if (doneData && doneData.assistant_message_id) {
+            msgData = { id: doneData.assistant_message_id, position: doneData.assistant_message_position };
+        }
+        addMessageActions(currentAssistantEl, 'assistant', currentAssistantContent, msgData, { isLast: true });
         currentAssistantEl = null;
         currentAssistantContent = '';
         scrollToBottom();

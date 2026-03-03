@@ -54,6 +54,7 @@ def _make_stream_ctx(**overrides: object) -> MagicMock:
     ctx.tool_registry.has_tool.return_value = True
     ctx.mcp_manager = None
     ctx.prompt_meta = {}
+    ctx.user_msg = None
     for k, v in overrides.items():
         setattr(ctx, k, v)
     return ctx

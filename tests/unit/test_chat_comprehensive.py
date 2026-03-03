@@ -1212,6 +1212,7 @@ def _make_stream_context(*, conv_id: str | None = None, plan_mode: bool = False)
     ctx.db = MagicMock()
     ctx.db_name = "personal"
     ctx.cancel_event = asyncio.Event()
+    ctx.user_msg = None
     return ctx
 
 
