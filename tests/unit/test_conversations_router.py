@@ -1338,21 +1338,6 @@ class TestFolderEndpoints:
             resp = client.get("/api/folders")
             assert resp.status_code == 200
 
-    def test_list_folders_with_project_id(self) -> None:
-        project_id = str(uuid.uuid4())
-        app = _make_app()
-        with patch("anteroom.routers.conversations.storage") as mock_storage:
-            mock_storage.list_folders.return_value = []
-            client = TestClient(app)
-            resp = client.get(f"/api/folders?project_id={project_id}")
-            assert resp.status_code == 200
-
-    def test_list_folders_invalid_project_id(self) -> None:
-        app = _make_app()
-        client = TestClient(app)
-        resp = client.get("/api/folders?project_id=bad-uuid")
-        assert resp.status_code == 400
-
     def test_create_folder(self) -> None:
         app = _make_app()
         with patch("anteroom.routers.conversations.storage") as mock_storage:

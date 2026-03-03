@@ -15,7 +15,6 @@ from anteroom.services.storage import (
     chunk_text,
     create_conversation,
     create_message,
-    create_project,
     create_source,
     create_source_chunks,
     create_source_from_attachment,
@@ -23,12 +22,10 @@ from anteroom.services.storage import (
     create_tag,
     delete_source,
     delete_source_group,
-    get_project_sources,
     get_source,
     get_source_group,
     get_source_tags,
     get_unembedded_source_chunks,
-    link_source_to_project,
     list_source_chunks,
     list_source_groups,
     list_sources,
@@ -36,7 +33,6 @@ from anteroom.services.storage import (
     remove_tag_from_source,
     save_attachment,
     save_source_file,
-    unlink_source_from_project,
     update_source,
     update_source_group,
 )
@@ -231,65 +227,6 @@ class TestSourceGroups:
         remove_source_from_group(db, group["id"], source["id"])
         result = list_sources(db, group_id=group["id"])
         assert len(result) == 0
-
-
-class TestProjectSources:
-    def test_link_source_to_project(self, db: ThreadSafeConnection) -> None:
-        proj = create_project(db, name="Test Project")
-        source = create_source(db, source_type="text", title="S1", content="Content.")
-        link = link_source_to_project(db, proj["id"], source_id=source["id"])
-        assert link["project_id"] == proj["id"]
-        assert link["source_id"] == source["id"]
-
-    def test_link_requires_exactly_one(self, db: ThreadSafeConnection) -> None:
-        proj = create_project(db, name="Test")
-        with pytest.raises(ValueError, match="Exactly one"):
-            link_source_to_project(db, proj["id"])
-
-    def test_get_project_sources_direct(self, db: ThreadSafeConnection) -> None:
-        proj = create_project(db, name="Test")
-        s1 = create_source(db, source_type="text", title="S1", content="Content.")
-        s2 = create_source(db, source_type="text", title="S2", content="Content.")
-        link_source_to_project(db, proj["id"], source_id=s1["id"])
-        link_source_to_project(db, proj["id"], source_id=s2["id"])
-        sources = get_project_sources(db, proj["id"])
-        assert len(sources) == 2
-
-    def test_get_project_sources_via_group(self, db: ThreadSafeConnection) -> None:
-        proj = create_project(db, name="Test")
-        group = create_source_group(db, name="Group")
-        s1 = create_source(db, source_type="text", title="S1", content="Content.")
-        add_source_to_group(db, group["id"], s1["id"])
-        link_source_to_project(db, proj["id"], group_id=group["id"])
-        sources = get_project_sources(db, proj["id"])
-        assert len(sources) == 1
-        assert sources[0]["id"] == s1["id"]
-
-    def test_get_project_sources_via_tag_filter(self, db: ThreadSafeConnection) -> None:
-        proj = create_project(db, name="Test")
-        tag = create_tag(db, name="docs")
-        s1 = create_source(db, source_type="text", title="S1", content="Content.")
-        add_tag_to_source(db, s1["id"], tag["id"])
-        link_source_to_project(db, proj["id"], tag_filter="docs")
-        sources = get_project_sources(db, proj["id"])
-        assert len(sources) == 1
-
-    def test_unlink_source(self, db: ThreadSafeConnection) -> None:
-        proj = create_project(db, name="Test")
-        source = create_source(db, source_type="text", title="S1", content="Content.")
-        link_source_to_project(db, proj["id"], source_id=source["id"])
-        unlink_source_from_project(db, proj["id"], source_id=source["id"])
-        sources = get_project_sources(db, proj["id"])
-        assert len(sources) == 0
-
-    def test_list_sources_by_project(self, db: ThreadSafeConnection) -> None:
-        proj = create_project(db, name="Test")
-        s1 = create_source(db, source_type="text", title="In Project", content="Content.")
-        create_source(db, source_type="text", title="Not in Project", content="Content.")
-        link_source_to_project(db, proj["id"], source_id=s1["id"])
-        result = list_sources(db, project_id=proj["id"])
-        assert len(result) == 1
-        assert result[0]["id"] == s1["id"]
 
 
 class TestDualCitizenship:
@@ -576,23 +513,6 @@ class TestSaveSourceFileExtraction:
         # extract_text should NOT have been called because UTF-8 decode succeeded
         mock_extract.assert_not_called()
         assert source["content"] == "Hello, plain text."
-
-
-class TestProjectScopedSourceSearch:
-    """Verify project_id filtering in search_similar_source_chunks (#179)."""
-
-    def test_search_without_project_returns_all(self, db: ThreadSafeConnection) -> None:
-        from anteroom.services.storage import search_similar_source_chunks
-
-        # Without vec support, returns empty — just verify the parameter is accepted
-        results = search_similar_source_chunks(db, [0.1] * 384, limit=10, project_id=None)
-        assert results == []
-
-    def test_search_with_project_id_accepted(self, db: ThreadSafeConnection) -> None:
-        from anteroom.services.storage import search_similar_source_chunks
-
-        results = search_similar_source_chunks(db, [0.1] * 384, limit=10, project_id="some-project-id")
-        assert results == []
 
 
 class TestSaveSourceFileDedup:

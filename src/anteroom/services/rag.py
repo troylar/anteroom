@@ -37,16 +37,12 @@ async def retrieve_context(
     current_conversation_id: str | None = None,
     *,
     space_id: str | None = None,
-    project_id: str | None = None,
 ) -> list[RetrievedChunk]:
     """Embed the user query and retrieve the top-K most relevant chunks.
 
     When *space_id* is given, message results are filtered to conversations
     belonging to that space, and source results are filtered to sources
     linked to that space.
-
-    When *project_id* is given, source results are filtered to sources
-    linked to that project.
 
     Returns an empty list (never raises) when embeddings are unavailable,
     the query is too short, or any transient error occurs.
@@ -99,7 +95,7 @@ async def retrieve_context(
     if config.include_sources:
         try:
             src_results = storage.search_similar_source_chunks(
-                db, embedding, limit=config.max_chunks, project_id=project_id, space_id=space_id
+                db, embedding, limit=config.max_chunks, space_id=space_id
             )
             for r in src_results:
                 if r["distance"] > config.similarity_threshold:

@@ -19,28 +19,49 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-_UPDATABLE_COLUMNS = frozenset({"file_path", "file_hash", "last_loaded_at", "updated_at"})
+_UPDATABLE_COLUMNS = frozenset(
+    {
+        "name",
+        "instructions",
+        "model",
+        "source_file",
+        "source_hash",
+        "last_loaded_at",
+        "updated_at",
+    }
+)
+
+_SPACE_COLUMNS = "id, name, instructions, model, source_file, source_hash, last_loaded_at, created_at, updated_at"
+_SPACE_COLUMNS_PREFIXED = (
+    "s.id, s.name, s.instructions, s.model, s.source_file, s.source_hash, s.last_loaded_at, s.created_at, s.updated_at"
+)
 
 
 def create_space(
     db: ThreadSafeConnection,
     name: str,
-    file_path: str,
-    file_hash: str = "",
+    *,
+    source_file: str = "",
+    source_hash: str = "",
+    instructions: str = "",
+    model: str | None = None,
 ) -> dict[str, Any]:
     sid = _uuid()
     now = _now()
     db.execute(
-        "INSERT INTO spaces (id, name, file_path, file_hash, last_loaded_at, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (sid, name, file_path, file_hash, now, now, now),
+        "INSERT INTO spaces (id, name, instructions, model, source_file, source_hash,"
+        " last_loaded_at, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (sid, name, instructions, model, source_file, source_hash, now, now, now),
     )
     db.commit()
     return {
         "id": sid,
         "name": name,
-        "file_path": file_path,
-        "file_hash": file_hash,
+        "instructions": instructions,
+        "model": model,
+        "source_file": source_file,
+        "source_hash": source_hash,
         "last_loaded_at": now,
         "created_at": now,
         "updated_at": now,
@@ -49,7 +70,7 @@ def create_space(
 
 def get_space(db: ThreadSafeConnection, space_id: str) -> dict[str, Any] | None:
     row = db.execute(
-        "SELECT id, name, file_path, file_hash, last_loaded_at, created_at, updated_at FROM spaces WHERE id = ?",
+        f"SELECT {_SPACE_COLUMNS} FROM spaces WHERE id = ?",
         (space_id,),
     ).fetchone()
     if not row:
@@ -59,7 +80,7 @@ def get_space(db: ThreadSafeConnection, space_id: str) -> dict[str, Any] | None:
 
 def get_space_by_name(db: ThreadSafeConnection, name: str) -> dict[str, Any] | None:
     row = db.execute(
-        "SELECT id, name, file_path, file_hash, last_loaded_at, created_at, updated_at FROM spaces WHERE name = ?",
+        f"SELECT {_SPACE_COLUMNS} FROM spaces WHERE name = ?",
         (name,),
     ).fetchone()
     if not row:
@@ -70,7 +91,7 @@ def get_space_by_name(db: ThreadSafeConnection, name: str) -> dict[str, Any] | N
 def get_spaces_by_name(db: ThreadSafeConnection, name: str) -> list[dict[str, Any]]:
     """Return all spaces matching *name* (there may be duplicates)."""
     rows = db.execute(
-        "SELECT id, name, file_path, file_hash, last_loaded_at, created_at, updated_at FROM spaces WHERE name = ?",
+        f"SELECT {_SPACE_COLUMNS} FROM spaces WHERE name = ?",
         (name,),
     ).fetchall()
     return [dict(r) for r in rows]
@@ -104,9 +125,7 @@ def resolve_space(db: ThreadSafeConnection, name_or_id: str) -> tuple[dict[str, 
 
 
 def list_spaces(db: ThreadSafeConnection) -> list[dict[str, Any]]:
-    rows = db.execute(
-        "SELECT id, name, file_path, file_hash, last_loaded_at, created_at, updated_at FROM spaces ORDER BY name"
-    ).fetchall()
+    rows = db.execute(f"SELECT {_SPACE_COLUMNS} FROM spaces ORDER BY name").fetchall()
     return [dict(r) for r in rows]
 
 
@@ -210,11 +229,9 @@ def discover_space_file(cwd: str) -> Path | None:
             candidate_dir = current / dirname
             if not candidate_dir.is_dir():
                 continue
-            # Prefer the canonical name first
             canonical = candidate_dir / "space.yaml"
             if canonical.is_file():
                 return canonical
-            # Then any other *.yaml (excluding .local.yaml overrides)
             for p in sorted(candidate_dir.glob("*.yaml")):
                 if p.name.endswith(".local.yaml"):
                     continue
@@ -232,9 +249,8 @@ def resolve_space_by_cwd(db: ThreadSafeConnection, cwd: str) -> dict[str, Any] |
     Checks exact path first, then walks up parent directories to find a
     mapped space path. Returns the deepest (most specific) match.
     """
-    # Exact match first
     row = db.execute(
-        "SELECT s.id, s.name, s.file_path, s.file_hash, s.last_loaded_at, s.created_at, s.updated_at"
+        f"SELECT {_SPACE_COLUMNS_PREFIXED}"
         " FROM spaces s JOIN space_paths sp ON s.id = sp.space_id"
         " WHERE sp.local_path = ?",
         (cwd,),
@@ -242,11 +258,10 @@ def resolve_space_by_cwd(db: ThreadSafeConnection, cwd: str) -> dict[str, Any] |
     if row:
         return dict(row)
 
-    # Walk up parent directories
     current = Path(cwd)
     for parent in current.parents:
         row = db.execute(
-            "SELECT s.id, s.name, s.file_path, s.file_hash, s.last_loaded_at, s.created_at, s.updated_at"
+            f"SELECT {_SPACE_COLUMNS_PREFIXED}"
             " FROM spaces s JOIN space_paths sp ON s.id = sp.space_id"
             " WHERE sp.local_path = ?",
             (str(parent),),

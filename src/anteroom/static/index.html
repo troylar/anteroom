@@ -63,6 +63,10 @@
             <div class="sidebar-spaces" id="sidebar-spaces">
                 <div class="sidebar-section-header">
                     <span class="sidebar-section-label">Spaces</span>
+                    <button class="btn-section-action" id="btn-space-add" title="Create space">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        <span>New</span>
+                    </button>
                 </div>
                 <div class="space-list" id="space-list">
                     <!-- Space items populated by JS -->
@@ -80,45 +84,6 @@
                 </div>
                 <select id="space-select" style="display:none">
                     <option value="">All Spaces</option>
-                </select>
-            </div>
-            <div class="sidebar-projects" id="sidebar-projects">
-                <div class="sidebar-section-header">
-                    <span class="sidebar-section-label">Projects</span>
-                    <button class="btn-section-action" id="btn-project-add" title="Create new project">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                        <span>New</span>
-                    </button>
-                </div>
-                <div class="project-list" id="project-list">
-                    <!-- Project items populated by JS -->
-                </div>
-                <div class="project-active-bar" id="project-active-bar" style="display:none">
-                    <div class="project-active-info">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-                        <span class="project-active-name" id="project-active-name"></span>
-                    </div>
-                    <div class="project-active-actions">
-                        <button class="btn-project-action" id="btn-project-edit" title="Edit project">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-                                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                            </svg>
-                        </button>
-                        <button class="btn-project-action btn-project-action-danger" id="btn-project-delete" title="Delete project">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="3 6 5 6 21 6"/>
-                                <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                            </svg>
-                        </button>
-                        <button class="btn-project-action" id="btn-project-clear" title="Show all conversations">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                        </button>
-                    </div>
-                </div>
-                <!-- Hidden select for data binding -->
-                <select id="project-select" style="display:none">
-                    <option value="">All Conversations</option>
                 </select>
             </div>
             <div class="sidebar-section-header" style="padding-top:4px">
@@ -177,34 +142,34 @@
             </div>
         </div>
 
-        <!-- Project Modal -->
-        <div class="modal-overlay" id="project-modal" style="display:none">
-            <div class="modal">
+        <!-- Space Create/Edit Modal -->
+        <div class="modal-overlay" id="space-modal" style="display:none">
+            <div class="modal" style="width:600px">
                 <div class="modal-header">
-                    <h3 id="project-modal-title">New Project</h3>
-                    <button class="modal-close" id="project-close">&times;</button>
+                    <h3 id="space-modal-title">New Space</h3>
+                    <button class="modal-close" id="space-modal-close">&times;</button>
                 </div>
                 <div class="modal-body">
+                    <input type="hidden" id="space-modal-id" value="">
                     <div class="setting-group">
-                        <label for="project-name">Name</label>
-                        <input type="text" id="project-name" placeholder="Project name" autocomplete="off">
+                        <label for="space-name-input">Name</label>
+                        <input type="text" id="space-name-input" placeholder="my-project" autocomplete="off">
+                        <span class="setting-hint">Letters, numbers, hyphens, underscores. Starts with a letter or number.</span>
                     </div>
                     <div class="setting-group">
-                        <label for="project-instructions">Instructions</label>
-                        <textarea id="project-instructions" rows="6" placeholder="Custom system prompt for this project..."></textarea>
-                        <span class="setting-hint">These instructions are prepended to the global system prompt for all conversations in this project.</span>
+                        <label for="space-instructions-input">Instructions</label>
+                        <textarea id="space-instructions-input" rows="5" placeholder="Instructions for the AI when working in this space..." style="width:100%;resize:vertical;font-family:inherit;font-size:inherit;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary)"></textarea>
+                        <span class="setting-hint">Free-form guidance the AI receives at the start of each chat in this space.</span>
                     </div>
                     <div class="setting-group">
-                        <label for="project-model">Model (optional)</label>
-                        <select id="project-model">
-                            <option value="">Use global default</option>
-                        </select>
-                        <span class="setting-hint">Override the default model for conversations in this project.</span>
+                        <label for="space-model-input">Model (optional)</label>
+                        <input type="text" id="space-model-input" placeholder="e.g. gpt-4o" autocomplete="off">
+                        <span class="setting-hint">Override the default model for this space. Leave blank to use the global default.</span>
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn-modal-cancel" id="project-cancel">Cancel</button>
-                    <button class="btn-modal-save" id="project-save">Save</button>
+                    <button class="btn-modal-cancel" id="space-modal-cancel">Cancel</button>
+                    <button class="btn-modal-save" id="space-modal-save">Create</button>
                 </div>
             </div>
         </div>

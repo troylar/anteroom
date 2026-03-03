@@ -260,23 +260,19 @@ def _resolve_sources(
     limit: int = 50_000,
     *,
     space_id: str | None = None,
-    project_id: str | None = None,
 ) -> str:
     """Resolve source references and return XML-delimited source content string.
 
-    When *space_id* or *project_id* is given, only sources linked to that
-    space/project are included.  Sources auto-injected by the space/project
-    resolution layer always pass this check; this guard prevents a client
-    from injecting arbitrary source IDs that don't belong to the current scope.
+    When *space_id* is given, only sources linked to that space are included.
+    Sources auto-injected by the space resolution layer always pass this check;
+    this guard prevents a client from injecting arbitrary source IDs that don't
+    belong to the current scope.
     """
     # Pre-compute allowed source IDs when scoping is active
     _allowed_ids: set[str] | None = None
-    if space_id or project_id:
+    if space_id:
         _allowed_ids = set()
-        if space_id:
-            _allowed_ids.update(s["id"] for s in storage.get_space_sources(db, space_id))
-        if project_id:
-            _allowed_ids.update(s["id"] for s in storage.get_project_sources(db, project_id))
+        _allowed_ids.update(s["id"] for s in storage.get_space_sources(db, space_id))
 
     _referenced_sources: list[dict[str, Any]] = []
     if source_ids:
@@ -387,7 +383,6 @@ async def _build_chat_system_prompt(
     config: Any,
     db: Any,
     conversation_id: str,
-    project_instructions: str | None,
     space_instructions: str | None = None,
     plan_prompt: str,
     plan_mode: bool,
@@ -401,7 +396,6 @@ async def _build_chat_system_prompt(
     artifact_registry: Any = None,
     skill_registry: Any = None,
     space_id: str | None = None,
-    project_id: str | None = None,
     attachment_filenames: list[str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Assemble the extra system prompt from all context sources.
@@ -422,13 +416,10 @@ async def _build_chat_system_prompt(
     )
     extra = trusted_section_marker() + runtime_ctx
 
-    # Space instructions (before project, lower precedence)
+    # Space instructions
     if space_instructions:
         safe_instr = sanitize_trust_tags(space_instructions)
         extra += "\n\n<space_instructions>\n" + safe_instr + "\n</space_instructions>"
-
-    if project_instructions:
-        extra += "\n\n" + project_instructions
 
     # ANTEROOM.md conventions
     file_instructions = load_instructions()
@@ -516,9 +507,7 @@ async def _build_chat_system_prompt(
         extra += canvas_context
 
     # Source references
-    source_content = _resolve_sources(
-        db, source_ids, source_tag, source_group_id, space_id=space_id, project_id=project_id
-    )
+    source_content = _resolve_sources(db, source_ids, source_tag, source_group_id, space_id=space_id)
     if source_content:
         extra += source_content
         meta["sources_truncated"] = "[...truncated...]" in source_content
@@ -544,7 +533,6 @@ async def _build_chat_system_prompt(
                 config=rag_config,
                 current_conversation_id=conversation_id,
                 space_id=space_id,
-                project_id=project_id,
             )
             meta["rag_status"] = "ok" if rag_chunks else "no_results"
             meta["rag_chunks"] = len(rag_chunks)
@@ -1807,9 +1795,8 @@ async def chat(conversation_id: str, request: Request) -> Any:
     if conversation_id not in _message_queues:
         _message_queues[conversation_id] = asyncio.Queue()
 
-    # Resolve model override: conversation model > project model > global default
+    # Resolve model override: conversation model > space model > global default
     model_override = conv.get("model") or None
-    project_instructions: str | None = None
     space_instructions: str | None = None
 
     # Resolve space context
@@ -1819,35 +1806,16 @@ async def chat(conversation_id: str, request: Request) -> Any:
 
         _space = _get_space_by_id(db, space_id)
         if _space:
-            try:
-                from ..services.spaces import parse_space_file
-
-                _scfg = parse_space_file(Path(_space["file_path"]))
-                if _scfg.instructions:
-                    space_instructions = _scfg.instructions
-            except Exception:
-                logger.warning("Failed to load space file for space %s", space_id)
+            if _space.get("instructions"):
+                space_instructions = _space["instructions"]
+            # Override model from space if set and no conversation-level override
+            if not model_override and _space.get("model"):
+                model_override = _space["model"]
             # Auto-inject space sources
             space_sources = storage.get_space_sources(db, space_id)
             space_source_ids = {s["id"] for s in space_sources}
             existing_ids = set(source_ids)
             for sid in space_source_ids:
-                if sid not in existing_ids:
-                    source_ids.append(sid)
-
-    project_id = conv.get("project_id")
-    if project_id:
-        project = storage.get_project(db, project_id)
-        if project:
-            if not model_override and project.get("model"):
-                model_override = project["model"]
-            if project.get("instructions"):
-                project_instructions = project["instructions"]
-            # Auto-inject project sources into the source list
-            project_sources = storage.get_project_sources(db, project_id)
-            proj_source_ids = {s["id"] for s in project_sources}
-            existing_ids = set(source_ids)
-            for sid in proj_source_ids:
                 if sid not in existing_ids:
                     source_ids.append(sid)
 
@@ -1898,7 +1866,6 @@ async def chat(conversation_id: str, request: Request) -> Any:
         config=request.app.state.config,
         db=db,
         conversation_id=conversation_id,
-        project_instructions=project_instructions,
         space_instructions=space_instructions,
         plan_prompt=plan_prompt,
         plan_mode=plan_mode,
@@ -1912,7 +1879,6 @@ async def chat(conversation_id: str, request: Request) -> Any:
         artifact_registry=getattr(request.app.state, "artifact_registry", None),
         skill_registry=getattr(request.app.state, "skill_registry", None),
         space_id=space_id,
-        project_id=project_id,
         attachment_filenames=_att_filenames,
     )
 

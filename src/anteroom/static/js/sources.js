@@ -281,7 +281,6 @@ const Sources = (() => {
             <div class="source-detail-actions">
                 <button class="btn-modal-save source-attach-btn" id="source-attach-btn">${isAttached ? 'Detach from chat' : 'Attach to chat'}</button>
                 <button class="btn-modal-save source-edit-btn" id="source-edit-btn">Edit</button>
-                ${App.state.currentProjectId ? `<button class="btn-modal-save source-link-project-btn" id="source-link-project-btn">Link to project</button>` : ''}
                 <button class="btn-modal-cancel source-delete-btn" id="source-delete-btn">Delete</button>
             </div>
         `;
@@ -307,25 +306,6 @@ const Sources = (() => {
         document.getElementById('source-edit-btn').addEventListener('click', () => {
             _showEditForm(source);
         });
-
-        // Link to project
-        const linkBtn = document.getElementById('source-link-project-btn');
-        if (linkBtn) {
-            linkBtn.addEventListener('click', async () => {
-                try {
-                    await App.api(`/api/projects/${encodeURIComponent(App.state.currentProjectId)}/sources`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ source_id: source.id }),
-                    });
-                    linkBtn.textContent = 'Linked!';
-                    linkBtn.disabled = true;
-                    setTimeout(() => { linkBtn.textContent = 'Link to project'; linkBtn.disabled = false; }, 1500);
-                } catch (err) {
-                    alert('Failed to link: ' + err.message);
-                }
-            });
-        }
 
         // Delete button
         document.getElementById('source-delete-btn').addEventListener('click', async () => {
@@ -479,11 +459,6 @@ const Sources = (() => {
         let url = '/api/sources?limit=100';
         if (search) url += `&search=${encodeURIComponent(search)}`;
         if (typeFilter) url += `&type=${encodeURIComponent(typeFilter)}`;
-
-        // Filter by project if one is active
-        if (App.state.currentProjectId) {
-            url += `&project_id=${encodeURIComponent(App.state.currentProjectId)}`;
-        }
 
         try {
             const data = await App.api(url);

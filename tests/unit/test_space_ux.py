@@ -317,10 +317,10 @@ class TestRouterOriginField:
         from anteroom.services.space_storage import create_space
 
         global_path = str(Path.home() / ".anteroom" / "spaces" / "global.yaml")
-        create_space(db, "global-space", global_path, "hash1")
+        create_space(db, "global-space", source_file=global_path, source_hash="hash1")
 
         local_path = "/home/user/project/.anteroom/space.yaml"
-        create_space(db, "local-space", local_path, "hash2")
+        create_space(db, "local-space", source_file=local_path, source_hash="hash2")
 
         request = MagicMock()
         request.app.state.db = db
@@ -337,7 +337,7 @@ class TestRouterOriginField:
         db = _make_db()
         from anteroom.services.space_storage import create_space
 
-        create_space(db, "test", "/tmp/test.yaml", "h")
+        create_space(db, "test", source_file="/tmp/test.yaml", source_hash="h")
 
         request = MagicMock()
         request.app.state.db = db
@@ -354,7 +354,7 @@ class TestRouterOriginField:
         from anteroom.services.space_storage import create_space
 
         global_path = str(Path.home() / ".anteroom" / "spaces" / "test.yaml")
-        s = create_space(db, "test", global_path, "hash")
+        s = create_space(db, "test", source_file=global_path, source_hash="hash")
 
         request = MagicMock()
         request.app.state.db = db
@@ -369,7 +369,7 @@ class TestRouterOriginField:
         db = _make_db()
         from anteroom.services.space_storage import create_space
 
-        s = create_space(db, "test", "/home/user/project/.anteroom/space.yaml", "hash")
+        s = create_space(db, "test", source_file="/home/user/project/.anteroom/space.yaml", source_hash="hash")
 
         request = MagicMock()
         request.app.state.db = db
@@ -384,7 +384,7 @@ class TestRouterOriginField:
         db = _make_db()
         from anteroom.services.space_storage import create_space
 
-        s = create_space(db, "test", "", "")
+        s = create_space(db, "test", source_file="", source_hash="")
 
         request = MagicMock()
         request.app.state.db = db

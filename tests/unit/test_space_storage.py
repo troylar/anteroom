@@ -40,16 +40,16 @@ def _make_db() -> sqlite3.Connection:
 class TestCreateSpace:
     def test_create_returns_dict(self) -> None:
         db = _make_db()
-        s = create_space(db, "myspace", "/path/to/space.yaml", "abc123")
+        s = create_space(db, "myspace", source_file="/path/to/space.yaml", source_hash="abc123")
         assert s["name"] == "myspace"
-        assert s["file_path"] == "/path/to/space.yaml"
-        assert s["file_hash"] == "abc123"
+        assert s["source_file"] == "/path/to/space.yaml"
+        assert s["source_hash"] == "abc123"
         assert "id" in s
 
     def test_create_duplicate_name_allowed(self) -> None:
         db = _make_db()
-        s1 = create_space(db, "dup", "/path.yaml")
-        s2 = create_space(db, "dup", "/other.yaml")
+        s1 = create_space(db, "dup", source_file="/path.yaml")
+        s2 = create_space(db, "dup", source_file="/other.yaml")
         assert s1["id"] != s2["id"]
         assert s1["name"] == s2["name"]
 
@@ -57,7 +57,7 @@ class TestCreateSpace:
 class TestGetSpace:
     def test_get_by_id(self) -> None:
         db = _make_db()
-        s = create_space(db, "myspace", "/path.yaml")
+        s = create_space(db, "myspace", source_file="/path.yaml")
         got = get_space(db, s["id"])
         assert got is not None
         assert got["name"] == "myspace"
@@ -68,7 +68,7 @@ class TestGetSpace:
 
     def test_get_by_name(self) -> None:
         db = _make_db()
-        create_space(db, "findme", "/path.yaml")
+        create_space(db, "findme", source_file="/path.yaml")
         got = get_space_by_name(db, "findme")
         assert got is not None
         assert got["name"] == "findme"
@@ -81,32 +81,32 @@ class TestListSpaces:
 
     def test_list_multiple(self) -> None:
         db = _make_db()
-        create_space(db, "b-space", "/b.yaml")
-        create_space(db, "a-space", "/a.yaml")
+        create_space(db, "b-space", source_file="/b.yaml")
+        create_space(db, "a-space", source_file="/a.yaml")
         spaces = list_spaces(db)
         assert len(spaces) == 2
         assert spaces[0]["name"] == "a-space"  # sorted by name
 
 
 class TestUpdateSpace:
-    def test_update_file_hash(self) -> None:
+    def test_update_source_hash(self) -> None:
         db = _make_db()
-        s = create_space(db, "myspace", "/path.yaml", "old")
-        updated = update_space(db, s["id"], file_hash="new")
+        s = create_space(db, "myspace", source_file="/path.yaml", source_hash="old")
+        updated = update_space(db, s["id"], source_hash="new")
         assert updated is not None
-        assert updated["file_hash"] == "new"
+        assert updated["source_hash"] == "new"
 
     def test_update_bad_column(self) -> None:
         import pytest
 
         db = _make_db()
-        s = create_space(db, "myspace", "/path.yaml")
+        s = create_space(db, "myspace", source_file="/path.yaml")
         with pytest.raises(ValueError, match="Cannot update"):
-            update_space(db, s["id"], name="bad")
+            update_space(db, s["id"], id="bad")
 
     def test_update_empty_noop(self) -> None:
         db = _make_db()
-        s = create_space(db, "myspace", "/path.yaml")
+        s = create_space(db, "myspace", source_file="/path.yaml")
         got = update_space(db, s["id"])
         assert got is not None
         assert got["name"] == "myspace"
@@ -115,7 +115,7 @@ class TestUpdateSpace:
 class TestDeleteSpace:
     def test_delete(self) -> None:
         db = _make_db()
-        s = create_space(db, "myspace", "/path.yaml")
+        s = create_space(db, "myspace", source_file="/path.yaml")
         assert delete_space(db, s["id"]) is True
         assert get_space(db, s["id"]) is None
 
@@ -127,7 +127,7 @@ class TestDeleteSpace:
 class TestSpacePaths:
     def test_sync_and_get(self) -> None:
         db = _make_db()
-        s = create_space(db, "myspace", "/path.yaml")
+        s = create_space(db, "myspace", source_file="/path.yaml")
         sync_space_paths(
             db,
             s["id"],
@@ -141,7 +141,7 @@ class TestSpacePaths:
 
     def test_sync_replaces(self) -> None:
         db = _make_db()
-        s = create_space(db, "myspace", "/path.yaml")
+        s = create_space(db, "myspace", source_file="/path.yaml")
         sync_space_paths(db, s["id"], [{"repo_url": "a", "local_path": "/a"}])
         sync_space_paths(db, s["id"], [{"repo_url": "b", "local_path": "/b"}])
         paths = get_space_paths(db, s["id"])
@@ -152,12 +152,12 @@ class TestSpacePaths:
 class TestConversationSpace:
     def test_count(self) -> None:
         db = _make_db()
-        s = create_space(db, "myspace", "/path.yaml")
+        s = create_space(db, "myspace", source_file="/path.yaml")
         assert count_space_conversations(db, s["id"]) == 0
 
     def test_resolve_by_cwd(self) -> None:
         db = _make_db()
-        s = create_space(db, "myspace", "/path.yaml")
+        s = create_space(db, "myspace", source_file="/path.yaml")
         sync_space_paths(db, s["id"], [{"repo_url": "https://github.com/org/repo.git", "local_path": "/tmp/repo"}])
         resolved = resolve_space_by_cwd(db, "/tmp/repo")
         assert resolved is not None
@@ -165,7 +165,7 @@ class TestConversationSpace:
 
     def test_resolve_by_cwd_walks_up_parents(self) -> None:
         db = _make_db()
-        s = create_space(db, "myspace", "/path.yaml")
+        s = create_space(db, "myspace", source_file="/path.yaml")
         sync_space_paths(db, s["id"], [{"repo_url": "", "local_path": "/tmp/repo"}])
         resolved = resolve_space_by_cwd(db, "/tmp/repo/src/subdir/nested")
         assert resolved is not None
@@ -238,8 +238,8 @@ class TestDiscoverSpaceFile:
 class TestGetSpacesByName:
     def test_returns_all_matches(self) -> None:
         db = _make_db()
-        s1 = create_space(db, "dup", "/a.yaml")
-        s2 = create_space(db, "dup", "/b.yaml")
+        s1 = create_space(db, "dup", source_file="/a.yaml")
+        s2 = create_space(db, "dup", source_file="/b.yaml")
         matches = get_spaces_by_name(db, "dup")
         assert len(matches) == 2
         ids = {m["id"] for m in matches}
@@ -254,7 +254,7 @@ class TestGetSpacesByName:
 class TestResolveSpace:
     def test_resolve_by_exact_id(self) -> None:
         db = _make_db()
-        s = create_space(db, "myspace", "/path.yaml")
+        s = create_space(db, "myspace", source_file="/path.yaml")
         match, candidates = resolve_space(db, s["id"])
         assert match is not None
         assert match["id"] == s["id"]
@@ -262,7 +262,7 @@ class TestResolveSpace:
 
     def test_resolve_by_name_unique(self) -> None:
         db = _make_db()
-        s = create_space(db, "unique", "/path.yaml")
+        s = create_space(db, "unique", source_file="/path.yaml")
         match, candidates = resolve_space(db, "unique")
         assert match is not None
         assert match["id"] == s["id"]
@@ -270,15 +270,15 @@ class TestResolveSpace:
 
     def test_resolve_by_name_ambiguous(self) -> None:
         db = _make_db()
-        create_space(db, "dup", "/a.yaml")
-        create_space(db, "dup", "/b.yaml")
+        create_space(db, "dup", source_file="/a.yaml")
+        create_space(db, "dup", source_file="/b.yaml")
         match, candidates = resolve_space(db, "dup")
         assert match is None
         assert len(candidates) == 2
 
     def test_resolve_by_id_prefix(self) -> None:
         db = _make_db()
-        s = create_space(db, "myspace", "/path.yaml")
+        s = create_space(db, "myspace", source_file="/path.yaml")
         prefix = s["id"][:8]
         match, candidates = resolve_space(db, prefix)
         assert match is not None

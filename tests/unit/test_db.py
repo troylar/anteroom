@@ -100,7 +100,6 @@ class TestInitDb:
             "slug",
             "type",
             "model",
-            "project_id",
             "working_dir",
             "folder_id",
             "user_id",
@@ -138,13 +137,6 @@ class TestInitDb:
         info = conn.execute("PRAGMA table_info(users)").fetchall()
         col_names = {r[1] for r in info}
         assert col_names == {"user_id", "display_name", "public_key", "created_at", "updated_at"}
-
-    def test_projects_have_user_columns(self) -> None:
-        conn = _init_in_memory()
-        info = conn.execute("PRAGMA table_info(projects)").fetchall()
-        col_names = {r[1] for r in info}
-        assert "user_id" in col_names
-        assert "user_display_name" in col_names
 
     def test_folders_have_user_columns(self) -> None:
         conn = _init_in_memory()
@@ -248,7 +240,7 @@ class TestMigrations:
 
         conn = self._init_legacy_db()
         _run_migrations(conn)
-        for table in ("conversations", "messages", "projects", "folders", "tags"):
+        for table in ("conversations", "messages", "folders", "tags"):
             info = conn.execute(f"PRAGMA table_info({table})").fetchall()
             col_names = {r[1] for r in info}
             assert "user_id" in col_names, f"user_id missing from {table}"
@@ -523,7 +515,6 @@ class TestCreateIndexes:
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'").fetchall()
         }
         expected = {
-            "idx_projects_name",
             "idx_spaces_name",
             "idx_space_paths_space",
             "idx_messages_conversation",
