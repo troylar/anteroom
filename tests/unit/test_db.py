@@ -809,6 +809,30 @@ class TestMigrationPaths:
         self._run_full_init(conn)
         self._run_full_init(conn)
 
+    def test_project_id_column_dropped_after_migration(self) -> None:
+        """Migrating a DB with project_id FK must drop the column to avoid FK errors."""
+        conn = self._make_pre_artifacts_db()
+        # Verify the baseline has project_id
+        cols_before = {r["name"] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        assert "project_id" in cols_before
+
+        self._run_full_init(conn)
+
+        # After migration, project_id must be gone and INSERT must work
+        cols_after = {r["name"] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        assert "project_id" not in cols_after
+
+        # Inserting a conversation must not raise "no such table: projects"
+        import uuid
+
+        now = "2026-01-01T00:00:00Z"
+        conn.execute(
+            "INSERT INTO conversations (id, title, type, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "test", "chat", now, now),
+        )
+        conn.commit()
+
     # -- Schema fingerprint --
 
     def test_schema_fingerprint(self) -> None:

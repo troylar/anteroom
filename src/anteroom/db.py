@@ -1053,13 +1053,18 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
         conn.execute("ALTER TABLE folders ADD COLUMN space_id TEXT DEFAULT NULL")
 
     # Eradicate projects tables and columns (v1.95.0 — #716)
+    # Must drop FK columns BEFORE dropping referenced tables, otherwise
+    # foreign_keys=ON causes "no such table" errors on INSERT.
     all_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "project_id" in cols:
+        conn.execute("UPDATE conversations SET project_id = NULL WHERE project_id IS NOT NULL")
+        try:
+            conn.execute("ALTER TABLE conversations DROP COLUMN project_id")
+        except sqlite3.OperationalError:
+            logger.warning("Could not drop project_id column (SQLite < 3.35); column left orphaned")
     if "project_sources" in all_tables:
         conn.execute("DROP TABLE project_sources")
     if "projects" in all_tables:
-        # Clear project_id FKs before dropping the table
-        if "project_id" in cols:
-            conn.execute("UPDATE conversations SET project_id = NULL WHERE project_id IS NOT NULL")
         conn.execute("DROP TABLE projects")
 
     # Drop UNIQUE constraint on space names (v1.79.0)
