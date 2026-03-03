@@ -601,6 +601,115 @@ def _run_web(
         raise
 
 
+def _run_start(config: AppConfig, config_path: Path, args: argparse.Namespace) -> None:
+    """Start the web UI server in the background."""
+    from .services.server_manager import ServerManager
+
+    mgr = ServerManager(data_dir=config.app.data_dir, host=config.app.host, port=config.app.port)
+    status = mgr.get_status()
+
+    if status.alive and status.responding:
+        print(f"Server is already running (PID {status.pid}) on port {status.port}.", file=sys.stderr)
+        sys.exit(1)
+
+    if status.alive and not status.responding:
+        print(f"Process {status.pid} exists but port {status.port} is not responding.", file=sys.stderr)
+        print("Use 'aroom stop' to clean up, then try again.", file=sys.stderr)
+        sys.exit(1)
+
+    extra_args: list[str] = []
+    if config.app.tls:
+        extra_args.append("--tls")
+
+    pid = mgr.start_background(
+        config_path,
+        debug=getattr(args, "debug", False),
+        extra_args=extra_args or None,
+    )
+
+    scheme = "https" if config.app.tls else "http"
+    probe_host = "127.0.0.1" if config.app.host in ("0.0.0.0", "::") else config.app.host
+    url = f"{scheme}://{probe_host}:{config.app.port}"
+
+    for _ in range(50):
+        if mgr.is_port_responding(probe_host, config.app.port, timeout=0.5):
+            break
+        time.sleep(0.1)
+
+    if mgr.is_port_responding(probe_host, config.app.port, timeout=1.0):
+        print(f"Anteroom started at {url} (PID {pid})")
+        if not getattr(args, "no_browser", False):
+            webbrowser.open(url)
+    else:
+        print(f"Anteroom starting at {url} (PID {pid})", file=sys.stderr)
+        print("  Server may still be initializing. Check: aroom status", file=sys.stderr)
+        print(f"  Logs: {mgr.log_path}", file=sys.stderr)
+
+
+def _run_stop(config: AppConfig) -> None:
+    """Stop the background web UI server."""
+    from .services.server_manager import ServerManager
+
+    mgr = ServerManager(data_dir=config.app.data_dir, host=config.app.host, port=config.app.port)
+    status = mgr.get_status()
+
+    if status.pid is None:
+        print("No server is running (no PID file found).")
+        return
+
+    if not status.alive:
+        mgr.clear_pid()
+        print(f"Cleaned up stale PID file (process {status.pid} was not running).")
+        return
+
+    print(f"Stopping Anteroom (PID {status.pid})...")
+    stopped = mgr.stop()
+    if stopped:
+        print("Server stopped.")
+    else:
+        print("Could not stop the server.", file=sys.stderr)
+        sys.exit(1)
+
+
+def _run_status(config: AppConfig) -> None:
+    """Show web UI server status."""
+    from .services.server_manager import ServerManager
+
+    mgr = ServerManager(data_dir=config.app.data_dir, host=config.app.host, port=config.app.port)
+    status = mgr.get_status()
+
+    if status.pid is None and not status.responding:
+        print("Server is not running.")
+        return
+
+    if status.responding:
+        scheme = "https" if config.app.tls else "http"
+        probe_host = "127.0.0.1" if config.app.host in ("0.0.0.0", "::") else config.app.host
+        url = f"{scheme}://{probe_host}:{status.port}"
+
+        uptime_str = ""
+        if status.start_time is not None:
+            elapsed = time.time() - status.start_time
+            hours, remainder = divmod(int(elapsed), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            if hours > 0:
+                uptime_str = f" (uptime: {hours}h {minutes}m)"
+            elif minutes > 0:
+                uptime_str = f" (uptime: {minutes}m {seconds}s)"
+            else:
+                uptime_str = f" (uptime: {seconds}s)"
+
+        pid_str = f"PID {status.pid}" if status.pid else "PID unknown"
+        print(f"Server is running at {url} ({pid_str}){uptime_str}")
+        print(f"  Log: {status.log_path}")
+    elif status.alive:
+        print(f"Process {status.pid} is running but port {status.port} is not responding.")
+        print(f"  Log: {status.log_path}")
+    else:
+        mgr.clear_pid()
+        print(f"Stale PID file found (process {status.pid} is not running). Cleaned up.")
+
+
 def _resolve_project_id(config: AppConfig, project_name: str) -> str:
     """Resolve a project name to its ID, or exit with an error."""
     from .db import get_db
@@ -1816,6 +1925,13 @@ def main() -> None:
         default=None,
         help="Path to team configuration file (YAML)",
     )
+    parser.add_argument(
+        "--_bg-worker",
+        dest="bg_worker",
+        action="store_true",
+        default=False,
+        help=argparse.SUPPRESS,
+    )
 
     # `aroom projects` subcommand
     subparsers.add_parser("projects", help="List named projects")
@@ -1902,6 +2018,16 @@ def main() -> None:
     space_move_root_parser = space_subparsers.add_parser("move-root", help="Change repos root for a space")
     space_move_root_parser.add_argument("name", help="Space name")
     space_move_root_parser.add_argument("new_root", help="New repos root directory")
+
+    # `aroom start` subcommand
+    start_parser = subparsers.add_parser("start", help="Start the web UI server in the background")
+    start_parser.add_argument("--no-browser", action="store_true", help="Do not open browser on start")
+
+    # `aroom stop` subcommand
+    subparsers.add_parser("stop", help="Stop the background web UI server")
+
+    # `aroom status` subcommand
+    subparsers.add_parser("status", help="Show web UI server status")
 
     # `aroom artifact import` subcommand
     art_import_parser = artifact_subparsers.add_parser("import", help="Import skills/instructions into artifacts")
@@ -2055,6 +2181,22 @@ def main() -> None:
 
     if args.command == "space":
         _run_space(config, args)
+        return
+
+    if args.command == "start":
+        _run_start(config, config_path, args)
+        return
+
+    if args.command == "stop":
+        _run_stop(config)
+        return
+
+    if args.command == "status":
+        _run_status(config)
+        return
+
+    if getattr(args, "bg_worker", False):
+        _run_web(config, config_path, debug=args.debug, enforced_fields=enforced_fields)
         return
 
     # Resolve --project <name> to project_id
