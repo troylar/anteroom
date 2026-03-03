@@ -709,7 +709,7 @@ class AIService:
         try:
             response = await self.client.chat.completions.create(
                 model=self.config.model,
-                messages=messages,
+                messages=messages,  # type: ignore[arg-type]
                 max_completion_tokens=max_completion_tokens,
             )
             return response.choices[0].message.content if response.choices else None

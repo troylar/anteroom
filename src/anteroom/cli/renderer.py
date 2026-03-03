@@ -94,8 +94,8 @@ def use_fullscreen_output(layout: Any, invalidate_fn: Any) -> None:
     _repl_mode = True
 
     writer = OutputPaneWriter(layout.output, invalidate_fn)
-    console = Console(file=writer, force_terminal=True)
-    _stdout_console = Console(file=writer, force_terminal=True)
+    console = Console(file=writer, force_terminal=True)  # type: ignore[arg-type]
+    _stdout_console = Console(file=writer, force_terminal=True)  # type: ignore[arg-type]
     _stdout = writer  # type: ignore[assignment]
 
 
@@ -639,7 +639,7 @@ def _output_summary(output: Any) -> str:
                 return oneline[:57] + "..."
             return oneline
     if "stdout" in output:
-        stdout = output.get("stdout", "")
+        stdout: str = output.get("stdout", "")
         if stdout:
             lines = stdout.count("\n") + 1
             oneline = stdout.split("\n")[0].strip()

@@ -1445,11 +1445,11 @@ async def run_cli(
                 rl_v = _rate_limiter.check(tool_name)
                 if rl_v and rl_v.exceeded and _rate_limiter.config.action == "block":
                     return {"error": rl_v.reason, "safety_blocked": True, "rate_limited": True}
-            result = await mcp_manager.call_tool(tool_name, arguments)
+            mcp_result: dict[str, Any] = await mcp_manager.call_tool(tool_name, arguments)
             if _rate_limiter:
-                _rate_limiter.record_call(success="error" not in result)
-            _audit_tool_call(audit_writer, tool_name, arguments, result, conversation_id)
-            return result
+                _rate_limiter.record_call(success="error" not in mcp_result)
+            _audit_tool_call(audit_writer, tool_name, arguments, mcp_result, conversation_id)
+            return mcp_result
         raise ValueError(f"Unknown tool: {tool_name}")
 
     # Build unified tool list (exclude canvas tools — they require web UI context)
@@ -2315,7 +2315,7 @@ async def _run_repl(
             mcp_statuses=mcp_manager.get_server_statuses() if mcp_manager else None,
         )
 
-    def _bottom_toolbar() -> list[tuple[str, str]]:
+    def _bottom_toolbar() -> list[tuple[str, str] | tuple[str, str, Any]]:
         if len(ai_messages) != _toolbar_msg_count[0] or not _toolbar_cache:
             _toolbar_refresh()
         return _toolbar_cache
@@ -2438,7 +2438,7 @@ async def _run_repl(
             _git_branch_pending[0] = False
         _fs_app.invalidate()
 
-    def _header_fn() -> list[tuple[str, str]]:
+    def _header_fn() -> list[tuple[str, str] | tuple[str, str, Any]]:
         """Build header fragments from current session state."""
         # Schedule background git branch refresh when cache is stale
         now = time.monotonic()
@@ -3769,7 +3769,7 @@ async def _run_repl(
                         if not target:
                             renderer.console.print(f"[{CHROME}]Usage: /space switch <name>[/{CHROME}]\n")
                             continue
-                        sp = await _resolve_space(target)
+                        sp: dict[str, Any] | None = await _resolve_space(target)
                         if not sp:
                             renderer.render_error(f"Space '{target}' not found. Run /spaces to list available spaces.")
                             continue
@@ -3786,7 +3786,7 @@ async def _run_repl(
                         if not target:
                             renderer.console.print(f"[{CHROME}]Usage: /space show <name>[/{CHROME}]\n")
                             continue
-                        sp = await _resolve_space(target)
+                        sp = await _resolve_space(target)  # type: ignore[assignment]
                         if not sp:
                             renderer.render_error(f"Space '{target}' not found.")
                             continue
@@ -3994,9 +3994,9 @@ async def _run_repl(
                             renderer.render_error(f"Not a directory: {_map_path}")
                             continue
                         try:
-                            existing = _get_sp_paths2(db, _active_space[0]["id"])
-                            existing.append({"local_path": str(_map_path), "repo_url": ""})
-                            _sync_sp_paths(db, _active_space[0]["id"], existing)
+                            existing_paths: list[dict[str, Any]] = _get_sp_paths2(db, _active_space[0]["id"])
+                            existing_paths.append({"local_path": str(_map_path), "repo_url": ""})
+                            _sync_sp_paths(db, _active_space[0]["id"], existing_paths)
                             renderer.console.print(
                                 f"[green]Mapped[/green] {_map_path} to space {_active_space[0]['name']}\n"
                             )
@@ -4078,14 +4078,15 @@ async def _run_repl(
                                 for err in errors:
                                     renderer.console.print(f"[red]  {err}[/red]")
                                 continue
-                            result = packs_service.install_pack(db, manifest, pack_path)
+                            install_result: dict[str, Any] = packs_service.install_pack(db, manifest, pack_path)
                             renderer.console.print(
                                 f"[green]Installed[/green] @{manifest.namespace}/{manifest.name}"
-                                f" v{manifest.version} ({result.get('artifact_count', 0)} artifacts)"
+                                f" v{manifest.version} ({install_result.get('artifact_count', 0)} artifacts)"
                             )
-                            if _artifact_registry is not None:  # noqa: F821
-                                _artifact_registry.load_from_db(db)  # noqa: F821
-                                skill_registry.load_from_artifacts(_artifact_registry)  # noqa: F821
+                            if _artifact_registry is not None:  # noqa: F821  # type: ignore[name-defined]
+                                _artifact_registry.load_from_db(db)  # noqa: F821  # type: ignore[name-defined]
+                                if skill_registry is not None:
+                                    skill_registry.load_from_artifacts(_artifact_registry)  # noqa: F821  # type: ignore[name-defined]
                         except ValueError as exc:
                             renderer.console.print(f"[red]{exc}[/red]")
                         renderer.console.print()
@@ -4269,10 +4270,10 @@ async def _run_repl(
                                 for err in errors:
                                     renderer.console.print(f"[red]  {err}[/red]")
                                 continue
-                            result = packs_service.update_pack(db, manifest, pack_path)
+                            update_result: dict[str, Any] = packs_service.update_pack(db, manifest, pack_path)
                             renderer.console.print(
                                 f"[green]Updated[/green] @{manifest.namespace}/{manifest.name}"
-                                f" v{manifest.version} ({result.get('artifact_count', 0)} artifacts)"
+                                f" v{manifest.version} ({update_result.get('artifact_count', 0)} artifacts)"
                             )
                         except ValueError as exc:
                             renderer.console.print(f"[red]{exc}[/red]")
@@ -4377,7 +4378,8 @@ async def _run_repl(
                 elif cmd == "/artifact-check":
                     from ..services import artifact_health
 
-                    _ahc_report = artifact_health.run_health_check(db, project_dir=working_dir)
+                    _proj_dir = Path(working_dir) if working_dir else None
+                    _ahc_report = artifact_health.run_health_check(db, project_dir=_proj_dir)
                     renderer.console.print()
                     renderer.console.print("[bold]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/bold]")
                     renderer.console.print("[bold]  🏥 Artifact Health Check[/bold]")
@@ -4612,7 +4614,7 @@ async def _run_repl(
                         if renderer.is_fullscreen() and renderer.get_fullscreen_layout() is not None:
                             convs = storage.list_conversations(db, limit=20)
                             if not convs:
-                                renderer.render_info("No conversations found.")
+                                renderer.console.print("[dim]No conversations found.[/dim]")
                                 continue
                             for c in convs:
                                 title = (c.get("title") or "Untitled")[:35]

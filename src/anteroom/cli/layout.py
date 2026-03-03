@@ -720,7 +720,7 @@ class AnteroomLayout:
         """Append ANSI-encoded text (e.g. from Rich console) to the output."""
         from prompt_toolkit.formatted_text import ANSI, to_formatted_text
 
-        fragments = _strip_bg(to_formatted_text(ANSI(ansi_text)))
+        fragments = _strip_bg(list(to_formatted_text(ANSI(ansi_text))))  # type: ignore[arg-type]
         self._output.append(fragments)
 
     def scroll_output_up(self, lines: int = 10) -> None:
@@ -813,7 +813,7 @@ class OutputPaneWriter:
         text = re.sub(r" +$", "", text, flags=re.MULTILINE)
         from prompt_toolkit.formatted_text import ANSI, to_formatted_text
 
-        fragments = _strip_bg(to_formatted_text(ANSI(text)))
+        fragments = _strip_bg(list(to_formatted_text(ANSI(text))))  # type: ignore[arg-type]
         self._output.append(fragments)
         self._invalidate()
 
