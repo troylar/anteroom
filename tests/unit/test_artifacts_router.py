@@ -148,12 +148,13 @@ class TestDeleteArtifactEndpoint:
 class TestListArtifactsVersion:
     def test_list_includes_version(self) -> None:
         app = _make_app()
+        # The batch query calls db.execute(...).fetchall() directly
+        app.state.db.execute.return_value.fetchall.return_value = [
+            ("a1", 3),
+        ]
         with patch("anteroom.routers.artifacts.artifact_storage") as mock_store:
             mock_store.list_artifacts.return_value = [
                 {"id": "a1", "fqn": "@ns/skill/x", "type": "skill", "content": "hello"},
-            ]
-            mock_store.list_artifact_versions.return_value = [
-                {"id": "v1", "version": 3, "content": "hello"},
             ]
             client = TestClient(app)
             resp = client.get("/api/artifacts")
@@ -164,11 +165,12 @@ class TestListArtifactsVersion:
 
     def test_list_version_none_when_no_versions(self) -> None:
         app = _make_app()
+        # Empty fetchall = no versions in DB
+        app.state.db.execute.return_value.fetchall.return_value = []
         with patch("anteroom.routers.artifacts.artifact_storage") as mock_store:
             mock_store.list_artifacts.return_value = [
                 {"id": "a1", "fqn": "@ns/skill/x", "type": "skill", "content": "hello"},
             ]
-            mock_store.list_artifact_versions.return_value = []
             client = TestClient(app)
             resp = client.get("/api/artifacts")
             assert resp.status_code == 200

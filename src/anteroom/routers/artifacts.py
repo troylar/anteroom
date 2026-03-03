@@ -22,10 +22,23 @@ async def list_artifacts(
     """List all artifacts with optional filtering by type, namespace, or source."""
     db = request.app.state.db
     results = artifact_storage.list_artifacts(db, artifact_type=type, namespace=namespace, source=source)
+    # Batch-fetch latest version for all artifacts in a single query
+    artifact_ids = [r["id"] for r in results]
+    version_map: dict[str, int] = {}
+    if artifact_ids:
+        placeholders = ",".join("?" for _ in artifact_ids)
+        rows = db.execute(
+            f"SELECT artifact_id, MAX(version) as max_ver FROM artifact_versions"  # noqa: S608
+            f" WHERE artifact_id IN ({placeholders}) GROUP BY artifact_id",
+            artifact_ids,
+        ).fetchall()
+        for row in rows:
+            aid = row[0] if isinstance(row, (tuple, list)) else row["artifact_id"]
+            ver = row[1] if isinstance(row, (tuple, list)) else row["max_ver"]
+            version_map[aid] = ver
     for r in results:
         r.pop("content", None)
-        versions = artifact_storage.list_artifact_versions(db, r["id"])
-        r["version"] = versions[0]["version"] if versions else None
+        r["version"] = version_map.get(r["id"])
     return results
 
 

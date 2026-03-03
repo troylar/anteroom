@@ -687,12 +687,16 @@ def _run_artifact(config: AppConfig, args: argparse.Namespace) -> None:
     console = Console()
 
     if action == "list":
-        arts = artifact_storage.list_artifacts(
-            db,
-            artifact_type=getattr(args, "type", None),
-            namespace=getattr(args, "namespace", None),
-            source=getattr(args, "source", None),
-        )
+        try:
+            arts = artifact_storage.list_artifacts(
+                db,
+                artifact_type=getattr(args, "type", None),
+                namespace=getattr(args, "namespace", None),
+                source=getattr(args, "source", None),
+            )
+        except ValueError as e:
+            console.print(f"[red]Invalid filter: {e}[/red]")
+            sys.exit(1)
         if not arts:
             console.print("[dim]No artifacts found.[/dim]")
             return
@@ -805,6 +809,9 @@ def _run_artifact(config: AppConfig, args: argparse.Namespace) -> None:
         art = artifact_storage.get_artifact_by_fqn(db, fqn)
         if not art:
             console.print(f"[red]Artifact not found:[/red] {escape(fqn)}")
+            sys.exit(1)
+        if art.get("source") == "built_in":
+            console.print("[red]Cannot delete built-in artifacts.[/red]")
             sys.exit(1)
         artifact_storage.delete_artifact(db, art["id"])
         console.print(f"[green]Deleted[/green] {escape(fqn)}")
@@ -1217,6 +1224,7 @@ def _run_space(config: AppConfig, args: argparse.Namespace) -> None:
         count_space_conversations,
         create_space,
         delete_space,
+        get_space_by_name,
         list_spaces,
         resolve_space,
         sync_space_paths,
@@ -1304,6 +1312,12 @@ def _run_space(config: AppConfig, args: argparse.Namespace) -> None:
             console.print("  Use [bold]aroom space load[/bold] to register it, or edit it directly.")
             return
 
+        existing = get_space_by_name(db, name)
+        if existing:
+            console.print(f"[yellow]Space '{escape(name)}' already exists.[/yellow]")
+            console.print(f"  Use [bold]aroom space show {escape(name)}[/bold] to view it.")
+            return
+
         write_space_template(target, name)
         s = create_space(db, name, str(target), file_hash(target))
         # Map cwd so resolve_space_by_cwd() finds this space
@@ -1325,6 +1339,11 @@ def _run_space(config: AppConfig, args: argparse.Namespace) -> None:
             console.print("[red]Validation errors:[/red]")
             for e in errors:
                 console.print(f"  - {e}")
+            return
+        existing = get_space_by_name(db, space_cfg.name)
+        if existing:
+            console.print(f"[yellow]Space '{escape(space_cfg.name)}' already exists.[/yellow]")
+            console.print(f"  Use [bold]aroom space show {escape(space_cfg.name)}[/bold] to view it.")
             return
         s = create_space(db, space_cfg.name, str(path), file_hash(path))
         console.print(f"[green]Loaded space:[/green] {escape(s['name'])} (id: {s['id'][:8]}...)")
