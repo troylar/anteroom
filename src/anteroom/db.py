@@ -979,6 +979,77 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
     if "source_file" in space_cols and "file_path" not in space_cols:
         conn.execute("ALTER TABLE spaces RENAME COLUMN source_file TO file_path")
         conn.execute("ALTER TABLE spaces RENAME COLUMN source_hash TO file_hash")
+    # Repair broken FK references from v1.94.4 table-rebuild migration (v1.94.5)
+    # The table-rebuild approach with foreign_keys=ON caused SQLite to rewrite FK targets in
+    # messages, conversation_tags, and canvases to point to "_conversations_old" instead of
+    # "conversations". Detect and repair by rebuilding affected tables with correct FKs.
+    _repair_broken_fk_refs = []
+    for _tbl in ("messages", "conversation_tags", "canvases"):
+        _ddl_row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (_tbl,)).fetchone()
+        if _ddl_row and "_conversations_old" in (_ddl_row[0] if isinstance(_ddl_row, tuple) else _ddl_row["sql"]):
+            _repair_broken_fk_refs.append(_tbl)
+    if _repair_broken_fk_refs:
+        logger.warning("Repairing broken FK references in: %s", _repair_broken_fk_refs)
+        conn.execute("PRAGMA foreign_keys=OFF")
+        if "messages" in _repair_broken_fk_refs:
+            conn.execute(
+                """CREATE TABLE messages_repaired (
+                    id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+                    content TEXT NOT NULL DEFAULT '', user_id TEXT DEFAULT NULL,
+                    user_display_name TEXT DEFAULT NULL, created_at TEXT NOT NULL,
+                    position INTEGER NOT NULL, prompt_tokens INTEGER DEFAULT NULL,
+                    completion_tokens INTEGER DEFAULT NULL, total_tokens INTEGER DEFAULT NULL,
+                    model TEXT DEFAULT NULL,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+                )"""
+            )
+            conn.execute("INSERT INTO messages_repaired SELECT * FROM messages")
+            conn.execute("DROP TABLE messages")
+            conn.execute("ALTER TABLE messages_repaired RENAME TO messages")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, position)")
+        if "conversation_tags" in _repair_broken_fk_refs:
+            conn.execute(
+                """CREATE TABLE conversation_tags_repaired (
+                    conversation_id TEXT NOT NULL, tag_id TEXT NOT NULL,
+                    PRIMARY KEY (conversation_id, tag_id),
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+                )"""
+            )
+            conn.execute("INSERT INTO conversation_tags_repaired SELECT * FROM conversation_tags")
+            conn.execute("DROP TABLE conversation_tags")
+            conn.execute("ALTER TABLE conversation_tags_repaired RENAME TO conversation_tags")
+        if "canvases" in _repair_broken_fk_refs:
+            conn.execute(
+                """CREATE TABLE canvases_repaired (
+                    id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT 'Untitled', content TEXT NOT NULL DEFAULT '',
+                    language TEXT DEFAULT NULL, version INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    user_id TEXT DEFAULT NULL, user_display_name TEXT DEFAULT NULL,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+                )"""
+            )
+            conn.execute("INSERT INTO canvases_repaired SELECT * FROM canvases")
+            conn.execute("DROP TABLE canvases")
+            conn.execute("ALTER TABLE canvases_repaired RENAME TO canvases")
+        # Recreate FTS triggers dropped with the messages table
+        conn.execute(
+            """CREATE TRIGGER IF NOT EXISTS fts_messages_insert AFTER INSERT ON messages BEGIN
+                UPDATE conversations_fts SET content = content || ' ' || NEW.content
+                WHERE conversation_id = NEW.conversation_id; END"""
+        )
+        conn.execute(
+            """CREATE TRIGGER IF NOT EXISTS fts_messages_delete AFTER DELETE ON messages BEGIN
+                UPDATE conversations_fts SET content = (
+                    SELECT COALESCE(GROUP_CONCAT(content, ' '), '')
+                    FROM messages WHERE conversation_id = OLD.conversation_id
+                ) WHERE conversation_id = OLD.conversation_id; END"""
+        )
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.commit()
+        logger.info("FK repair complete for: %s", _repair_broken_fk_refs)
     conn.execute(
         """CREATE TABLE IF NOT EXISTS space_paths (
             id TEXT PRIMARY KEY,
