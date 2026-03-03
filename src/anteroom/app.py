@@ -675,13 +675,13 @@ def create_app(config: AppConfig | None = None, enforced_fields: list[str] | Non
         allow_credentials=True,
     )
 
-    app.add_middleware(SecurityHeadersMiddleware, tls_enabled=config.app.tls)
-    app.add_middleware(MaxBodySizeMiddleware)
-    app.add_middleware(RateLimitMiddleware, max_requests=120, window_seconds=60)
+    app.add_middleware(SecurityHeadersMiddleware, tls_enabled=config.app.tls)  # type: ignore[arg-type]
+    app.add_middleware(MaxBodySizeMiddleware)  # type: ignore[arg-type]
+    app.add_middleware(RateLimitMiddleware, max_requests=120, window_seconds=60)  # type: ignore[arg-type]
 
     auth_token = _derive_auth_token(config)
     token_hash = hashlib.sha256(auth_token.encode()).hexdigest()
-    app.add_middleware(
+    app.add_middleware(  # type: ignore[arg-type]
         BearerTokenMiddleware,
         token_hash=token_hash,
         auth_token=auth_token,

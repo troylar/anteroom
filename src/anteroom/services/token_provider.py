@@ -64,7 +64,7 @@ class TokenProvider:
                 f"api_key_command exited with code {result.returncode}" + (f": {stderr}" if stderr else "")
             )
 
-        token = result.stdout.strip()
+        token: str = result.stdout.strip()
         if not token:
             raise TokenProviderError("api_key_command returned empty output")
 

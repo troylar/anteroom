@@ -1481,6 +1481,11 @@ body {
 .message:hover .message-actions {
     opacity: 1;
 }
+@media (hover: none) {
+    .message-actions {
+        opacity: 1;
+    }
+}
 
 .btn-action-icon {
     background: none;

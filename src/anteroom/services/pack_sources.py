@@ -298,7 +298,8 @@ def get_source_ref(cache_path: Path) -> str | None:
     if result.returncode != 0:
         return None
 
-    return result.stdout.strip()
+    ref: str = result.stdout.strip()
+    return ref
 
 
 def list_cached_sources(data_dir: Path) -> list[CachedSource]:

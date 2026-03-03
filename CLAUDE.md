@@ -24,6 +24,7 @@ pytest tests/e2e/ -v                # E2e tests (requires uvx/npx)
 pytest tests/e2e/ -m real_ai -v    # Agent evals (requires API key)
 ruff check src/ tests/              # Lint
 ruff format src/ tests/             # Format (120 char line length)
+mypy src/ --ignore-missing-imports  # Type check (must pass with 0 errors)
 
 # Evals and demos
 npx promptfoo eval --config evals/promptfoo.yaml   # Prompt regression
@@ -124,7 +125,7 @@ CLI (cli/)         ──┘         │
 - **`services/server_manager.py`** — Background web server process management. `ServerManager` class with PID file lifecycle (JSON format: pid, port, host, start_time), process liveness checks (`os.kill(pid, 0)` on Unix, `OpenProcess` on Windows), TCP port probing, cross-platform start (`subprocess.Popen` with `start_new_session=True` on Unix, `CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS` on Windows) and stop (`SIGTERM` → `SIGKILL` on Unix, `TerminateProcess` on Windows). PID files at `data_dir/anteroom-{port}.pid` support multiple instances. Log output to `data_dir/aroom.log` with 10MB rotation. `ServerStatus` frozen dataclass for status snapshots
 
 #### Web UI (routers/)
-- **`routers/chat.py`** — SSE chat streaming with dataclass-based architecture: `ChatRequestContext`, `WebConfirmContext`, `ToolExecutorContext`, `StreamContext`. Extracted functions: `_parse_chat_request()`, `_resolve_sources()`, `_build_tool_list()`, `_build_chat_system_prompt()`, `_web_confirm_tool()`, `_execute_web_tool()`, `_stream_chat_events()`. `_build_chat_system_prompt()` returns `(str, dict)` tuple — prompt text and metadata dict (`rag_status`, `rag_chunks`, `sources_truncated`). `prompt_meta` SSE event emits metadata to web UI. `_resolve_sources()` enforces space/project scoping via `_allowed_ids` for direct, tag, and group source resolution. Supports prompt queuing (max 10), source injection (50K char limit), plan mode, sub-agents, skill registry integration (injects `invoke_skill` tool and `<available_skills>` catalog into system prompt)
+- **`routers/chat.py`** — SSE chat streaming with dataclass-based architecture: `ChatRequestContext`, `WebConfirmContext`, `ToolExecutorContext`, `StreamContext`. Extracted functions: `_parse_chat_request()`, `_resolve_sources()`, `_build_tool_list()`, `_build_chat_system_prompt()`, `_web_confirm_tool()`, `_execute_web_tool()`, `_stream_chat_events()`. `_build_chat_system_prompt()` returns `(str, dict)` tuple — prompt text and metadata dict (`rag_status`, `rag_chunks`, `sources_truncated`). `prompt_meta` SSE event emits metadata to web UI. `user_message` SSE event emits `{id, position}` for client-side action button attachment. `done` event enriched with `assistant_message_id` and `assistant_message_position`. `StreamContext.user_msg` carries the stored user message dict. `_resolve_sources()` enforces space/project scoping via `_allowed_ids` for direct, tag, and group source resolution. Supports prompt queuing (max 10), source injection (50K char limit), plan mode, sub-agents, skill registry integration (injects `invoke_skill` tool and `<available_skills>` catalog into system prompt)
 - **`routers/sources.py`** — Sources API: CRUD, file upload, tags, groups, project linking
 - **`routers/search.py`** — Semantic (vector) and hybrid (FTS5 + vector) search. Requires sqlite-vec
 - **`routers/proxy.py`** — OpenAI-compatible proxy for external tools. Opt-in via `proxy.enabled`
@@ -236,8 +237,9 @@ PyPI: `anteroom`. Deploy via `/deploy` skill (merge PR, CI, version bump, build,
 - **Agent evals** (`tests/e2e/test_agent_evals.py`): 10 tests with real AI via `aroom exec --json`. Marker: `real_ai`. Auto-skip without API key. Uses `--temperature 0 --seed 42` for reproducibility
 - **Prompt regression** (`evals/`): promptfoo suites via OpenAI-compatible proxy. `promptfoo.yaml` (11 prompt regression tests), `agentic.yaml` (6 exec-mode tests), `redteam.yaml` (adversarial). Run: `npx promptfoo eval --config evals/promptfoo.yaml`
 - **Demo recordings** (`demos/`): VHS tape scripts producing reproducible GIFs. 3 demos: quickstart, tools, exec-mode. Run: `cd demos && make demos`
+- **Type checking**: `mypy src/ --ignore-missing-imports` must pass with zero errors. All new and modified Python code must be fully type-annotated. Do not introduce new mypy errors — fix any that exist in files you touch
 - Coverage target: 80%+. See `docs/advanced/testing.md` for full guide
 
 ## CI
 
-GitHub Actions: Python 3.10-3.14 matrix, ruff lint+format, pytest with coverage, pip-audit, Semgrep SAST, CodeQL.
+GitHub Actions: Python 3.10-3.14 matrix, ruff lint+format, mypy type check, pytest with coverage, pip-audit, Semgrep SAST, CodeQL.

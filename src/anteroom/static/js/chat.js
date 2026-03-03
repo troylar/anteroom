@@ -8,7 +8,9 @@ const Chat = (() => {
     let _rewindPosition = null;
     let _rewindMsgEl = null;
     let _lastSentText = '';
+    let _pendingUserMessages = [];  // FIFO queue of {el, text} for SSE correlation
     let _conversationType = 'chat';
+    const _UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
     // Remote collaboration state
     let _remoteAssistantEl = null;
@@ -137,6 +139,7 @@ const Chat = (() => {
 
         _lastSentText = text;
         const msgEl = appendMessage('user', text);
+        _pendingUserMessages.push({ el: msgEl, text: text });
         input.value = '';
         input.style.height = 'auto';
 
@@ -277,6 +280,7 @@ const Chat = (() => {
         } finally {
             hideThinking();
             setStreaming(false);
+            _pendingUserMessages = [];
         }
     }
 
@@ -341,9 +345,17 @@ const Chat = (() => {
                     App._showPlanContent(data.content);
                 }
                 break;
+            case 'user_message':
+                if (_pendingUserMessages.length > 0 && typeof data.id === 'string'
+                    && _UUID_RE.test(data.id) && Number.isInteger(data.position)) {
+                    const pending = _pendingUserMessages.shift();
+                    const userMsgData = { id: data.id, position: data.position, content: pending.text };
+                    addMessageActions(pending.el, 'user', pending.text, userMsgData, { isLast: false });
+                }
+                break;
             case 'done':
                 hideThinking();
-                finalizeAssistant();
+                finalizeAssistant(data);
                 break;
             case 'prompt_meta':
                 if (data.sources_truncated) {
@@ -384,13 +396,18 @@ const Chat = (() => {
         scrollToBottom();
     }
 
-    function finalizeAssistant() {
+    function finalizeAssistant(doneData) {
         if (!currentAssistantEl) return;
         const contentEl = currentAssistantEl.querySelector('.message-content');
         contentEl.innerHTML = renderMarkdown(currentAssistantContent);
         renderMath(contentEl);
         addCodeCopyButtons(contentEl);
-        addMessageActions(currentAssistantEl, 'assistant', currentAssistantContent, null, { isLast: true });
+        let msgData = null;
+        if (doneData && typeof doneData.assistant_message_id === 'string'
+            && _UUID_RE.test(doneData.assistant_message_id) && Number.isInteger(doneData.assistant_message_position)) {
+            msgData = { id: doneData.assistant_message_id, position: doneData.assistant_message_position };
+        }
+        addMessageActions(currentAssistantEl, 'assistant', currentAssistantContent, msgData, { isLast: true });
         currentAssistantEl = null;
         currentAssistantContent = '';
         scrollToBottom();

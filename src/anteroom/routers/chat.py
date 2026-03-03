@@ -932,6 +932,7 @@ class StreamContext:
     token_throttle_interval: float = 0.1
     last_token_broadcast: float = 0.0
     prompt_meta: dict[str, Any] = field(default_factory=dict)
+    user_msg: dict[str, Any] | None = None
 
 
 _DISCONNECT_POLL_INTERVAL = 3  # seconds
@@ -1021,6 +1022,13 @@ async def _stream_chat_events(ctx: StreamContext) -> Any:
     # Emit prompt metadata (RAG status, source info) as an early event
     if ctx.prompt_meta:
         yield {"event": "prompt_meta", "data": json.dumps(ctx.prompt_meta)}
+
+    # Emit user message metadata so the client can attach action buttons
+    if ctx.user_msg:
+        yield {
+            "event": "user_message",
+            "data": json.dumps({"id": ctx.user_msg["id"], "position": ctx.user_msg["position"]}),
+        }
 
     try:
         _planning_cfg = ctx.planning_config
@@ -1458,7 +1466,11 @@ async def _stream_chat_events(ctx: StreamContext) -> Any:
                         },
                     )
 
-                yield {"event": "done", "data": json.dumps({"plan_mode": ctx.plan_mode})}
+                _done_payload: dict[str, Any] = {"plan_mode": ctx.plan_mode}
+                if current_assistant_msg:
+                    _done_payload["assistant_message_id"] = current_assistant_msg["id"]
+                    _done_payload["assistant_message_position"] = current_assistant_msg["position"]
+                yield {"event": "done", "data": json.dumps(_done_payload)}
 
     except Exception:
         logger.exception("Chat stream error")
@@ -1975,6 +1987,7 @@ async def chat(conversation_id: str, request: Request) -> Any:
         canvas_needs_approval=_canvas_needs_approval(safety_config, tool_registry),
         request=request,
         prompt_meta=prompt_meta,
+        user_msg=user_msg,
     )
 
     return EventSourceResponse(_stream_chat_events(stream_ctx))

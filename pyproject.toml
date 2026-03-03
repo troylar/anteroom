@@ -87,6 +87,7 @@ dev = [
     "httpx>=0.25.0",
     "ruff>=0.15.4",
     "mypy>=1.15.0",
+    "types-PyYAML>=6.0.0",
     "pip-audit>=2.9.0",
     "semgrep>=1.152.0",
 ]
