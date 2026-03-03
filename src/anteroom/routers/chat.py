@@ -402,6 +402,7 @@ async def _build_chat_system_prompt(
     skill_registry: Any = None,
     space_id: str | None = None,
     project_id: str | None = None,
+    attachment_filenames: list[str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Assemble the extra system prompt from all context sources.
 
@@ -476,6 +477,19 @@ async def _build_chat_system_prompt(
 
     # Structural separation: everything below this marker is external/untrusted data
     extra += untrusted_section_marker()
+
+    # Attachment guidance — placed in the untrusted section because filenames are user-controlled
+    if attachment_filenames:
+        sanitized = [sanitize_trust_tags(fn) for fn in attachment_filenames]
+        names = ", ".join(sanitized)
+        extra += (
+            "\n\n## Attached Files\n"
+            f"The user has attached the following file(s): {names}\n"
+            "Their content has been extracted and included directly in the user's message below. "
+            "Read and use that content to answer the user's request. "
+            "Do NOT use file tools (read_file, pptx, xlsx, docx, glob_files, etc.) to re-read these files — "
+            "the content is already available in the conversation."
+        )
 
     # Canvas context (cap at 10K chars)
     canvas_context_limit = 10_000
@@ -1875,6 +1889,8 @@ async def chat(conversation_id: str, request: Request) -> Any:
     is_first_message = not regenerate and len(history) <= 1
     first_user_text = message_text
 
+    _att_filenames = [a["filename"] for a in attachment_contents if a.get("filename")] if attachment_contents else []
+
     extra_system_prompt, prompt_meta = await _build_chat_system_prompt(
         ai_service=ai_service,
         tool_registry=tool_registry,
@@ -1897,6 +1913,7 @@ async def chat(conversation_id: str, request: Request) -> Any:
         skill_registry=getattr(request.app.state, "skill_registry", None),
         space_id=space_id,
         project_id=project_id,
+        attachment_filenames=_att_filenames,
     )
 
     # Build per-request safety approval context
