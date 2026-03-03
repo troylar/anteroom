@@ -597,7 +597,7 @@ def _expand_file_references(text: str, working_dir: str, file_max_chars: int = 1
                     return (
                         f'\n<file path="{raw_path}">'
                         f"\n[Binary file: {resolved.name} ({mime})"
-                        f" — use tools to read this file at: {resolved}]"
+                        f" — use tools to read this file]"
                         f"\n</file>\n"
                     )
                 except OSError:

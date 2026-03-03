@@ -1757,7 +1757,6 @@ async def chat(conversation_id: str, request: Request) -> Any:
                                     }
                                 )
                             else:
-                                file_path = str(Path(data_dir) / att.get("storage_path", ""))
                                 attachment_contents.append(
                                     {
                                         "type": "text",
@@ -1765,7 +1764,7 @@ async def chat(conversation_id: str, request: Request) -> Any:
                                         "content": (
                                             f"[Attached file: {f.filename} ({validated_mime})"
                                             f" — content could not be extracted automatically."
-                                            f" The file was saved to: {file_path}]"
+                                            f" Use the appropriate tool to read this file.]"
                                         ),
                                     }
                                 )
