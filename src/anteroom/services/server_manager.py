@@ -139,7 +139,9 @@ class ServerManager:
 
         if info is not None:
             pid = info.get("pid")
-            start_time = info.get("start_time")
+            raw_time = info.get("start_time")
+            if isinstance(raw_time, (int, float)) and raw_time > 0:
+                start_time = float(raw_time)
             if isinstance(pid, int) and pid > 0:
                 alive = self.is_process_alive(pid)
                 if alive:
@@ -214,7 +216,12 @@ class ServerManager:
         else:
             kwargs["start_new_session"] = True
 
-        proc = subprocess.Popen(cmd, **kwargs)
+        try:
+            proc = subprocess.Popen(cmd, **kwargs)
+        except Exception:
+            log_file.close()
+            raise
+        log_file.close()
         self.write_pid(proc.pid)
         return proc.pid
 

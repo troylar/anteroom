@@ -186,6 +186,17 @@ class TestIsProcessAliveWindows:
 
             assert _is_process_alive_windows(123) is False
 
+    @patch(f"{_MODULE}.IS_WINDOWS", True)
+    def test_os_error_returns_false(self) -> None:
+        mock_kernel32 = MagicMock()
+        mock_kernel32.OpenProcess.side_effect = OSError("access denied")
+        mock_ctypes = MagicMock()
+        mock_ctypes.windll.kernel32 = mock_kernel32
+        with patch.dict("sys.modules", {"ctypes": mock_ctypes}):
+            from anteroom.services.server_manager import _is_process_alive_windows
+
+            assert _is_process_alive_windows(123) is False
+
 
 class TestIsPortResponding:
     def test_port_open(self) -> None:
@@ -258,6 +269,35 @@ class TestGetStatus:
         assert status.pid is None
         assert status.alive is False
         assert status.responding is True
+
+    def test_invalid_start_time_ignored(self, tmp_path: Path) -> None:
+        mgr = ServerManager(data_dir=tmp_path)
+        mgr.pid_path.write_text(json.dumps({"pid": 999, "port": 8080, "start_time": "not_a_number"}))
+        with (
+            patch.object(ServerManager, "is_process_alive", return_value=True),
+            patch.object(ServerManager, "is_port_responding", return_value=True),
+        ):
+            status = mgr.get_status()
+        assert status.start_time is None
+        assert status.alive is True
+
+    def test_negative_start_time_ignored(self, tmp_path: Path) -> None:
+        mgr = ServerManager(data_dir=tmp_path)
+        mgr.pid_path.write_text(json.dumps({"pid": 999, "port": 8080, "start_time": -100}))
+        with (
+            patch.object(ServerManager, "is_process_alive", return_value=True),
+            patch.object(ServerManager, "is_port_responding", return_value=True),
+        ):
+            status = mgr.get_status()
+        assert status.start_time is None
+
+    def test_invalid_pid_type_in_info(self, tmp_path: Path) -> None:
+        mgr = ServerManager(data_dir=tmp_path)
+        mgr.pid_path.write_text(json.dumps({"pid": "not_int", "port": 8080}))
+        with patch.object(ServerManager, "is_port_responding", return_value=False):
+            status = mgr.get_status()
+        assert status.pid is None
+        assert status.alive is False
 
 
 class TestStartBackground:
@@ -353,6 +393,31 @@ class TestStartBackground:
             mgr.start_background(Path("/fake/config.yaml"))
         kwargs = mock_popen.call_args[1]
         assert kwargs.get("start_new_session") is True
+
+    def test_popen_failure_closes_log_file(self, tmp_path: Path) -> None:
+        mgr = ServerManager(data_dir=tmp_path)
+        mock_log = MagicMock()
+        with (
+            patch.object(ServerManager, "is_process_alive", return_value=False),
+            patch(f"{_MODULE}.subprocess.Popen", side_effect=OSError("exec failed")),
+            patch("builtins.open", return_value=mock_log),
+        ):
+            with pytest.raises(OSError, match="exec failed"):
+                mgr.start_background(Path("/fake/config.yaml"))
+        mock_log.close.assert_called_once()
+
+    def test_log_file_closed_on_success(self, tmp_path: Path) -> None:
+        mgr = ServerManager(data_dir=tmp_path)
+        mock_log = MagicMock()
+        mock_proc = MagicMock()
+        mock_proc.pid = 42
+        with (
+            patch.object(ServerManager, "is_process_alive", return_value=False),
+            patch(f"{_MODULE}.subprocess.Popen", return_value=mock_proc),
+            patch("builtins.open", return_value=mock_log),
+        ):
+            mgr.start_background(Path("/fake/config.yaml"))
+        mock_log.close.assert_called_once()
 
 
 class TestStop:
