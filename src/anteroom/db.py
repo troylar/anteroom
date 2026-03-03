@@ -671,6 +671,17 @@ def _eradicate_projects(conn: sqlite3.Connection) -> None:
     if folder_table:
         folder_cols = {row[1] for row in conn.execute(f"PRAGMA table_info({folder_table})").fetchall()}  # noqa: S608
 
+    # Check for corrupted FK references (previous partial migration renamed
+    # folders to _folders_old but conversations FK captured the temp name)
+    conv_sql = ""
+    if conv_table:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (conv_table,)
+        ).fetchone()
+        conv_sql = row[0] if row else ""
+
+    has_corrupted_fk = "_folders_old" in conv_sql or "_conversations_old" in conv_sql
+
     need_work = (
         "project_id" in conv_cols
         or "project_id" in folder_cols
@@ -678,6 +689,7 @@ def _eradicate_projects(conn: sqlite3.Connection) -> None:
         or "_folders_old" in all_tables
         or "project_sources" in all_tables
         or "projects" in all_tables
+        or has_corrupted_fk
     )
     if not need_work:
         return
