@@ -26,7 +26,7 @@ const Chat = (() => {
     let _streamWatchdog = null;
     const _STALL_THRESHOLD_MS = 5000;
     const _PHASE_ELAPSED_DELAY_MS = 1500;
-    const _WATCHDOG_TIMEOUT_MS = 15000;
+    const _WATCHDOG_TIMEOUT_MS = 45000;
 
     // Configure marked for safe link rendering (marked v15 passes token object)
     const renderer = new marked.Renderer();
@@ -213,7 +213,6 @@ const Chat = (() => {
     }
 
     async function streamChatResponse(conversationId, body, headers) {
-        const _streamStart = Date.now();
         if (typeof App._debugLog === 'function') {
             App._debugLog('stream', 'Starting chat stream for ' + conversationId);
         }
@@ -1232,7 +1231,8 @@ const Chat = (() => {
         } else if (role === 'assistant') {
             roleDiv.textContent = 'ANTEROOM';
         } else {
-            roleDiv.textContent = 'SYSTEM';
+            el.classList.add('system-hidden');
+            roleDiv.textContent = 'CONTEXT';
         }
         el.appendChild(roleDiv);
 
@@ -1309,7 +1309,7 @@ const Chat = (() => {
     }
 
     function _resetWatchdog() {
-        if (_streamWatchdog) _startWatchdog();
+        if (App.state.isStreaming) _startWatchdog();
     }
 
     function showThinking() {

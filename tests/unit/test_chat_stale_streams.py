@@ -173,7 +173,7 @@ class TestStreamStatusEndpoint:
         cancel_ev = asyncio.Event()
         _active_streams[conv_id] = {
             "started_at": time.monotonic() - 200.0,  # 200s old
-            "request": MagicMock(),
+            "request": AsyncMock(),
             "cancel_event": cancel_ev,
         }
 

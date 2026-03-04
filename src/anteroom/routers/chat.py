@@ -2042,6 +2042,9 @@ async def stream_status(conversation_id: str, request: Request) -> Any:
             cancel_ev.set()
         _active_streams.pop(conversation_id, None)
         return {"active": False}
+    # Check if the originating SSE request is still connected.  If it
+    # disconnected (e.g. page refresh), the SSE generator is orphaned and
+    # _poll_disconnect will eventually clean it up — this is an eager check.
     if stale_request:
         try:
             disconnected = await stale_request.is_disconnected()
