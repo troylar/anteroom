@@ -983,6 +983,17 @@ const Chat = (() => {
         el.appendChild(bar);
     }
 
+    function _getWelcomeLogoHtml(size = 64) {
+        return `
+            <div class="welcome-logo">
+                <svg width="${size}" height="${size}" viewBox="0 0 100 100">
+                    <path d="M10,80 L50,20 L90,80" stroke="var(--accent)" stroke-width="10" fill="none" />
+                    <rect x="42" y="65" width="16" height="16" fill="var(--accent-blue)" />
+                </svg>
+            </div>
+        `;
+    }
+
     function _appendNoteEntry(msg) {
         const container = document.getElementById('messages-container');
         const welcome = document.getElementById('welcome-message');
@@ -1015,10 +1026,10 @@ const Chat = (() => {
                 const w = document.createElement('div');
                 w.id = 'welcome-message';
                 w.className = 'welcome-message';
-                w.innerHTML = '<h2>New Note</h2><p>Start adding entries below.</p>';
+                w.innerHTML = `${_getWelcomeLogoHtml()}<h2>New Note</h2><p>Start adding entries below.</p>`;
                 container.appendChild(w);
             } else {
-                welcome.innerHTML = '<h2>New Note</h2><p>Start adding entries below.</p>';
+                welcome.innerHTML = `${_getWelcomeLogoHtml()}<h2>New Note</h2><p>Start adding entries below.</p>`;
                 welcome.style.display = '';
                 container.appendChild(welcome);
             }
@@ -1053,10 +1064,10 @@ const Chat = (() => {
                 const w = document.createElement('div');
                 w.id = 'welcome-message';
                 w.className = 'welcome-message';
-                w.innerHTML = '<h2>New Document</h2><p>Add content below.</p>';
+                w.innerHTML = `${_getWelcomeLogoHtml()}<h2>New Document</h2><p>Add content below.</p>`;
                 container.appendChild(w);
             } else {
-                welcome.innerHTML = '<h2>New Document</h2><p>Add content below.</p>';
+                welcome.innerHTML = `${_getWelcomeLogoHtml()}<h2>New Document</h2><p>Add content below.</p>`;
                 welcome.style.display = '';
                 container.appendChild(welcome);
             }
@@ -1760,9 +1771,10 @@ const Chat = (() => {
                 const w = document.createElement('div');
                 w.id = 'welcome-message';
                 w.className = 'welcome-message';
-                w.innerHTML = '<h2>Welcome to the Anteroom</h2><p>Your connection is secure. How may I assist you today?</p>';
+                w.innerHTML = `${_getWelcomeLogoHtml()}<h2>Welcome to the Anteroom</h2><p>Your connection is secure. How may I assist you today?</p>`;
                 container.appendChild(w);
             } else {
+                welcome.innerHTML = `${_getWelcomeLogoHtml()}<h2>Welcome to the Anteroom</h2><p>Your connection is secure. How may I assist you today?</p>`;
                 welcome.style.display = '';
                 container.appendChild(welcome);
             }

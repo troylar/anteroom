@@ -22,7 +22,7 @@ console = Console()
 # Color palette from renderer.py
 GOLD = "#C5A059"
 SLATE = "#94A3B8"
-BLUE = "#38B6F6"
+BLUE = "#3B82F6"
 
 
 @dataclass
@@ -398,13 +398,12 @@ def run_init_wizard(force: bool = False, team_config_path: str | None = None) ->
 
     # Welcome
     console.print()
-    console.print(
-        Panel(
-            f"[bold {GOLD}]A N T E R O O M[/]\n[{SLATE}]Let's get you set up.[/]",
-            border_style=GOLD,
-            padding=(1, 4),
-        )
-    )
+    console.print(f"[{GOLD}]      \u25b2[/]")
+    console.print(f"[{GOLD}]     / \\[/]")
+    console.print(f"[{GOLD}]    /   \\[/]")
+    console.print(f"[{GOLD}]   / [{BLUE}]\u25fc\u25fc[/{GOLD}] \\      [bold]A N T E R O O M[/bold][/]")
+    console.print(f"[{GOLD}]  /_______\\     [{SLATE}]Let's get you set up.[/]")
+    console.print()
 
     try:
         # When team config provides AI settings, skip the corresponding prompts
