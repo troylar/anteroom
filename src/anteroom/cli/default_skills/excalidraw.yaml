@@ -1,0 +1,74 @@
+name: excalidraw
+description: Generate Excalidraw diagrams rendered live in the canvas panel
+prompt: |
+  Create an Excalidraw diagram based on the user's request. Use the `create_canvas` tool
+  with `language: "excalidraw"` to render the diagram in the canvas panel.
+
+  ## Excalidraw JSON Format
+
+  The content must be a valid JSON object with this structure:
+
+  ```json
+  {
+    "type": "excalidraw",
+    "version": 2,
+    "elements": [ ... ],
+    "appState": {
+      "viewBackgroundColor": "#ffffff"
+    }
+  }
+  ```
+
+  ## Element Types
+
+  Every element must include: `id` (unique string), `type`, `x`, `y`, `width`, `height`,
+  `strokeColor`, `backgroundColor`, `fillStyle`, `strokeWidth`, `roughness`, `seed` (random int),
+  `version`, `versionNonce` (random int), `isDeleted` (false), `boundElements` (null or array),
+  `link` (null), `locked` (false), `updated` (timestamp ms).
+
+  Common element types:
+
+  **Rectangle**: `"type": "rectangle"`, `"roundness": {"type": 3}`
+  **Ellipse**: `"type": "ellipse"`, `"roundness": {"type": 2}`
+  **Diamond**: `"type": "diamond"`, `"roundness": {"type": 2}`
+  **Text**: `"type": "text"`, `"text": "Label"`, `"fontSize": 20`, `"fontFamily": 1`,
+    `"textAlign": "center"`, `"verticalAlign": "middle"`, `"containerId": null`
+  **Arrow**: `"type": "arrow"`, `"points": [[0, 0], [200, 0]]`,
+    `"startBinding": null`, `"endBinding": null`, `"startArrowhead": null`,
+    `"endArrowhead": "arrow"`
+  **Line**: `"type": "line"`, `"points": [[0, 0], [200, 0]]`
+
+  ## Bound Text
+
+  To put text inside a shape:
+  1. Add `"boundElements": [{"id": "text-id", "type": "text"}]` to the shape
+  2. Add a text element with `"containerId": "shape-id"` and matching position
+
+  ## Layout Tips
+
+  - Use a grid: place elements at multiples of 50 for clean alignment
+  - Standard box size: 150x80 for most shapes
+  - Arrow spacing: leave 20px gap between shape edge and arrow start
+  - Use `"backgroundColor": "transparent"` for outlined shapes
+  - Use `"backgroundColor": "#a5d8ff"` (light blue), `"#b2f2bb"` (light green),
+    `"#ffec99"` (light yellow), `"#ffc9c9"` (light red) for filled shapes
+  - Set `"fillStyle": "hachure"` for the classic Excalidraw hand-drawn fill
+
+  ## Instructions
+
+  1. Analyze the user's request: {args}
+  2. Design the diagram layout mentally before generating JSON
+  3. Generate valid Excalidraw JSON with all required fields
+  4. Call `create_canvas` with:
+     - `title`: a descriptive name for the diagram
+     - `content`: the complete Excalidraw JSON string
+     - `language`: `"excalidraw"`
+  5. After creating the canvas, briefly describe what the diagram shows
+
+  ## Important Rules
+
+  - Every element MUST have ALL required fields — Excalidraw will not render incomplete elements
+  - Use unique string IDs for every element (e.g., "rect-1", "arrow-1", "text-1")
+  - Keep diagrams readable: don't overcrowd, use whitespace
+  - For flowcharts, lay out top-to-bottom or left-to-right
+  - Generate the FULL JSON — do not use placeholders or ellipsis

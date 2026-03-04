@@ -317,25 +317,31 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.tls_enabled = tls_enabled
 
+    # Paths that set their own CSP and framing headers (e.g. embedded viewer iframes)
+    _SELF_CSP_PATHS = frozenset({"/excalidraw-viewer"})
+
     async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         response = await call_next(request)
-        response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
         if self.tls_enabled:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "script-src 'self' 'sha256-os8eBqepmojbV7o9EA/H5axJe8VOx1ngDoptqveTNpA='; "
-            "style-src 'self' 'unsafe-inline'; "
-            "font-src 'self'; "
-            "img-src 'self' data: blob:; "
-            "connect-src 'self'; "
-            "frame-ancestors 'none'; "
-            "base-uri 'self'; "
-            "form-action 'self'"
-        )
+
+        # Let viewer endpoints keep their own CSP and X-Frame-Options
+        if request.url.path not in self._SELF_CSP_PATHS:
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'sha256-os8eBqepmojbV7o9EA/H5axJe8VOx1ngDoptqveTNpA='; "
+                "style-src 'self' 'unsafe-inline'; "
+                "font-src 'self'; "
+                "img-src 'self' data: blob:; "
+                "connect-src 'self'; "
+                "frame-ancestors 'none'; "
+                "base-uri 'self'; "
+                "form-action 'self'"
+            )
         if request.url.path.startswith("/api/") or request.url.path.startswith("/v1/"):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
             response.headers["Pragma"] = "no-cache"
@@ -849,6 +855,87 @@ def create_app(config: AppConfig | None = None, enforced_fields: list[str] | Non
             samesite="strict",
             path="/",
             max_age=session_absolute_timeout,
+        )
+        return response
+
+    @app.get("/excalidraw-viewer")
+    async def excalidraw_viewer() -> Any:
+        """Serve a minimal Excalidraw viewer page with a permissive CSP.
+
+        The parent page embeds this in an iframe and sends scene data via
+        postMessage.  Because this is a real same-origin URL (not srcdoc or
+        blob:), we can set its own Content-Security-Policy header that allows
+        loading Excalidraw + React from esm.sh without affecting the main
+        page's strict CSP.
+        """
+        from fastapi.responses import HTMLResponse
+
+        ver = "0.18.0"
+        # Use exportToSvg() to render a static SVG instead of mounting the
+        # full interactive React component. This avoids all React lifecycle
+        # issues, error boundaries, and dual-instance crashes.
+        html = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<style>"
+            "*{margin:0;padding:0;box-sizing:border-box}"
+            "html,body{width:100%;height:100%;overflow:auto;background:#fff}"
+            "#root{width:100%;height:100%;display:flex;align-items:center;"
+            "justify-content:center}"
+            "#root svg{max-width:100%;max-height:100%;width:auto;height:auto}"
+            "#loading{color:#888;font-family:system-ui}"
+            "#error{padding:16px;color:#c33;font-family:system-ui}"
+            "</style>"
+            '<script type="importmap">{"imports":{'
+            '"react":"https://esm.sh/react@19",'
+            '"react-dom":"https://esm.sh/react-dom@19",'
+            '"react/jsx-runtime":"https://esm.sh/react@19/jsx-runtime"'
+            '}}</script>'
+            "</head><body>"
+            '<div id="root"><div id="loading">Waiting for diagram data...</div></div>'
+            '<script type="module">'
+            "window.addEventListener('message',async function handler(evt){"
+            "if(!evt.data||evt.data.type!=='excalidraw-scene')return;"
+            "window.removeEventListener('message',handler);"
+            "var sceneData=evt.data.scene;"
+            "document.getElementById('root').innerHTML="
+            "'<div id=\"loading\">Loading diagram...</div>';"
+            "var timer=setTimeout(function(){"
+            "document.getElementById('root').innerHTML="
+            "'<div id=\"error\">Timed out loading Excalidraw from CDN.</div>';"
+            "window.parent.postMessage({type:'excalidraw-error',message:'timeout'},'*');"
+            "},20000);"
+            "try{"
+            # Load only the Excalidraw utils — exportToSvg needs React
+            # internally but does not mount a React tree in the DOM.
+            f"var E=await import('https://esm.sh/@excalidraw/excalidraw@{ver}?external=react,react-dom');"
+            "clearTimeout(timer);"
+            "var svg=await E.exportToSvg({"
+            "elements:sceneData.elements||[],"
+            "appState:Object.assign({},sceneData.appState||{},{exportWithDarkMode:false}),"
+            "files:sceneData.files||null});"
+            "svg.removeAttribute('width');svg.removeAttribute('height');"
+            "svg.style.width='100%';svg.style.height='100%';"
+            "document.getElementById('root').innerHTML='';"
+            "document.getElementById('root').appendChild(svg);"
+            "window.parent.postMessage({type:'excalidraw-ready'},'*');"
+            "}catch(err){clearTimeout(timer);"
+            "document.getElementById('root').innerHTML="
+            "'<div id=\"error\">Failed to render diagram: '+err.message+'</div>';"
+            "window.parent.postMessage({type:'excalidraw-error',message:err.message},'*');"
+            "}"
+            "});"
+            "</script></body></html>"
+        )
+        response = HTMLResponse(html)
+        # Permissive CSP for this viewer only — allows esm.sh CDN resources
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://esm.sh; "
+            "style-src 'self' 'unsafe-inline' https://esm.sh; "
+            "font-src 'self' https://esm.sh; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self' https://esm.sh; "
+            "frame-ancestors 'self'"
         )
         return response
 

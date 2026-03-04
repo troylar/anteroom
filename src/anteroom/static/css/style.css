@@ -3398,6 +3398,7 @@ body {
     width: 50%;
     min-width: 400px;
     max-width: 60%;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     border-left: 1px solid var(--border-color);
@@ -3479,6 +3480,7 @@ body {
 
 .canvas-body {
     flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -3503,6 +3505,10 @@ body {
     color: var(--text-primary);
     font-size: 14px;
     line-height: 1.7;
+}
+.canvas-preview.excalidraw-active {
+    padding: 0;
+    overflow: hidden;
 }
 .canvas-preview h1, .canvas-preview h2, .canvas-preview h3,
 .canvas-preview h4, .canvas-preview h5, .canvas-preview h6 {

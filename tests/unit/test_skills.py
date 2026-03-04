@@ -694,6 +694,7 @@ class TestDefaultPackSkills:
             names = [s.name for s in reg.list_skills()]
             expected = {
                 "create-eval",
+                "excalidraw",
                 "new-pack",
                 "new-skill",
                 "pack-lint",

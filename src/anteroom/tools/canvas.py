@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 CANVAS_CREATE_DEFINITION: dict[str, Any] = {
     "name": "create_canvas",
@@ -25,8 +28,8 @@ CANVAS_CREATE_DEFINITION: dict[str, Any] = {
             },
             "language": {
                 "type": "string",
-                "description": "Programming language for syntax highlighting (e.g. 'python', 'javascript', 'sql'). "
-                "Omit for plain text or markdown.",
+                "description": "Programming language for syntax highlighting (e.g. 'python', 'javascript', 'sql'), "
+                "or 'excalidraw' for interactive diagrams. Omit for plain text or markdown.",
             },
         },
         "required": ["title", "content"],
@@ -103,20 +106,26 @@ async def handle_create_canvas(
     _user_id: str | None = None,
     _user_display_name: str | None = None,
 ) -> dict[str, Any]:
+    logger.debug("create_canvas called: title=%r, language=%r, content_len=%d, conv=%s",
+                 title, language, len(content), _conversation_id)
     if not _conversation_id or not _db:
+        logger.warning("create_canvas: missing conversation context")
         return {"error": "Canvas tools require conversation context"}
 
     from ..services import storage
 
     conv = storage.get_conversation(_db, _conversation_id)
     if not conv:
+        logger.warning("create_canvas: conversation %s not found", _conversation_id)
         return {"error": "Conversation not found"}
 
     if len(content) > MAX_CANVAS_CONTENT:
+        logger.warning("create_canvas: content too large (%d chars)", len(content))
         return {"error": f"Content too large ({len(content)} chars). Maximum is {MAX_CANVAS_CONTENT}."}
 
     existing = storage.get_canvas_for_conversation(_db, _conversation_id)
     if existing:
+        logger.debug("create_canvas: canvas already exists for conv %s, returning error", _conversation_id)
         return {"error": "A canvas already exists for this conversation. Use update_canvas instead."}
 
     canvas = storage.create_canvas(
@@ -128,6 +137,7 @@ async def handle_create_canvas(
         user_id=_user_id,
         user_display_name=_user_display_name,
     )
+    logger.info("create_canvas: created canvas %s (language=%s, %d chars)", canvas["id"], language, len(content))
     return {
         "status": "created",
         "id": canvas["id"],
