@@ -331,6 +331,18 @@ body {
 .sidebar-header {
     padding: 12px 12px 8px;
 }
+.sidebar-brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 8px 0 12px;
+    font-family: 'Cinzel', Georgia, serif;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+}
 
 .btn-new-chat {
     width: 100%;
@@ -1277,6 +1289,10 @@ body {
     padding: 80px 20px;
     color: var(--text-secondary);
     animation: fadeIn 0.5s var(--easing);
+}
+.welcome-logo {
+    margin-bottom: 24px;
+    opacity: 0.9;
 }
 .welcome-message h2 {
     font-family: var(--font-deco);

@@ -29,6 +29,7 @@ _stdout = sys.stdout
 
 GOLD = "#C5A059"  # accents, "Thinking..." text
 SLATE = "#94A3B8"  # labels ("You:", "AI:"), directory display
+BLUE = "#3B82F6"  # logo accent (from docs/logo.svg)
 MUTED = "#8b8b8b"  # secondary text (tool results, approval feedback, version info)
 CHROME = "#6b7280"  # UI chrome (status messages, hints, MCP info)
 ERROR_RED = "#CD6B6B"  # pale red for inline errors (operational, not alarming)
@@ -1761,8 +1762,6 @@ def _get_build_date() -> str:
         return ""
 
 
-_BOX_TOP = "\u256d" + "\u2500" * 29 + "\u256e"
-_BOX_BOT = "\u2570" + "\u2500" * 29 + "\u256f"
 _SEP = " \u00b7 "
 
 
@@ -1783,10 +1782,11 @@ def render_welcome(
     branch = f" ({git_branch})" if git_branch else ""
 
     console.print()
-    console.print(f"[{GOLD}]  {_BOX_TOP}[/]")
-    console.print(f"[{GOLD}]  \u2502       [bold]A N T E R O O M[/bold]       \u2502[/]")
-    console.print(f"[{GOLD}]  \u2502    [{SLATE}]the secure AI gateway[/]    \u2502[/]")
-    console.print(f"[{GOLD}]  {_BOX_BOT}[/]")
+    console.print(f"[{GOLD}]      \u25b2[/]")
+    console.print(f"[{GOLD}]     / \\[/]")
+    console.print(f"[{GOLD}]    /   \\[/]")
+    console.print(f"[{GOLD}]   / [{BLUE}]\u25fc\u25fc[/{GOLD}] \\      [bold]A N T E R O O M[/bold][/]")
+    console.print(f"[{GOLD}]  /_______\\     [{SLATE}]the secure AI gateway[/]")
     console.print()
 
     version_parts = []
