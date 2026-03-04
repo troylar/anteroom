@@ -7,7 +7,7 @@ const Sidebar = (() => {
     let searchTimeout = null;
     function init() {
         const newChatBtn = document.getElementById('btn-new-chat');
-        newChatBtn.addEventListener('click', () => App.newConversation());
+        newChatBtn.addEventListener('click', () => App.newConversation().catch(() => {}));
 
         const searchInput = document.getElementById('search-input');
         searchInput.addEventListener('input', () => {

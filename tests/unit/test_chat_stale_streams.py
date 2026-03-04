@@ -145,9 +145,11 @@ class TestStreamStatusEndpoint:
 
     def test_active_stream(self) -> None:
         conv_id = str(uuid.uuid4())
+        mock_request = AsyncMock()
+        mock_request.is_disconnected = AsyncMock(return_value=False)
         _active_streams[conv_id] = {
             "started_at": time.monotonic() - 5.0,
-            "request": MagicMock(),
+            "request": mock_request,
             "cancel_event": asyncio.Event(),
         }
 
@@ -164,6 +166,65 @@ class TestStreamStatusEndpoint:
         client = TestClient(app)
         resp = client.get("/api/conversations/not-a-uuid/stream-status")
         assert resp.status_code == 400
+
+    def test_evicts_stale_stream_by_age(self) -> None:
+        """Stream older than 180s is evicted and reported inactive."""
+        conv_id = str(uuid.uuid4())
+        cancel_ev = asyncio.Event()
+        _active_streams[conv_id] = {
+            "started_at": time.monotonic() - 200.0,  # 200s old
+            "request": MagicMock(),
+            "cancel_event": cancel_ev,
+        }
+
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.get(f"/api/conversations/{conv_id}/stream-status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["active"] is False
+        assert conv_id not in _active_streams
+        assert cancel_ev.is_set()
+
+    def test_evicts_disconnected_stream(self) -> None:
+        """Stream with disconnected request is evicted and reported inactive."""
+        conv_id = str(uuid.uuid4())
+        cancel_ev = asyncio.Event()
+        mock_request = AsyncMock()
+        mock_request.is_disconnected = AsyncMock(return_value=True)
+        _active_streams[conv_id] = {
+            "started_at": time.monotonic() - 5.0,
+            "request": mock_request,
+            "cancel_event": cancel_ev,
+        }
+
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.get(f"/api/conversations/{conv_id}/stream-status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["active"] is False
+        assert conv_id not in _active_streams
+        assert cancel_ev.is_set()
+
+    def test_keeps_fresh_connected_stream(self) -> None:
+        """A fresh stream with a connected request reports active."""
+        conv_id = str(uuid.uuid4())
+        mock_request = AsyncMock()
+        mock_request.is_disconnected = AsyncMock(return_value=False)
+        _active_streams[conv_id] = {
+            "started_at": time.monotonic() - 2.0,
+            "request": mock_request,
+            "cancel_event": asyncio.Event(),
+        }
+
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.get(f"/api/conversations/{conv_id}/stream-status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["active"] is True
+        assert conv_id in _active_streams
 
 
 class TestStopEndpointCancelPropagation:

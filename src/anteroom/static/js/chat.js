@@ -23,8 +23,10 @@ const Chat = (() => {
     let _lastChunkTime = 0;
     let _phaseElapsedInterval = null;
     let _stallCheckInterval = null;
+    let _streamWatchdog = null;
     const _STALL_THRESHOLD_MS = 5000;
     const _PHASE_ELAPSED_DELAY_MS = 1500;
+    const _WATCHDOG_TIMEOUT_MS = 15000;
 
     // Configure marked for safe link rendering (marked v15 passes token object)
     const renderer = new marked.Renderer();
@@ -211,6 +213,10 @@ const Chat = (() => {
     }
 
     async function streamChatResponse(conversationId, body, headers) {
+        const _streamStart = Date.now();
+        if (typeof App._debugLog === 'function') {
+            App._debugLog('stream', 'Starting chat stream for ' + conversationId);
+        }
         setStreaming(true);
         showThinking();
 
@@ -285,6 +291,10 @@ const Chat = (() => {
     }
 
     function handleSSEEvent(type, data) {
+        _resetWatchdog();
+        if (typeof App._debugLog === 'function' && type !== 'token') {
+            App._debugLog('sse', 'event=' + type, data);
+        }
         switch (type) {
             case 'thinking':
                 showThinking();
@@ -1215,6 +1225,8 @@ const Chat = (() => {
             } else {
                 roleDiv.textContent = 'YOU';
             }
+        } else if (role === 'assistant') {
+            roleDiv.textContent = 'ANTEROOM';
         } else {
             roleDiv.textContent = 'SYSTEM';
         }
@@ -1270,6 +1282,32 @@ const Chat = (() => {
         scrollToBottom();
     }
 
+    function _startWatchdog() {
+        _clearWatchdog();
+        _streamWatchdog = setTimeout(() => {
+            _streamWatchdog = null;
+            if (!App.state.isStreaming) return;
+            const elapsed = ((Date.now() - _phaseStartTime) / 1000).toFixed(0);
+            if (typeof App._debugLog === 'function') {
+                App._debugLog('watchdog', 'Stream watchdog fired after ' + elapsed + 's — no server response');
+            }
+            hideThinking();
+            setStreaming(false);
+            showToast('No response from server after ' + elapsed + 's. Check your connection and try again.');
+        }, _WATCHDOG_TIMEOUT_MS);
+    }
+
+    function _clearWatchdog() {
+        if (_streamWatchdog) {
+            clearTimeout(_streamWatchdog);
+            _streamWatchdog = null;
+        }
+    }
+
+    function _resetWatchdog() {
+        if (_streamWatchdog) _startWatchdog();
+    }
+
     function showThinking() {
         if (document.getElementById('thinking')) return;
         _phaseStartTime = Date.now();
@@ -1278,9 +1316,11 @@ const Chat = (() => {
         _thinkingPhase = '';
         _ensureThinkingElement();
         _startPhaseElapsedTimer();
+        _startWatchdog();
     }
 
     function hideThinking() {
+        _clearWatchdog();
         document.querySelectorAll('.thinking-indicator').forEach(el => el.remove());
         _thinkingPhase = '';
         _streamingChars = 0;
@@ -1737,8 +1777,12 @@ const Chat = (() => {
                 } else {
                     roleDiv.textContent = 'YOU';
                 }
+            } else if (msg.role === 'assistant') {
+                roleDiv.textContent = 'ANTEROOM';
             } else {
-                roleDiv.textContent = 'SYSTEM';
+                // system role: hide by default (compaction summaries, internal context)
+                el.classList.add('system-hidden');
+                roleDiv.textContent = 'CONTEXT';
             }
             el.appendChild(roleDiv);
 
@@ -1853,7 +1897,7 @@ const Chat = (() => {
         _remoteAssistantEl = appendMessage('assistant', '');
         const roleDiv = _remoteAssistantEl.querySelector('.message-role');
         if (roleDiv) {
-            roleDiv.textContent = 'SYSTEM (remote)';
+            roleDiv.textContent = 'ANTEROOM (remote)';
         }
     }
 

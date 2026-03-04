@@ -20,6 +20,17 @@ const App = (() => {
     let _esFailCount = 0;
     let _recovering = false;
     const _shownApprovalIds = new Set();
+    const _debugMode = new URLSearchParams(window.location.search).has('debug');
+
+    function _debugLog(component, message, data) {
+        if (!_debugMode) return;
+        const ts = new Date().toISOString().slice(11, 23);
+        if (data !== undefined) {
+            console.debug(`[anteroom ${ts}] ${component}: ${message}`, data);
+        } else {
+            console.debug(`[anteroom ${ts}] ${component}: ${message}`);
+        }
+    }
 
     // --- Theme System ---
 
@@ -551,54 +562,69 @@ const App = (() => {
     }
 
     async function newConversation(type) {
-        const convType = type || document.getElementById('new-conv-type').value || 'chat';
-        const payload = { type: convType };
-        if (state.currentProjectId) payload.project_id = state.currentProjectId;
-        if (state.currentSpaceId) payload.space_id = state.currentSpaceId;
-        const opts = {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        };
-        const conv = await api('/api/conversations', opts);
-        state.currentConversationId = conv.id;
-        state.currentConversationType = convType;
-        Chat.setConversationType(convType);
-        Chat.loadMessages([]);
-        Canvas.resetCanvas();
-        _currentModel = '';
-        document.getElementById('model-selector-label').textContent = 'Default model';
-        await Sidebar.refresh();
-        Sidebar.setActive(conv.id);
-        _updateUrl();
-        _connectEventSource();
-        document.getElementById('message-input').focus();
+        const btn = document.getElementById('btn-new-chat');
+        if (btn) btn.disabled = true;
+        try {
+            const convType = type || document.getElementById('new-conv-type').value || 'chat';
+            const payload = { type: convType };
+            if (state.currentProjectId) payload.project_id = state.currentProjectId;
+            if (state.currentSpaceId) payload.space_id = state.currentSpaceId;
+            const opts = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            };
+            const conv = await api('/api/conversations', opts);
+            state.currentConversationId = conv.id;
+            state.currentConversationType = convType;
+            Chat.setConversationType(convType);
+            Chat.setStreaming(false);
+            Chat.loadMessages([]);
+            Canvas.resetCanvas();
+            _currentModel = '';
+            document.getElementById('model-selector-label').textContent = 'Default model';
+            await Sidebar.refresh();
+            Sidebar.setActive(conv.id);
+            _updateUrl();
+            _connectEventSource();
+            document.getElementById('message-input').focus();
+        } catch (err) {
+            _debugLog('newConversation', 'Failed: ' + err.message);
+            Chat.showToast('Failed to create conversation: ' + (err.message || 'check connection'));
+        } finally {
+            if (btn) btn.disabled = false;
+        }
     }
 
     async function loadConversation(id) {
-        state.currentConversationId = id;
-        const detail = await api(`/api/conversations/${id}`);
-        state.currentConversationType = detail.type || 'chat';
-        Chat.setConversationType(state.currentConversationType);
-        Chat.loadMessages(detail.messages || []);
-        Sidebar.setActive(id);
-        _currentModel = detail.model || '';
-        document.getElementById('model-selector-label').textContent = _currentModel || 'Default model';
-        _updateUrl();
-        _connectEventSource();
-        Canvas.loadForConversation(id);
-        // If plan mode is active, check for existing plan in new conversation
-        if (state.isPlanMode) {
-            _loadExistingPlan(id);
+        try {
+            Chat.setStreaming(false);
+            state.currentConversationId = id;
+            const detail = await api(`/api/conversations/${id}`);
+            state.currentConversationType = detail.type || 'chat';
+            Chat.setConversationType(state.currentConversationType);
+            Chat.loadMessages(detail.messages || []);
+            Sidebar.setActive(id);
+            _currentModel = detail.model || '';
+            document.getElementById('model-selector-label').textContent = _currentModel || 'Default model';
+            _updateUrl();
+            _connectEventSource();
+            Canvas.loadForConversation(id);
+            if (state.isPlanMode) {
+                _loadExistingPlan(id);
+            }
+            _checkStreamStatus(id);
+        } catch (err) {
+            _debugLog('loadConversation', 'Failed: ' + err.message);
+            Chat.showToast('Failed to load conversation: ' + (err.message || 'check connection'));
         }
-        // Check for orphaned server-side streams (e.g., after page refresh)
-        _checkStreamStatus(id);
     }
 
     async function _checkStreamStatus(conversationId) {
         try {
             const status = await api(`/api/conversations/${conversationId}/stream-status`);
             if (status.active) {
+                _debugLog('stream_status', 'Active stream detected, age=' + (status.age_seconds || 0) + 's');
                 Chat.setStreaming(true);
                 Chat.showThinkingFromEvent();
             }
@@ -738,9 +764,11 @@ const App = (() => {
         _eventSource.onopen = () => {
             _esConnectedAt = Date.now();
             _esFailCount = 0;
+            _debugLog('sse', 'EventSource connected');
         };
 
         _eventSource.onerror = () => {
+            _debugLog('sse', 'EventSource error, failCount=' + (_esFailCount + 1));
             if (_recovering) {
                 if (_eventSource) { _eventSource.close(); _eventSource = null; }
                 return;
@@ -1456,6 +1484,6 @@ const App = (() => {
         state, api, _handle401, _getCsrfToken, _selectModel, newConversation, loadConversation,
         loadProjects, loadDatabases, addDatabase, refreshModels, formatTimestamp,
         getTheme, setTheme, THEMES, openMcpModal,
-        setPlanMode, _showPlanContent,
+        setPlanMode, _showPlanContent, _debugLog,
     };
 })();

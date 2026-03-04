@@ -2031,6 +2031,29 @@ async def stream_status(conversation_id: str, request: Request) -> Any:
     if not stream_info:
         return {"active": False}
     age = time_mod.monotonic() - stream_info.get("started_at", 0)
+    # Evict stale streams: if the originating request disconnected or the
+    # stream has been active for too long, clean it up and report inactive.
+    stale_request = stream_info.get("request")
+    max_age = 180  # 3 minutes hard cap
+    if age > max_age:
+        logger.info("Evicting stale stream for %s (age=%.0fs)", conversation_id, age)
+        cancel_ev = stream_info.get("cancel_event")
+        if cancel_ev:
+            cancel_ev.set()
+        _active_streams.pop(conversation_id, None)
+        return {"active": False}
+    if stale_request:
+        try:
+            disconnected = await stale_request.is_disconnected()
+        except Exception:
+            disconnected = True
+        if disconnected:
+            logger.info("Evicting disconnected stream for %s (age=%.0fs)", conversation_id, age)
+            cancel_ev = stream_info.get("cancel_event")
+            if cancel_ev:
+                cancel_ev.set()
+            _active_streams.pop(conversation_id, None)
+            return {"active": False}
     return {"active": True, "age_seconds": round(age)}
 
 

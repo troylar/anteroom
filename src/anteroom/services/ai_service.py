@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -257,6 +258,14 @@ class AIService:
                 return
 
             try:
+                _attempt_start = time.monotonic()
+                logger.debug(
+                    "ai_service connect attempt=%d/%d model=%s messages=%d",
+                    attempt + 1,
+                    max_attempts,
+                    self.config.model,
+                    len(full_messages),
+                )
                 yield {"event": "phase", "data": {"phase": "connecting"}}
 
                 # --- Cancel-aware create() with hard timeout ---
@@ -309,6 +318,11 @@ class AIService:
                     cancel_wait.cancel()
 
                 stream = create_task.result()
+                logger.debug(
+                    "ai_service connected attempt=%d elapsed=%.2fs",
+                    attempt + 1,
+                    time.monotonic() - _attempt_start,
+                )
                 yield {"event": "phase", "data": {"phase": "waiting"}}
 
                 # --- First-token timeout (cancel-aware) ---
@@ -371,6 +385,7 @@ class AIService:
                     first_chunk = first_token_task.result()
                 except StopAsyncIteration:
                     # Stream ended immediately (empty response)
+                    logger.debug("ai_service empty_stream attempt=%d", attempt + 1)
                     try:
                         if hasattr(stream, "close"):
                             await stream.close()
@@ -379,6 +394,11 @@ class AIService:
                     yield {"event": "done", "data": {}}
                     return
 
+                logger.debug(
+                    "ai_service first_token attempt=%d elapsed=%.2fs",
+                    attempt + 1,
+                    time.monotonic() - _attempt_start,
+                )
                 # --- Stream with full request_timeout (first chunk already received) ---
                 current_tool_calls: dict[int, dict[str, Any]] = {}
                 total_timeout = float(self.config.request_timeout)
@@ -456,6 +476,11 @@ class AIService:
                             return
 
                         if choice.finish_reason == "stop":
+                            logger.debug(
+                                "ai_service stream_done attempt=%d elapsed=%.2fs",
+                                attempt + 1,
+                                time.monotonic() - _attempt_start,
+                            )
                             if usage_data:
                                 yield {"event": "usage", "data": usage_data}
                             yield {"event": "done", "data": {}}
