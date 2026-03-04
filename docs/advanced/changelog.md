@@ -7,6 +7,19 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 4, 2026
 
+### v1.97.0
+
+**New:**
+
+- `aroom start` now shows real-time startup progress with a Rich spinner instead of a silent wait (#746)
+- Refreshed logo branding across CLI and web UI with triangle/doorway motif (#747)
+
+**Improved:**
+
+- Extracted inline styles to CSS classes for cleaner HTML (#747)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.97.0)
+
 ### v1.96.0
 
 **New:**
