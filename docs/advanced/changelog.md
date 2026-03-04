@@ -5,6 +5,19 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## March 4, 2026
+
+### v1.95.1
+
+**Fixed:**
+
+- Rate limiter/EventSource reconnection storm — SSE endpoint now exempt from rate limiting, preventing cascading 429 failures that froze the web UI (#740)
+- Added `Retry-After` header to 429 responses and SSE `retry:` field for browser-controlled reconnection intervals (#740)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.95.1)
+
+---
+
 ## March 3, 2026
 
 ### v1.95.0
