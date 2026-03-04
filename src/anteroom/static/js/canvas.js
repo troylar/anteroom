@@ -10,6 +10,143 @@ const Canvas = (() => {
     let _streamingContent = '';
     let _streamingLanguage = null;
 
+    /* --- Excalidraw rendering (iframe-isolated) --- */
+    let _excalidrawIframe = null;
+
+    function _isExcalidraw(language) {
+        return language === 'excalidraw';
+    }
+
+    function _destroyExcalidraw() {
+        if (_excalidrawIframe) {
+            _excalidrawIframe.remove();
+            _excalidrawIframe = null;
+        }
+    }
+
+    function _renderExcalidrawFallback(container, content, errorMsg) {
+        let summary = '';
+        try {
+            const parsed = JSON.parse(content);
+            const elems = parsed.elements || [];
+            const types = {};
+            for (const e of elems) {
+                const t = e.type || 'unknown';
+                types[t] = (types[t] || 0) + 1;
+            }
+            const parts = Object.entries(types).map(([t, n]) => n + ' ' + t + (n > 1 ? 's' : ''));
+            summary = '<p style="margin:8px 0 4px;color:var(--text-secondary)">' +
+                '<strong>Diagram contents:</strong> ' + elems.length + ' element' +
+                (elems.length !== 1 ? 's' : '') +
+                (parts.length ? ' (' + DOMPurify.sanitize(parts.join(', ')) + ')' : '') +
+                '</p>';
+        } catch { /* content isn't valid JSON — skip summary */ }
+
+        const errorHtml = DOMPurify.sanitize(errorMsg);
+        const contentPreview = DOMPurify.sanitize(content.slice(0, 5000));
+
+        container.innerHTML =
+            '<div style="padding:12px">' +
+            '<p style="color:var(--text-muted);margin:0 0 8px">' + errorHtml + '</p>' +
+            summary +
+            '<div style="display:flex;gap:8px;margin:8px 0">' +
+            '<button id="excalidraw-copy-json" style="' +
+            'padding:4px 12px;border:1px solid var(--border);border-radius:4px;' +
+            'background:var(--bg-secondary);color:var(--text-primary);cursor:pointer;font-size:0.85em' +
+            '">Copy JSON</button>' +
+            '<a href="https://excalidraw.com" target="_blank" rel="noopener noreferrer" style="' +
+            'padding:4px 12px;border:1px solid var(--border);border-radius:4px;' +
+            'background:var(--bg-secondary);color:var(--text-primary);text-decoration:none;font-size:0.85em;' +
+            'display:inline-flex;align-items:center' +
+            '">Open excalidraw.com</a>' +
+            '</div>' +
+            '<pre style="font-size:0.8em;max-height:300px;overflow:auto;margin-top:8px;' +
+            'padding:8px;border-radius:4px;background:var(--bg-secondary)">' +
+            contentPreview + '</pre>' +
+            '</div>';
+
+        const copyBtn = container.querySelector('#excalidraw-copy-json');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', () => {
+                navigator.clipboard.writeText(content).then(() => {
+                    copyBtn.textContent = 'Copied!';
+                    setTimeout(() => { copyBtn.textContent = 'Copy JSON'; }, 1500);
+                }).catch(() => {
+                    copyBtn.textContent = 'Copy failed';
+                    setTimeout(() => { copyBtn.textContent = 'Copy JSON'; }, 1500);
+                });
+            });
+        }
+    }
+
+    function _setExcalidrawContainerMode(active) {
+        const preview = document.getElementById('canvas-preview');
+        if (preview) {
+            preview.classList.toggle('excalidraw-active', active);
+        }
+    }
+
+    function _renderExcalidraw(container, content) {
+        let sceneData;
+        try {
+            sceneData = JSON.parse(content);
+        } catch {
+            _setExcalidrawContainerMode(false);
+            _renderExcalidrawFallback(container, content,
+                'Invalid Excalidraw JSON — could not parse diagram data.');
+            return;
+        }
+
+        _setExcalidrawContainerMode(true);
+        _destroyExcalidraw();
+        container.innerHTML = '';
+
+        // Load Excalidraw in an iframe pointing to /excalidraw-viewer.
+        // That endpoint serves its own HTML with a permissive CSP that allows
+        // esm.sh imports. Scene data is sent via postMessage after load.
+        // This isolates Excalidraw completely: CDN failures, React crashes, and
+        // slow module loads cannot affect the main Anteroom page.
+        const iframe = document.createElement('iframe');
+        iframe.style.cssText = 'width:100%;height:100%;border:none;';
+        iframe.src = '/excalidraw-viewer';
+        container.appendChild(iframe);
+        _excalidrawIframe = iframe;
+
+        // Send scene data once the iframe is ready to receive messages
+        iframe.addEventListener('load', () => {
+            iframe.contentWindow.postMessage(
+                { type: 'excalidraw-scene', scene: sceneData }, window.location.origin
+            );
+        });
+
+        // If the iframe fails to render within 30s, show the fallback
+        const parentTimeout = setTimeout(() => {
+            console.error('[anteroom] Excalidraw iframe timed out');
+            _setExcalidrawContainerMode(false);
+            _renderExcalidrawFallback(container, content,
+                'Excalidraw renderer timed out. You can copy the JSON below ' +
+                'and paste it into excalidraw.com to view the diagram.');
+        }, 30000);
+
+        // Listen for status messages from the iframe
+        const onMessage = (evt) => {
+            if (evt.source !== iframe.contentWindow) return;
+            const d = evt.data;
+            if (d && d.type === 'excalidraw-ready') {
+                clearTimeout(parentTimeout);
+                window.removeEventListener('message', onMessage);
+            } else if (d && d.type === 'excalidraw-error') {
+                clearTimeout(parentTimeout);
+                window.removeEventListener('message', onMessage);
+                _setExcalidrawContainerMode(false);
+                _renderExcalidrawFallback(container, content,
+                    'Could not load the Excalidraw renderer. ' +
+                    'You can copy the JSON below and paste it into excalidraw.com to view the diagram.');
+            }
+        };
+        window.addEventListener('message', onMessage);
+    }
+
     function init() {
         const closeBtn = document.getElementById('canvas-close');
         const saveBtn = document.getElementById('canvas-save');
@@ -157,6 +294,12 @@ const Canvas = (() => {
             preview.innerHTML = '<p style="color:var(--text-muted)">Empty canvas</p>';
             return;
         }
+
+        if (_isExcalidraw(language)) {
+            _renderExcalidraw(preview, content);
+            return;
+        }
+
         let md = content;
         if (language) {
             md = '```' + language + '\n' + content + '\n```';
@@ -187,6 +330,7 @@ const Canvas = (() => {
 
         const cmWrap = document.getElementById('canvas-cm-wrap');
         const preview = document.getElementById('canvas-preview');
+        const isExcalidraw = _isExcalidraw(data.language);
 
         // Start in preview mode — defer CodeMirror init until edit mode
         if (cmWrap) cmWrap.style.display = 'none';
@@ -195,12 +339,16 @@ const Canvas = (() => {
             _renderPreview(data.content || '', data.language || null);
         }
 
+        // Hide edit/save controls for Excalidraw (view-only)
         const toggle = document.getElementById('canvas-mode-toggle');
+        const saveBtn = document.getElementById('canvas-save');
         if (toggle) {
+            toggle.style.display = isExcalidraw ? 'none' : '';
             toggle.querySelectorAll('.canvas-mode-btn').forEach(b => {
                 b.classList.toggle('active', b.dataset.mode === 'preview');
             });
         }
+        if (saveBtn) saveBtn.style.display = isExcalidraw ? 'none' : '';
 
         _updateSaveBtn();
     }
@@ -210,6 +358,8 @@ const Canvas = (() => {
             if (!confirm('You have unsaved changes. Close anyway?')) return;
         }
         _destroyCodeMirror();
+        _destroyExcalidraw();
+        _setExcalidrawContainerMode(false);
         _hidePanel();
     }
 
@@ -271,6 +421,21 @@ const Canvas = (() => {
         openCanvas(data);
     }
 
+    function _isValidExcalidrawJson(content) {
+        try {
+            const parsed = JSON.parse(content);
+            return parsed && Array.isArray(parsed.elements);
+        } catch { return false; }
+    }
+
+    function _updateExcalidrawIfValid(content) {
+        // Only re-render if the content is valid Excalidraw JSON.
+        // Invalid/truncated JSON keeps the previous render intact.
+        if (!_isValidExcalidrawJson(content)) return;
+        const preview = document.getElementById('canvas-preview');
+        if (preview) _renderExcalidraw(preview, content);
+    }
+
     function handleCanvasPatched(data) {
         if (!_canvasData) {
             openCanvas(data);
@@ -282,11 +447,14 @@ const Canvas = (() => {
         if (data.title && titleEl) titleEl.textContent = data.title;
 
         if (data.content != null) {
-            _setCmContent(data.content);
-        }
-
-        if (_mode === 'preview' && data.content != null) {
-            _renderPreview(data.content, _canvasData ? _canvasData.language : null);
+            if (_isExcalidraw(_canvasData.language)) {
+                _updateExcalidrawIfValid(data.content);
+            } else {
+                _setCmContent(data.content);
+                if (_mode === 'preview') {
+                    _renderPreview(data.content, _canvasData.language);
+                }
+            }
         }
 
         _isDirty = false;
@@ -305,8 +473,12 @@ const Canvas = (() => {
         const titleEl = document.getElementById('canvas-title');
 
         if (data.content != null) {
-            _setCmContent(data.content);
-            if (_mode === 'preview') _renderPreview(data.content, _canvasData ? _canvasData.language : null);
+            if (_isExcalidraw(_canvasData.language)) {
+                _updateExcalidrawIfValid(data.content);
+            } else {
+                _setCmContent(data.content);
+                if (_mode === 'preview') _renderPreview(data.content, _canvasData.language);
+            }
             _isDirty = false;
             _updateSaveBtn();
         }
@@ -364,6 +536,8 @@ const Canvas = (() => {
         _canvasData = null;
         _isDirty = false;
         _destroyCodeMirror();
+        _destroyExcalidraw();
+        _setExcalidrawContainerMode(false);
         _hidePanel();
     }
 
@@ -389,7 +563,8 @@ const Canvas = (() => {
     function handleCanvasStreamStart(data) {
         _isStreaming = true;
         _streamingContent = '';
-        _streamingLanguage = (data && data.language) || null;
+        // Use the stream event's language, fall back to the current canvas language
+        _streamingLanguage = (data && data.language) || (_canvasData && _canvasData.language) || null;
 
         const panel = document.getElementById('canvas-panel');
         const chatMain = document.querySelector('.chat-main');
@@ -422,6 +597,24 @@ const Canvas = (() => {
     function handleCanvasStreaming(data) {
         if (!_isStreaming) return;
         _streamingContent += data.content_delta;
+
+        // For excalidraw, show progress indicator instead of partial JSON
+        if (_isExcalidraw(_streamingLanguage)) {
+            if (!_streamRafId) {
+                _streamRafId = requestAnimationFrame(() => {
+                    _streamRafId = null;
+                    const preview = document.getElementById('canvas-preview');
+                    if (preview) {
+                        const chars = _streamingContent.length;
+                        preview.innerHTML =
+                            '<p style="color:var(--text-muted)">Generating diagram... ' +
+                            '(' + chars.toLocaleString() + ' chars)</p>';
+                    }
+                });
+            }
+            return;
+        }
+
         if (!_streamRafId) {
             _streamRafId = requestAnimationFrame(() => {
                 _streamRafId = null;
