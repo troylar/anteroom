@@ -651,6 +651,16 @@ class ReferencesConfig:
 
 
 @dataclass
+class RateLimitConfig:
+    """HTTP rate limiting settings."""
+
+    max_requests: int = 120  # max requests per window per IP
+    window_seconds: int = 60  # sliding window size
+    exempt_paths: list[str] = field(default_factory=lambda: ["/api/events"])
+    sse_retry_ms: int = 5000  # retry: field sent to EventSource clients (ms)
+
+
+@dataclass
 class SessionConfig:
     """Session management and network access control settings."""
 
@@ -782,6 +792,7 @@ class AppConfig:
     codebase_index: CodebaseIndexConfig = field(default_factory=CodebaseIndexConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
+    rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
     compliance: ComplianceConfig = field(default_factory=ComplianceConfig)
     pack_sources: list[PackSourceConfig] = field(default_factory=list)
