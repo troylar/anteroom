@@ -2,13 +2,13 @@
 
 Spaces are YAML-based workspace definitions that can live in two locations:
 
-- **Local (project)**: ``.anteroom/space.yaml`` inside a project directory.
-  Auto-discovered when you ``cd`` into the project and run ``aroom chat``.
+- **Local**: ``.anteroom/space.yaml`` inside a directory.
+  Auto-discovered when you ``cd`` into the directory and run ``aroom chat``.
 - **Global**: ``~/.anteroom/spaces/<name>.yaml``. Available from any directory.
 
-``space create`` and ``space init`` default to creating a local space file in
-the current directory.  ``space list`` shows origin (local/global) and which
-space is active.
+``space init`` creates a local space file in the current directory.
+``space create`` creates a global space.  ``space list`` shows origin
+(local/global) and which space is active.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -71,7 +72,7 @@ def list_space_files() -> list[Path]:
     return sorted(p for p in d.glob("*.yaml") if not p.name.endswith(".local.yaml"))
 
 
-def file_hash(path: Path) -> str:
+def compute_file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -209,7 +210,7 @@ def slugify_dir_name(name: str) -> str:
 
 _SPACE_TEMPLATE = """\
 # Anteroom Space: {name}
-# This file configures an AI workspace for this project.
+# This file configures an AI workspace for this directory.
 #
 # When you run `aroom chat` from this directory, this space activates
 # automatically — your tools, instructions, and config apply instantly.
@@ -298,3 +299,82 @@ def validate_space(config: SpaceConfig) -> list[str]:
                 errors.append(f"sources: {err}")
 
     return errors
+
+
+# ---------------------------------------------------------------------------
+# Sync & export — DB-authoritative with YAML as sync source
+# ---------------------------------------------------------------------------
+
+
+def sync_space_from_file(
+    db: Any,
+    path: Path,
+    *,
+    track_source: bool = True,
+) -> dict[str, Any]:
+    """Parse a space YAML file and create-or-update the corresponding DB record.
+
+    If *track_source* is ``True``, ``source_file`` and ``source_hash`` are set
+    so that future syncs can detect file changes.  Set to ``False`` for a
+    one-shot import with no ongoing file tracking.
+
+    Returns the space dict (newly created or updated).
+    """
+    from . import space_storage
+
+    config = parse_space_file(path)
+    errors = validate_space(config)
+    if errors:
+        raise ValueError(f"Invalid space file: {'; '.join(errors)}")
+
+    fhash = compute_file_hash(path)
+    source_file = str(path.resolve()) if track_source else ""
+    source_hash = fhash if track_source else ""
+
+    existing = space_storage.get_space_by_name(db, config.name)
+    if existing:
+        if existing.get("source_hash") == fhash and existing.get("source_file"):
+            return existing
+        updates: dict[str, Any] = {
+            "instructions": config.instructions or "",
+            "source_hash": source_hash,
+            "last_loaded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if track_source:
+            updates["source_file"] = source_file
+        # Always sync the model: set from YAML or clear if removed
+        updates["model"] = config.config.get("model") or None
+        return space_storage.update_space(db, existing["id"], **updates) or existing
+    else:
+        model = config.config.get("model") if config.config else None
+        return space_storage.create_space(
+            db,
+            config.name,
+            source_file=source_file,
+            source_hash=source_hash,
+            instructions=config.instructions or "",
+            model=model,
+        )
+
+
+def export_space_to_yaml(db: Any, space_id: str) -> SpaceConfig:
+    """Build a ``SpaceConfig`` from the DB record for *space_id*.
+
+    Raises ``ValueError`` if the space does not exist.  The returned config
+    can be written to disk with ``write_space_file()``.
+    """
+    from . import space_storage
+
+    space = space_storage.get_space(db, space_id)
+    if not space:
+        raise ValueError(f"Space not found: {space_id}")
+
+    config_dict: dict[str, Any] = {}
+    if space.get("model"):
+        config_dict["model"] = space["model"]
+
+    return SpaceConfig(
+        name=space["name"],
+        instructions=space.get("instructions", ""),
+        config=config_dict,
+    )

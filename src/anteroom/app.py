@@ -729,7 +729,6 @@ def create_app(config: AppConfig | None = None, enforced_fields: list[str] | Non
         databases,
         events,
         plan,
-        projects,
         search,
         sources,
         usage,
@@ -741,7 +740,6 @@ def create_app(config: AppConfig | None = None, enforced_fields: list[str] | Non
     app.include_router(conversations.router, prefix="/api")
     app.include_router(chat.router, prefix="/api")
     app.include_router(config_api.router, prefix="/api")
-    app.include_router(projects.router, prefix="/api")
     app.include_router(databases.router, prefix="/api")
     app.include_router(events.router, prefix="/api")
     app.include_router(search.router, prefix="/api")

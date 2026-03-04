@@ -100,7 +100,6 @@ class ConversationUpdate(BaseModel):
 class FolderCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     parent_id: str | None = Field(default=None, max_length=200)
-    project_id: str | None = Field(default=None, max_length=200)
 
 
 class FolderUpdate(BaseModel):
@@ -153,7 +152,6 @@ class RewindResponse(BaseModel):
 class ConversationCreate(BaseModel):
     title: str = Field(default="New Conversation", min_length=1, max_length=200)
     type: str = Field(default="chat", pattern=r"^(chat|note|document)$")
-    project_id: str | None = None
 
 
 class EntryCreate(BaseModel):
@@ -230,17 +228,4 @@ class SourceGroupUpdate(BaseModel):
     def _require_at_least_one_field(self) -> "SourceGroupUpdate":
         if self.name is None and self.description is None:
             raise ValueError("At least one of 'name' or 'description' must be provided")
-        return self
-
-
-class ProjectSourceLink(BaseModel):
-    source_id: str | None = Field(default=None, max_length=200)
-    group_id: str | None = Field(default=None, max_length=200)
-    tag_filter: str | None = Field(default=None, max_length=200)
-
-    @model_validator(mode="after")
-    def _validate_exactly_one(self) -> "ProjectSourceLink":
-        non_null = sum(1 for v in (self.source_id, self.group_id, self.tag_filter) if v is not None)
-        if non_null != 1:
-            raise ValueError("Exactly one of 'source_id', 'group_id', or 'tag_filter' must be provided")
         return self

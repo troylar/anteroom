@@ -21,8 +21,10 @@ from anteroom.cli.layout import format_header
 from anteroom.db import _FTS_SCHEMA, _FTS_TRIGGERS, _SCHEMA, _create_indexes
 from anteroom.services.spaces import (
     _SPACE_TEMPLATE,
+    export_space_to_yaml,
     is_local_space,
     slugify_dir_name,
+    sync_space_from_file,
     write_space_template,
 )
 
@@ -288,10 +290,9 @@ class TestFormatHeaderSpaceName:
         styles = [s for s, _ in parts]
         assert "class:header.sep" in styles
 
-    def test_space_name_with_project_name(self) -> None:
-        parts = format_header(project_name="myproject", space_name="dev")
+    def test_space_name_only(self) -> None:
+        parts = format_header(space_name="dev")
         text = "".join(t for _, t in parts)
-        assert "myproject" in text
         assert "Space: dev" in text
 
     def test_space_name_with_plan_mode(self) -> None:
@@ -317,10 +318,10 @@ class TestRouterOriginField:
         from anteroom.services.space_storage import create_space
 
         global_path = str(Path.home() / ".anteroom" / "spaces" / "global.yaml")
-        create_space(db, "global-space", global_path, "hash1")
+        create_space(db, "global-space", source_file=global_path, source_hash="hash1")
 
         local_path = "/home/user/project/.anteroom/space.yaml"
-        create_space(db, "local-space", local_path, "hash2")
+        create_space(db, "local-space", source_file=local_path, source_hash="hash2")
 
         request = MagicMock()
         request.app.state.db = db
@@ -337,7 +338,7 @@ class TestRouterOriginField:
         db = _make_db()
         from anteroom.services.space_storage import create_space
 
-        create_space(db, "test", "/tmp/test.yaml", "h")
+        create_space(db, "test", source_file="/tmp/test.yaml", source_hash="h")
 
         request = MagicMock()
         request.app.state.db = db
@@ -354,7 +355,7 @@ class TestRouterOriginField:
         from anteroom.services.space_storage import create_space
 
         global_path = str(Path.home() / ".anteroom" / "spaces" / "test.yaml")
-        s = create_space(db, "test", global_path, "hash")
+        s = create_space(db, "test", source_file=global_path, source_hash="hash")
 
         request = MagicMock()
         request.app.state.db = db
@@ -369,7 +370,7 @@ class TestRouterOriginField:
         db = _make_db()
         from anteroom.services.space_storage import create_space
 
-        s = create_space(db, "test", "/home/user/project/.anteroom/space.yaml", "hash")
+        s = create_space(db, "test", source_file="/home/user/project/.anteroom/space.yaml", source_hash="hash")
 
         request = MagicMock()
         request.app.state.db = db
@@ -384,7 +385,7 @@ class TestRouterOriginField:
         db = _make_db()
         from anteroom.services.space_storage import create_space
 
-        s = create_space(db, "test", "", "")
+        s = create_space(db, "test", source_file="", source_hash="")
 
         request = MagicMock()
         request.app.state.db = db
@@ -405,3 +406,108 @@ class TestRouterOriginField:
         with pytest.raises(HTTPException) as exc_info:
             await api_get_space(request, "nonexistent-id")
         assert exc_info.value.status_code == 404
+
+
+class TestSyncSpaceFromFile:
+    """Tests for sync_space_from_file()."""
+
+    def test_sync_creates_new_space(self, tmp_path: Path) -> None:
+        space_file = tmp_path / "space.yaml"
+        space_file.write_text(yaml.dump({"name": "test-space", "version": "1"}))
+
+        db = _make_db()
+        result = sync_space_from_file(db, space_file)
+        assert result["name"] == "test-space"
+        assert result["source_file"] == str(space_file.resolve())
+        assert result["source_hash"] != ""
+
+    def test_sync_updates_existing_space(self, tmp_path: Path) -> None:
+        space_file = tmp_path / "space.yaml"
+        space_file.write_text(yaml.dump({"name": "test-space", "version": "1"}))
+
+        db = _make_db()
+        first = sync_space_from_file(db, space_file)
+        # Modify file to trigger update
+        space_file.write_text(yaml.dump({"name": "test-space", "version": "1", "instructions": "Be helpful"}))
+        second = sync_space_from_file(db, space_file)
+        assert first["id"] == second["id"]
+
+    def test_sync_noop_when_hash_unchanged(self, tmp_path: Path) -> None:
+        space_file = tmp_path / "space.yaml"
+        space_file.write_text(yaml.dump({"name": "test-space", "version": "1"}))
+
+        db = _make_db()
+        first = sync_space_from_file(db, space_file)
+        second = sync_space_from_file(db, space_file)
+        assert first["id"] == second["id"]
+        assert first["source_hash"] == second["source_hash"]
+
+    def test_sync_no_tracking(self, tmp_path: Path) -> None:
+        space_file = tmp_path / "space.yaml"
+        space_file.write_text(yaml.dump({"name": "notrack", "version": "1"}))
+
+        db = _make_db()
+        result = sync_space_from_file(db, space_file, track_source=False)
+        assert result["name"] == "notrack"
+        assert result["source_file"] == ""
+        assert result["source_hash"] == ""
+
+    def test_sync_invalid_file_raises(self, tmp_path: Path) -> None:
+        space_file = tmp_path / "space.yaml"
+        space_file.write_text("not: valid: yaml: [")
+
+        db = _make_db()
+        with pytest.raises(Exception):
+            sync_space_from_file(db, space_file)
+
+    def test_sync_with_model(self, tmp_path: Path) -> None:
+        space_file = tmp_path / "space.yaml"
+        space_file.write_text(yaml.dump({"name": "model-space", "version": "1", "config": {"model": "gpt-4o"}}))
+
+        db = _make_db()
+        result = sync_space_from_file(db, space_file)
+        assert result["name"] == "model-space"
+        assert result["model"] == "gpt-4o"
+
+    def test_sync_clears_model_when_removed_from_yaml(self, tmp_path: Path) -> None:
+        """Regression: removing model from YAML should clear it in the DB."""
+        space_file = tmp_path / "space.yaml"
+        space_file.write_text(yaml.dump({"name": "model-clear", "version": "1", "config": {"model": "gpt-4o"}}))
+
+        db = _make_db()
+        result = sync_space_from_file(db, space_file)
+        assert result["model"] == "gpt-4o"
+
+        # Remove model from YAML and resync
+        space_file.write_text(yaml.dump({"name": "model-clear", "version": "1"}))
+        result = sync_space_from_file(db, space_file)
+        assert result["model"] is None, "Model should be cleared when removed from YAML"
+
+
+class TestExportSpaceToYaml:
+    """Tests for export_space_to_yaml()."""
+
+    def test_export_basic(self) -> None:
+        db = _make_db()
+        from anteroom.services.space_storage import create_space
+
+        space = create_space(db, name="exportme", instructions="Be nice", model="gpt-4")
+        cfg = export_space_to_yaml(db, space["id"])
+        assert cfg.name == "exportme"
+        assert cfg.instructions == "Be nice"
+        assert cfg.config == {"model": "gpt-4"}
+
+    def test_export_minimal(self) -> None:
+        db = _make_db()
+        from anteroom.services.space_storage import create_space
+
+        space = create_space(db, name="minimal")
+        cfg = export_space_to_yaml(db, space["id"])
+        assert cfg.name == "minimal"
+        assert cfg.instructions == ""
+        assert cfg.config == {}
+
+    def test_export_not_found_raises(self) -> None:
+        db = _make_db()
+        with pytest.raises(ValueError, match="not found"):
+            export_space_to_yaml(db, "nonexistent-id")

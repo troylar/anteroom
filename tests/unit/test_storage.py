@@ -143,6 +143,38 @@ class TestConversations:
         assert len(notes) == 1
         assert notes[0]["type"] == "note"
 
+    def test_list_conversations_filter_by_space_id(self, db: sqlite3.Connection) -> None:
+        from anteroom.services.space_storage import create_space
+
+        s1 = create_space(db, "space-one")
+        s2 = create_space(db, "space-two")
+        create_conversation(db, title="In S1", space_id=s1["id"])
+        create_conversation(db, title="In S2", space_id=s2["id"])
+        create_conversation(db, title="No space")
+        result = list_conversations(db, space_id=s1["id"])
+        assert len(result) == 1
+        assert result[0]["title"] == "In S1"
+
+    def test_list_conversations_no_space_filter_returns_all(self, db: sqlite3.Connection) -> None:
+        from anteroom.services.space_storage import create_space
+
+        s = create_space(db, "space-filter-test")
+        create_conversation(db, title="In space", space_id=s["id"])
+        create_conversation(db, title="No space")
+        result = list_conversations(db)
+        assert len(result) == 2
+
+    def test_list_conversations_space_and_type_filter(self, db: sqlite3.Connection) -> None:
+        from anteroom.services.space_storage import create_space
+
+        s = create_space(db, "space-combo")
+        create_conversation(db, title="Chat in space", conversation_type="chat", space_id=s["id"])
+        create_conversation(db, title="Note in space", conversation_type="note", space_id=s["id"])
+        create_conversation(db, title="Chat no space", conversation_type="chat")
+        result = list_conversations(db, space_id=s["id"], conversation_type="note")
+        assert len(result) == 1
+        assert result[0]["title"] == "Note in space"
+
     def test_update_conversation_type(self, db: sqlite3.Connection) -> None:
         conv = create_conversation(db, title="Will Change")
         updated = update_conversation_type(db, conv["id"], "note")
@@ -430,16 +462,14 @@ class TestForkConversation:
         with pytest.raises(ValueError, match="Conversation not found"):
             fork_conversation(db, "no-such-id", 0)
 
-    def test_fork_inherits_project_and_model(self, db: sqlite3.Connection) -> None:
-        from anteroom.services.storage import create_project, update_conversation_model
+    def test_fork_inherits_model(self, db: sqlite3.Connection) -> None:
+        from anteroom.services.storage import update_conversation_model
 
-        project = create_project(db, "TestProj")
-        conv = create_conversation(db, title="WithProject", project_id=project["id"])
+        conv = create_conversation(db, title="WithModel")
         update_conversation_model(db, conv["id"], "gpt-4o")
         create_message(db, conv["id"], "user", "hi")
 
         forked = fork_conversation(db, conv["id"], 0)
-        assert forked["project_id"] == project["id"]
         assert forked["model"] == "gpt-4o"
 
 
@@ -504,7 +534,6 @@ class TestFolders:
         assert folder["id"]
         assert folder["position"] == 0
         assert folder["collapsed"] is False
-        assert folder["project_id"] is None
         assert folder["parent_id"] is None
 
     def test_create_subfolder(self, db: sqlite3.Connection) -> None:
@@ -531,13 +560,6 @@ class TestFolders:
         updated_conv = get_conversation(db, conv["id"])
         assert updated_conv["folder_id"] is None
 
-    def test_create_folder_with_project(self, db: sqlite3.Connection) -> None:
-        from anteroom.services.storage import create_project
-
-        proj = create_project(db, "Test Project")
-        folder = create_folder(db, "Research", project_id=proj["id"])
-        assert folder["project_id"] == proj["id"]
-
     def test_create_folders_auto_increment_position(self, db: sqlite3.Connection) -> None:
         f1 = create_folder(db, "First")
         f2 = create_folder(db, "Second")
@@ -556,15 +578,6 @@ class TestFolders:
         folders = list_folders(db)
         assert len(folders) == 3
         assert [f["name"] for f in folders] == ["A", "B", "C"]
-
-    def test_list_folders_filtered_by_project(self, db: sqlite3.Connection) -> None:
-        from anteroom.services.storage import create_project
-
-        proj = create_project(db, "P1")
-        create_folder(db, "In project", project_id=proj["id"])
-        create_folder(db, "No project")
-        assert len(list_folders(db, project_id=proj["id"])) == 1
-        assert len(list_folders(db)) == 2
 
     def test_update_folder_name(self, db: sqlite3.Connection) -> None:
         folder = create_folder(db, "Old Name")
@@ -889,15 +902,6 @@ class TestUserIdentityInStorage:
     def test_create_tag_with_identity(self, db: sqlite3.Connection) -> None:
         tag = create_tag(db, "important", user_id="u1", user_display_name="Alice")
         row = db.execute_fetchone("SELECT user_id, user_display_name FROM tags WHERE id = ?", (tag["id"],))
-        assert row is not None
-        assert row["user_id"] == "u1"
-        assert row["user_display_name"] == "Alice"
-
-    def test_create_project_with_identity(self, db: sqlite3.Connection) -> None:
-        from anteroom.services.storage import create_project
-
-        proj = create_project(db, "Test", user_id="u1", user_display_name="Alice")
-        row = db.execute_fetchone("SELECT user_id, user_display_name FROM projects WHERE id = ?", (proj["id"],))
         assert row is not None
         assert row["user_id"] == "u1"
         assert row["user_display_name"] == "Alice"

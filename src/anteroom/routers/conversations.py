@@ -94,13 +94,13 @@ def _get_client_id(request: Request) -> str:
 async def list_conversations(
     request: Request,
     search: str | None = None,
-    project_id: str | None = None,
     type: str | None = Query(default=None, pattern=r"^(chat|note|document)$"),
+    space_id: str | None = None,
 ) -> Any:
-    if project_id:
-        _validate_uuid(project_id)
+    if space_id:
+        _validate_uuid(space_id)
     db = _get_db(request)
-    return storage.list_conversations(db, search=search, project_id=project_id, conversation_type=type)
+    return storage.list_conversations(db, search=search, conversation_type=type, space_id=space_id)
 
 
 @router.post("/conversations", status_code=201)
@@ -112,9 +112,6 @@ async def create_conversation(request: Request) -> Any:
         body = await request.json()
     except Exception:
         pass
-    project_id = body.get("project_id") if isinstance(body, dict) else None
-    if project_id:
-        _validate_uuid(project_id)
     space_id = body.get("space_id") if isinstance(body, dict) else None
     if space_id:
         _validate_uuid(space_id)
@@ -132,7 +129,6 @@ async def create_conversation(request: Request) -> Any:
     conv = storage.create_conversation(
         db,
         title=title,
-        project_id=project_id,
         space_id=space_id,
         user_id=uid,
         user_display_name=uname,
@@ -483,26 +479,21 @@ async def delete_canvas(conversation_id: str, request: Request) -> None:
 
 
 @router.get("/folders")
-async def list_folders(request: Request, project_id: str | None = None) -> Any:
-    if project_id:
-        _validate_uuid(project_id)
+async def list_folders(request: Request) -> Any:
     db = _get_db(request)
-    return storage.list_folders(db, project_id=project_id)
+    return storage.list_folders(db)
 
 
 @router.post("/folders", status_code=201)
 async def create_folder(body: FolderCreate, request: Request) -> Any:
     if body.parent_id:
         _validate_uuid(body.parent_id)
-    if body.project_id:
-        _validate_uuid(body.project_id)
     db = _get_db(request)
     uid, uname = _get_identity(request)
     return storage.create_folder(
         db,
         name=body.name,
         parent_id=body.parent_id,
-        project_id=body.project_id,
         user_id=uid,
         user_display_name=uname,
     )

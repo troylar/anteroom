@@ -1,4 +1,4 @@
-"""API endpoints for knowledge sources, source groups, and project source linking."""
+"""API endpoints for knowledge sources, source groups, and source linking."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Form, HTTPException, Query, Request, UploadFile
 from pydantic import ValidationError
 
-from ..models import ProjectSourceLink, SourceCreate, SourceGroupCreate, SourceGroupUpdate, SourceUpdate
+from ..models import SourceCreate, SourceGroupCreate, SourceGroupUpdate, SourceUpdate
 from ..services import storage
 
 router = APIRouter(tags=["sources"])
@@ -62,7 +62,6 @@ async def list_sources(
     type: str | None = Query(default=None, pattern="^(file|text|url)$"),
     tag_id: str | None = None,
     group_id: str | None = None,
-    project_id: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
@@ -73,7 +72,6 @@ async def list_sources(
         source_type=type,
         tag_id=tag_id,
         group_id=group_id,
-        project_id=project_id,
         limit=limit,
         offset=offset,
     )
@@ -279,59 +277,3 @@ async def remove_from_group(request: Request, group_id: str, source_id: str) -> 
     db = _get_db(request)
     storage.remove_source_from_group(db, group_id, source_id)
     return {"status": "removed"}
-
-
-# --- Project Sources ---
-
-
-@router.get("/projects/{project_id}/sources")
-async def get_project_sources(request: Request, project_id: str) -> dict[str, Any]:
-    _validate_uuid(project_id, "project_id")
-    db = _get_db(request)
-    sources = storage.get_project_sources(db, project_id)
-    return {"sources": sources}
-
-
-@router.post("/projects/{project_id}/sources", status_code=201)
-async def link_project_source(request: Request, project_id: str) -> dict[str, Any]:
-    _validate_json_content_type(request)
-    _validate_uuid(project_id, "project_id")
-    body = await request.json()
-    data = _parse_body(ProjectSourceLink, body)
-    db = _get_db(request)
-
-    proj = storage.get_project(db, project_id)
-    if not proj:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    link = storage.link_source_to_project(
-        db,
-        project_id,
-        source_id=data.source_id,
-        group_id=data.group_id,
-        tag_filter=data.tag_filter,
-    )
-    return link
-
-
-@router.delete("/projects/{project_id}/sources")
-async def unlink_project_source(
-    request: Request,
-    project_id: str,
-    source_id: str | None = Query(default=None),
-    group_id: str | None = Query(default=None),
-    tag_filter: str | None = Query(default=None),
-) -> dict[str, Any]:
-    _validate_uuid(project_id, "project_id")
-    non_null = sum(1 for v in (source_id, group_id, tag_filter) if v is not None)
-    if non_null != 1:
-        raise HTTPException(status_code=422, detail="Exactly one of source_id, group_id, or tag_filter required")
-    db = _get_db(request)
-    storage.unlink_source_from_project(
-        db,
-        project_id,
-        source_id=source_id,
-        group_id=group_id,
-        tag_filter=tag_filter,
-    )
-    return {"status": "unlinked"}

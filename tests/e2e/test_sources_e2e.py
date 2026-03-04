@@ -228,37 +228,37 @@ class TestSourceGroups:
         assert resp.status_code == 200
 
 
-class TestProjectSourceLinking:
-    """Verify linking sources to projects."""
+class TestSpaceSourceLinking:
+    """Verify linking sources to spaces."""
 
-    def test_link_source_to_project(self, api_client) -> None:
-        project = api_client.post(
-            "/api/projects",
-            json={"name": "Source Link Project"},
+    def test_link_source_to_space(self, api_client) -> None:
+        space = api_client.post(
+            "/api/spaces",
+            json={"name": "source-link-space"},
         ).json()
         source = api_client.post(
             "/api/sources",
-            json={"type": "text", "title": "Linked", "content": "project context"},
+            json={"type": "text", "title": "Linked", "content": "space context"},
             headers={"Content-Type": "application/json"},
         ).json()
 
         resp = api_client.post(
-            f"/api/projects/{project['id']}/sources",
+            f"/api/spaces/{space['id']}/sources",
             json={"source_id": source["id"]},
             headers={"Content-Type": "application/json"},
         )
         assert resp.status_code == 201
 
-        # Verify project sources
-        resp = api_client.get(f"/api/projects/{project['id']}/sources")
+        # Verify space sources
+        resp = api_client.get(f"/api/spaces/{space['id']}/sources")
         assert resp.status_code == 200
-        sources = resp.json()["sources"]
+        sources = resp.json()
         assert any(s["id"] == source["id"] for s in sources)
 
-    def test_unlink_source_from_project(self, api_client) -> None:
-        project = api_client.post(
-            "/api/projects",
-            json={"name": "Unlink Project"},
+    def test_unlink_source_from_space(self, api_client) -> None:
+        space = api_client.post(
+            "/api/spaces",
+            json={"name": "unlink-space"},
         ).json()
         source = api_client.post(
             "/api/sources",
@@ -267,13 +267,13 @@ class TestProjectSourceLinking:
         ).json()
 
         api_client.post(
-            f"/api/projects/{project['id']}/sources",
+            f"/api/spaces/{space['id']}/sources",
             json={"source_id": source["id"]},
             headers={"Content-Type": "application/json"},
         )
 
-        resp = api_client.delete(f"/api/projects/{project['id']}/sources?source_id={source['id']}")
-        assert resp.status_code == 200
+        resp = api_client.delete(f"/api/spaces/{space['id']}/sources/{source['id']}")
+        assert resp.status_code == 204
 
 
 # ---------------------------------------------------------------------------

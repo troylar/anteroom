@@ -75,101 +75,6 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
-# --- Projects ---
-
-
-def create_project(
-    db: ThreadSafeConnection,
-    name: str,
-    instructions: str = "",
-    model: str | None = None,
-    user_id: str | None = None,
-    user_display_name: str | None = None,
-) -> dict[str, Any]:
-    pid = _uuid()
-    now = _now()
-    db.execute(
-        "INSERT INTO projects (id, name, instructions, model, user_id, user_display_name, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (pid, name, instructions, model or None, user_id, user_display_name, now, now),
-    )
-    db.commit()
-    return {
-        "id": pid,
-        "name": name,
-        "instructions": instructions,
-        "model": model,
-        "user_id": user_id,
-        "user_display_name": user_display_name,
-        "created_at": now,
-        "updated_at": now,
-    }
-
-
-def get_project(db: ThreadSafeConnection, project_id: str) -> dict[str, Any] | None:
-    row = db.execute_fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
-    if not row:
-        return None
-    return dict(row)
-
-
-def list_projects(db: ThreadSafeConnection) -> list[dict[str, Any]]:
-    rows = db.execute_fetchall("SELECT * FROM projects ORDER BY updated_at DESC")
-    return [dict(r) for r in rows]
-
-
-def update_project(
-    db: ThreadSafeConnection,
-    project_id: str,
-    name: str | None = None,
-    instructions: str | None = None,
-    model: str | None = _UNSET,
-) -> dict[str, Any] | None:
-    proj = get_project(db, project_id)
-    if not proj:
-        return None
-    cols: dict[str, Any] = {"updated_at": _now()}
-    if name is not None:
-        cols["name"] = name
-    if instructions is not None:
-        cols["instructions"] = instructions
-    if model is not _UNSET:
-        cols["model"] = model or None
-    set_clause, params = _build_set_clause(cols)
-    params.append(project_id)
-    db.execute(f"UPDATE projects SET {set_clause} WHERE id = ?", tuple(params))
-    db.commit()
-    return get_project(db, project_id)
-
-
-def get_project_by_name(db: ThreadSafeConnection, name: str) -> dict[str, Any] | None:
-    row = db.execute_fetchone("SELECT * FROM projects WHERE LOWER(name) = LOWER(?)", (name,))
-    if not row:
-        return None
-    return dict(row)
-
-
-def delete_project(db: ThreadSafeConnection, project_id: str) -> bool:
-    proj = get_project(db, project_id)
-    if not proj:
-        return False
-    db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
-    db.commit()
-    return True
-
-
-def update_conversation_project(
-    db: ThreadSafeConnection, conversation_id: str, project_id: str | None
-) -> dict[str, Any] | None:
-    now = _now()
-    db.execute(
-        "UPDATE conversations SET project_id = ?, updated_at = ? WHERE id = ?",
-        (project_id, now, conversation_id),
-    )
-    db.commit()
-    return get_conversation(db, conversation_id)
-
-
 def update_conversation_space(
     db: ThreadSafeConnection, conversation_id: str, space_id: str | None
 ) -> dict[str, Any] | None:
@@ -182,14 +87,6 @@ def update_conversation_space(
     return get_conversation(db, conversation_id)
 
 
-def count_project_conversations(db: ThreadSafeConnection, project_id: str) -> int:
-    row = db.execute_fetchone(
-        "SELECT COUNT(*) AS cnt FROM conversations WHERE project_id = ?",
-        (project_id,),
-    )
-    return row["cnt"] if row else 0
-
-
 # --- Folders ---
 
 
@@ -197,29 +94,27 @@ def create_folder(
     db: ThreadSafeConnection,
     name: str,
     parent_id: str | None = None,
-    project_id: str | None = None,
     user_id: str | None = None,
     user_display_name: str | None = None,
 ) -> dict[str, Any]:
     fid = _uuid()
     now = _now()
     pos_row = db.execute_fetchone(
-        "SELECT COALESCE(MAX(position), -1) + 1 FROM folders WHERE parent_id IS ? AND project_id IS ?",
-        (parent_id, project_id),
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM folders WHERE parent_id IS ?",
+        (parent_id,),
     )
     position = pos_row[0] if pos_row else 0
     db.execute(
-        "INSERT INTO folders (id, name, parent_id, project_id, position, collapsed,"
+        "INSERT INTO folders (id, name, parent_id, position, collapsed,"
         " user_id, user_display_name, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
-        (fid, name, parent_id, project_id, position, user_id, user_display_name, now, now),
+        " VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)",
+        (fid, name, parent_id, position, user_id, user_display_name, now, now),
     )
     db.commit()
     return {
         "id": fid,
         "name": name,
         "parent_id": parent_id,
-        "project_id": project_id,
         "position": position,
         "collapsed": False,
         "user_id": user_id,
@@ -231,15 +126,8 @@ def create_folder(
 
 def list_folders(
     db: ThreadSafeConnection,
-    project_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    if project_id:
-        rows = db.execute_fetchall(
-            "SELECT * FROM folders WHERE project_id = ? ORDER BY position",
-            (project_id,),
-        )
-    else:
-        rows = db.execute_fetchall("SELECT * FROM folders ORDER BY position")
+    rows = db.execute_fetchall("SELECT * FROM folders ORDER BY position")
     result = []
     for r in rows:
         d = dict(r)
@@ -417,7 +305,6 @@ def get_conversation_tags(db: ThreadSafeConnection, conversation_id: str) -> lis
 def create_conversation(
     db: ThreadSafeConnection,
     title: str = "New Conversation",
-    project_id: str | None = None,
     user_id: str | None = None,
     user_display_name: str | None = None,
     conversation_type: str = "chat",
@@ -431,10 +318,10 @@ def create_conversation(
     slug = generate_slug(db)
     db.execute(
         "INSERT INTO conversations"
-        " (id, title, slug, type, project_id, user_id, user_display_name,"
+        " (id, title, slug, type, user_id, user_display_name,"
         " working_dir, space_id, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (cid, title, slug, conversation_type, project_id, user_id, user_display_name, working_dir, space_id, now, now),
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (cid, title, slug, conversation_type, user_id, user_display_name, working_dir, space_id, now, now),
     )
     db.commit()
     return {
@@ -443,7 +330,6 @@ def create_conversation(
         "slug": slug,
         "type": conversation_type,
         "model": None,
-        "project_id": project_id,
         "user_id": user_id,
         "user_display_name": user_display_name,
         "working_dir": working_dir,
@@ -482,10 +368,10 @@ DEFAULT_PAGE_LIMIT = 100
 def list_conversations(
     db: ThreadSafeConnection,
     search: str | None = None,
-    project_id: str | None = None,
     limit: int = DEFAULT_PAGE_LIMIT,
     offset: int = 0,
     conversation_type: str | None = None,
+    space_id: str | None = None,
 ) -> list[dict[str, Any]]:
     conditions: list[str] = []
     params: list[Any] = []
@@ -497,13 +383,13 @@ def list_conversations(
         conditions.append("conversations_fts MATCH ?")
         params.append(safe_search)
 
-    if project_id:
-        conditions.append("c.project_id = ?")
-        params.append(project_id)
-
     if conversation_type and conversation_type in VALID_CONVERSATION_TYPES:
         conditions.append("c.type = ?")
         params.append(conversation_type)
+
+    if space_id:
+        conditions.append("c.space_id = ?")
+        params.append(space_id)
 
     # SECURITY-REVIEW: conditions list contains only static literal strings (never user input);
     # all user values are in params as bind parameters. Safe query-builder pattern.
@@ -608,14 +494,13 @@ def fork_conversation(
 
     with db.transaction() as conn:
         conn.execute(
-            "INSERT INTO conversations (id, title, model, project_id, user_id, user_display_name,"
+            "INSERT INTO conversations (id, title, model, user_id, user_display_name,"
             " created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 new_cid,
                 fork_title,
                 conv.get("model"),
-                conv.get("project_id"),
                 conv.get("user_id"),
                 conv.get("user_display_name"),
                 now,
@@ -680,7 +565,6 @@ def fork_conversation(
         "id": new_cid,
         "title": fork_title,
         "model": conv.get("model"),
-        "project_id": conv.get("project_id"),
         "created_at": now,
         "updated_at": now,
     }
@@ -699,13 +583,12 @@ def copy_conversation_to_db(
     new_cid = _uuid()
     now = _now()
     target_db.execute(
-        "INSERT INTO conversations (id, title, model, project_id, user_id, user_display_name,"
-        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO conversations (id, title, model, user_id, user_display_name,"
+        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
             new_cid,
             conv["title"],
             conv.get("model"),
-            None,
             conv.get("user_id"),
             conv.get("user_display_name"),
             conv.get("created_at", now),
@@ -1791,7 +1674,6 @@ def list_sources(
     source_type: str | None = None,
     tag_id: str | None = None,
     group_id: str | None = None,
-    project_id: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
@@ -1817,21 +1699,6 @@ def list_sources(
             "EXISTS (SELECT 1 FROM source_group_members sgm WHERE sgm.source_id = s.id AND sgm.group_id = ?)"
         )
         params.append(group_id)
-
-    if project_id:
-        conditions.append(
-            """EXISTS (
-                SELECT 1 FROM project_sources ps WHERE ps.project_id = ? AND (
-                    ps.source_id = s.id OR
-                    EXISTS (SELECT 1 FROM source_group_members sgm2
-                            WHERE sgm2.group_id = ps.group_id AND sgm2.source_id = s.id) OR
-                    EXISTS (SELECT 1 FROM source_tags st2
-                            JOIN tags t2 ON t2.id = st2.tag_id
-                            WHERE st2.source_id = s.id AND t2.name = ps.tag_filter)
-                )
-            )"""
-        )
-        params.append(project_id)
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     params.extend([limit, offset])
@@ -2218,106 +2085,6 @@ def remove_source_from_group(db: ThreadSafeConnection, group_id: str, source_id:
     return True
 
 
-# --- Project Sources ---
-
-
-def link_source_to_project(
-    db: ThreadSafeConnection,
-    project_id: str,
-    source_id: str | None = None,
-    group_id: str | None = None,
-    tag_filter: str | None = None,
-) -> dict[str, Any]:
-    non_null = sum(1 for v in (source_id, group_id, tag_filter) if v is not None)
-    if non_null != 1:
-        raise ValueError("Exactly one of source_id, group_id, or tag_filter must be provided")
-    now = _now()
-    db.execute(
-        "INSERT OR IGNORE INTO project_sources"
-        " (project_id, source_id, group_id, tag_filter, created_at) VALUES (?, ?, ?, ?, ?)",
-        (project_id, source_id, group_id, tag_filter, now),
-    )
-    db.commit()
-    return {
-        "project_id": project_id,
-        "source_id": source_id,
-        "group_id": group_id,
-        "tag_filter": tag_filter,
-        "created_at": now,
-    }
-
-
-def unlink_source_from_project(
-    db: ThreadSafeConnection,
-    project_id: str,
-    source_id: str | None = None,
-    group_id: str | None = None,
-    tag_filter: str | None = None,
-) -> bool:
-    if source_id:
-        db.execute(
-            "DELETE FROM project_sources WHERE project_id = ? AND source_id = ?",
-            (project_id, source_id),
-        )
-    elif group_id:
-        db.execute(
-            "DELETE FROM project_sources WHERE project_id = ? AND group_id = ?",
-            (project_id, group_id),
-        )
-    elif tag_filter:
-        db.execute(
-            "DELETE FROM project_sources WHERE project_id = ? AND tag_filter = ?",
-            (project_id, tag_filter),
-        )
-    else:
-        return False
-    db.commit()
-    return True
-
-
-def get_project_sources(db: ThreadSafeConnection, project_id: str) -> list[dict[str, Any]]:
-    """Resolve all project source links to a flat list of sources."""
-    links = db.execute_fetchall(
-        "SELECT * FROM project_sources WHERE project_id = ?",
-        (project_id,),
-    )
-    seen: set[str] = set()
-    sources: list[dict[str, Any]] = []
-
-    for link_row in links:
-        link = dict(link_row)
-        if link["source_id"]:
-            if link["source_id"] not in seen:
-                row = db.execute_fetchone("SELECT * FROM sources WHERE id = ?", (link["source_id"],))
-                if row:
-                    seen.add(link["source_id"])
-                    sources.append(dict(row))
-        elif link["group_id"]:
-            members = db.execute_fetchall(
-                "SELECT s.* FROM sources s JOIN source_group_members sgm ON sgm.source_id = s.id"
-                " WHERE sgm.group_id = ?",
-                (link["group_id"],),
-            )
-            for m_row in members:
-                m = dict(m_row)
-                if m["id"] not in seen:
-                    seen.add(m["id"])
-                    sources.append(m)
-        elif link["tag_filter"]:
-            tagged = db.execute_fetchall(
-                "SELECT s.* FROM sources s JOIN source_tags st ON st.source_id = s.id"
-                " JOIN tags t ON t.id = st.tag_id WHERE t.name = ?",
-                (link["tag_filter"],),
-            )
-            for t_row in tagged:
-                t = dict(t_row)
-                if t["id"] not in seen:
-                    seen.add(t["id"])
-                    sources.append(t)
-
-    return sources
-
-
 # --- Space Sources ---
 
 
@@ -2544,18 +2311,12 @@ def search_similar_source_chunks(
     embedding: list[float],
     limit: int = 20,
     source_id: str | None = None,
-    project_id: str | None = None,
     space_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Search for semantically similar source chunks using vec0 cosine similarity.
 
-    When *project_id* is given, results are filtered to sources linked to that
-    project (direct, group, or tag-filter linkage via ``project_sources``).
-
     When *space_id* is given, results are filtered to sources linked to that
     space (direct, group, or tag-filter linkage via ``space_sources``).
-
-    Both filters are applied independently (intersection).
     """
     from ..db import has_vec_support
 
@@ -2566,9 +2327,9 @@ def search_similar_source_chunks(
     limit = max(1, min(limit, _MAX_SEARCH_LIMIT))
     embedding_bytes = _validate_embedding(embedding)
 
-    # Over-fetch when project/space filtering so we still return enough
+    # Over-fetch when space filtering so we still return enough
     # results after post-filter (KNN is computed before the JOIN).
-    fetch_limit = min(limit * 3, _MAX_SEARCH_LIMIT) if (project_id or space_id) else limit
+    fetch_limit = min(limit * 3, _MAX_SEARCH_LIMIT) if space_id else limit
 
     if source_id:
         rows = db.execute_fetchall(
@@ -2609,10 +2370,6 @@ def search_similar_source_chunks(
         }
         for r in rows
     ]
-
-    if project_id:
-        project_source_ids = {s["id"] for s in get_project_sources(db, project_id)}
-        results = [r for r in results if r["source_id"] in project_source_ids]
 
     if space_id:
         space_source_ids = {s["id"] for s in get_space_sources(db, space_id)}

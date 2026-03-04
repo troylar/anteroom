@@ -12,6 +12,7 @@ from anteroom.db import (
     _SCHEMA,
     _VEC_METADATA_SCHEMA,
     _create_indexes,
+    _eradicate_projects,
     _make_vec_schema,
     _run_migrations,
     has_vec_support,
@@ -100,7 +101,6 @@ class TestInitDb:
             "slug",
             "type",
             "model",
-            "project_id",
             "working_dir",
             "folder_id",
             "user_id",
@@ -138,13 +138,6 @@ class TestInitDb:
         info = conn.execute("PRAGMA table_info(users)").fetchall()
         col_names = {r[1] for r in info}
         assert col_names == {"user_id", "display_name", "public_key", "created_at", "updated_at"}
-
-    def test_projects_have_user_columns(self) -> None:
-        conn = _init_in_memory()
-        info = conn.execute("PRAGMA table_info(projects)").fetchall()
-        col_names = {r[1] for r in info}
-        assert "user_id" in col_names
-        assert "user_display_name" in col_names
 
     def test_folders_have_user_columns(self) -> None:
         conn = _init_in_memory()
@@ -248,7 +241,7 @@ class TestMigrations:
 
         conn = self._init_legacy_db()
         _run_migrations(conn)
-        for table in ("conversations", "messages", "projects", "folders", "tags"):
+        for table in ("conversations", "messages", "folders", "tags"):
             info = conn.execute(f"PRAGMA table_info({table})").fetchall()
             col_names = {r[1] for r in info}
             assert "user_id" in col_names, f"user_id missing from {table}"
@@ -523,7 +516,6 @@ class TestCreateIndexes:
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'").fetchall()
         }
         expected = {
-            "idx_projects_name",
             "idx_spaces_name",
             "idx_space_paths_space",
             "idx_messages_conversation",
@@ -697,6 +689,9 @@ class TestMigrationPaths:
         _run_migrations(conn)
         _create_indexes(conn)
         conn.commit()
+        _eradicate_projects(conn)
+        _create_indexes(conn)
+        conn.commit()
 
     def _get_all_tables(self, conn: sqlite3.Connection) -> set[str]:
         return {
@@ -817,6 +812,29 @@ class TestMigrationPaths:
         conn = self._make_pre_artifacts_db()
         self._run_full_init(conn)
         self._run_full_init(conn)
+
+    def test_project_id_column_dropped_after_migration(self) -> None:
+        """Migrating a DB with project_id FK must drop the column to avoid FK errors."""
+        conn = self._make_pre_artifacts_db()
+        # Verify the baseline has project_id
+        cols_before = {r["name"] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        assert "project_id" in cols_before
+
+        self._run_full_init(conn)
+
+        # After migration, project_id must be gone and INSERT must work
+        cols_after = {r["name"] for r in conn.execute("PRAGMA table_info(conversations)").fetchall()}
+        assert "project_id" not in cols_after
+
+        # Inserting a conversation must not raise "no such table: projects"
+        import uuid
+
+        now = "2026-01-01T00:00:00Z"
+        conn.execute(
+            "INSERT INTO conversations (id, title, type, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "test", "chat", now, now),
+        )
+        conn.commit()
 
     # -- Schema fingerprint --
 

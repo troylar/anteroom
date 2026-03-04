@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from anteroom.routers.spaces import SpaceCreateRequest, SpaceSourceLinkRequest, router
+from anteroom.routers.spaces import SpaceCreateRequest, SpaceSourceLinkRequest, SpaceUpdateRequest, router
 
 
 def _make_app() -> FastAPI:
@@ -19,71 +19,71 @@ def _make_app() -> FastAPI:
 
 class TestSpaceCreateRequestValidation:
     def test_valid_name_alphanumeric(self) -> None:
-        req = SpaceCreateRequest(name="myspace", file_path="/tmp/space.yaml")
+        req = SpaceCreateRequest(name="myspace", source_file="/tmp/space.yaml")
         assert req.name == "myspace"
 
     def test_valid_name_with_hyphens_and_underscores(self) -> None:
-        req = SpaceCreateRequest(name="my-space_01", file_path="/tmp/space.yaml")
+        req = SpaceCreateRequest(name="my-space_01", source_file="/tmp/space.yaml")
         assert req.name == "my-space_01"
 
     def test_valid_name_max_length(self) -> None:
         name = "a" + "b" * 63
-        req = SpaceCreateRequest(name=name, file_path="/tmp/space.yaml")
+        req = SpaceCreateRequest(name=name, source_file="/tmp/space.yaml")
         assert req.name == name
 
     def test_invalid_name_starts_with_hyphen(self) -> None:
         import pytest
 
         with pytest.raises(Exception):
-            SpaceCreateRequest(name="-bad", file_path="/tmp/space.yaml")
+            SpaceCreateRequest(name="-bad", source_file="/tmp/space.yaml")
 
     def test_invalid_name_starts_with_underscore(self) -> None:
         import pytest
 
         with pytest.raises(Exception):
-            SpaceCreateRequest(name="_bad", file_path="/tmp/space.yaml")
+            SpaceCreateRequest(name="_bad", source_file="/tmp/space.yaml")
 
     def test_invalid_name_too_long(self) -> None:
         import pytest
 
         with pytest.raises(Exception):
-            SpaceCreateRequest(name="a" * 65, file_path="/tmp/space.yaml")
+            SpaceCreateRequest(name="a" * 65, source_file="/tmp/space.yaml")
 
     def test_invalid_name_empty(self) -> None:
         import pytest
 
         with pytest.raises(Exception):
-            SpaceCreateRequest(name="", file_path="/tmp/space.yaml")
+            SpaceCreateRequest(name="", source_file="/tmp/space.yaml")
 
     def test_invalid_name_with_space(self) -> None:
         import pytest
 
         with pytest.raises(Exception):
-            SpaceCreateRequest(name="has space", file_path="/tmp/space.yaml")
+            SpaceCreateRequest(name="has space", source_file="/tmp/space.yaml")
 
     def test_invalid_name_with_slash(self) -> None:
         import pytest
 
         with pytest.raises(Exception):
-            SpaceCreateRequest(name="has/slash", file_path="/tmp/space.yaml")
+            SpaceCreateRequest(name="has/slash", source_file="/tmp/space.yaml")
 
     def test_path_traversal_rejected(self) -> None:
         import pytest
 
         with pytest.raises(Exception):
-            SpaceCreateRequest(name="myspace", file_path="/tmp/../etc/passwd")
+            SpaceCreateRequest(name="myspace", source_file="/tmp/../etc/passwd")
 
-    def test_valid_file_path_with_subdirs(self) -> None:
-        req = SpaceCreateRequest(name="myspace", file_path="/home/user/spaces/work.yaml")
-        assert req.file_path == "/home/user/spaces/work.yaml"
+    def test_valid_source_file_with_subdirs(self) -> None:
+        req = SpaceCreateRequest(name="myspace", source_file="/home/user/spaces/work.yaml")
+        assert req.source_file == "/home/user/spaces/work.yaml"
 
-    def test_default_file_hash_empty(self) -> None:
-        req = SpaceCreateRequest(name="myspace", file_path="/tmp/space.yaml")
-        assert req.file_hash == ""
+    def test_default_source_hash_empty(self) -> None:
+        req = SpaceCreateRequest(name="myspace", source_file="/tmp/space.yaml")
+        assert req.source_hash == ""
 
-    def test_explicit_file_hash(self) -> None:
-        req = SpaceCreateRequest(name="myspace", file_path="/tmp/space.yaml", file_hash="abc123")
-        assert req.file_hash == "abc123"
+    def test_explicit_source_hash(self) -> None:
+        req = SpaceCreateRequest(name="myspace", source_file="/tmp/space.yaml", source_hash="abc123")
+        assert req.source_hash == "abc123"
 
 
 class TestSpaceSourceLinkRequestValidation:
@@ -118,8 +118,8 @@ class TestListSpacesEndpoint:
     def test_list_with_spaces(self) -> None:
         app = _make_app()
         spaces = [
-            {"id": "sp-1", "name": "work", "file_path": "/tmp/work.yaml", "file_hash": "abc"},
-            {"id": "sp-2", "name": "personal", "file_path": "/tmp/personal.yaml", "file_hash": "def"},
+            {"id": "sp-1", "name": "work", "source_file": "/tmp/work.yaml", "source_hash": "abc"},
+            {"id": "sp-2", "name": "personal", "source_file": "/tmp/personal.yaml", "source_hash": "def"},
         ]
         with patch("anteroom.routers.spaces.list_spaces", return_value=spaces):
             client = TestClient(app)
@@ -141,51 +141,50 @@ class TestListSpacesEndpoint:
 class TestCreateSpaceEndpoint:
     def test_create_success(self) -> None:
         app = _make_app()
-        created = {"id": "sp-1", "name": "myspace", "file_path": "/tmp/space.yaml", "file_hash": ""}
+        created = {"id": "sp-1", "name": "myspace", "source_file": "/tmp/space.yaml", "source_hash": ""}
         with patch("anteroom.routers.spaces.db_create_space", return_value=created):
             client = TestClient(app)
-            resp = client.post("/api/spaces", json={"name": "myspace", "file_path": "/tmp/space.yaml"})
+            resp = client.post("/api/spaces", json={"name": "myspace", "source_file": "/tmp/space.yaml"})
         assert resp.status_code == 201
         data = resp.json()
         assert data["id"] == "sp-1"
         assert data["name"] == "myspace"
 
-    def test_create_with_file_hash(self) -> None:
+    def test_create_with_source_hash(self) -> None:
         app = _make_app()
-        created = {"id": "sp-1", "name": "myspace", "file_path": "/tmp/space.yaml", "file_hash": "sha256abc"}
+        created = {"id": "sp-1", "name": "myspace", "source_file": "/tmp/space.yaml", "source_hash": "sha256abc"}
         with patch("anteroom.routers.spaces.db_create_space", return_value=created) as mock_create:
             client = TestClient(app)
             resp = client.post(
                 "/api/spaces",
-                json={"name": "myspace", "file_path": "/tmp/space.yaml", "file_hash": "sha256abc"},
+                json={"name": "myspace", "source_file": "/tmp/space.yaml", "source_hash": "sha256abc"},
             )
         assert resp.status_code == 201
         mock_create.assert_called_once_with(
-            app.state.db, name="myspace", file_path="/tmp/space.yaml", file_hash="sha256abc"
+            app.state.db,
+            name="myspace",
+            instructions="",
+            model=None,
+            source_file="/tmp/space.yaml",
+            source_hash="sha256abc",
         )
 
     def test_create_invalid_name_returns_422(self) -> None:
         app = _make_app()
         client = TestClient(app)
-        resp = client.post("/api/spaces", json={"name": "-invalid", "file_path": "/tmp/space.yaml"})
+        resp = client.post("/api/spaces", json={"name": "-invalid", "source_file": "/tmp/space.yaml"})
         assert resp.status_code == 422
 
     def test_create_path_traversal_returns_422(self) -> None:
         app = _make_app()
         client = TestClient(app)
-        resp = client.post("/api/spaces", json={"name": "myspace", "file_path": "/tmp/../etc/passwd"})
+        resp = client.post("/api/spaces", json={"name": "myspace", "source_file": "/tmp/../etc/passwd"})
         assert resp.status_code == 422
 
     def test_create_missing_name_returns_422(self) -> None:
         app = _make_app()
         client = TestClient(app)
-        resp = client.post("/api/spaces", json={"file_path": "/tmp/space.yaml"})
-        assert resp.status_code == 422
-
-    def test_create_missing_file_path_returns_422(self) -> None:
-        app = _make_app()
-        client = TestClient(app)
-        resp = client.post("/api/spaces", json={"name": "myspace"})
+        resp = client.post("/api/spaces", json={"source_file": "/tmp/space.yaml"})
         assert resp.status_code == 422
 
     def test_create_empty_body_returns_422(self) -> None:
@@ -198,7 +197,7 @@ class TestCreateSpaceEndpoint:
 class TestGetSpaceEndpoint:
     def test_get_existing_space(self) -> None:
         app = _make_app()
-        space = {"id": "sp-1", "name": "work", "file_path": "/tmp/work.yaml"}
+        space = {"id": "sp-1", "name": "work", "source_file": "/tmp/work.yaml"}
         with patch("anteroom.routers.spaces.get_space", return_value=space):
             client = TestClient(app)
             resp = client.get("/api/spaces/sp-1")
@@ -311,18 +310,18 @@ class TestRefreshSpaceEndpoint:
         assert resp.status_code == 404
         assert resp.json()["detail"] == "Space not found"
 
-    def test_refresh_no_file_path(self) -> None:
+    def test_refresh_no_source_file(self) -> None:
         app = _make_app()
-        space = {"id": "sp-1", "name": "work", "file_path": ""}
+        space = {"id": "sp-1", "name": "work", "source_file": ""}
         with patch("anteroom.routers.spaces.get_space", return_value=space):
             client = TestClient(app)
             resp = client.post("/api/spaces/sp-1/refresh")
         assert resp.status_code == 400
-        assert "file_path" in resp.json()["detail"]
+        assert "source file" in resp.json()["detail"]
 
     def test_refresh_file_not_on_disk(self) -> None:
         app = _make_app()
-        space = {"id": "sp-1", "name": "work", "file_path": "/nonexistent/path/space.yaml"}
+        space = {"id": "sp-1", "name": "work", "source_file": "/nonexistent/path/space.yaml"}
         with patch("anteroom.routers.spaces.get_space", return_value=space):
             client = TestClient(app)
             resp = client.post("/api/spaces/sp-1/refresh")
@@ -333,7 +332,7 @@ class TestRefreshSpaceEndpoint:
         app = _make_app()
         bad_yaml = tmp_path / "space.yaml"
         bad_yaml.write_text("{{invalid yaml}}")
-        space = {"id": "sp-1", "name": "work", "file_path": str(bad_yaml)}
+        space = {"id": "sp-1", "name": "work", "source_file": str(bad_yaml)}
         with (
             patch("anteroom.routers.spaces.get_space", return_value=space),
             patch("anteroom.services.spaces.parse_space_file", side_effect=Exception("parse error")),
@@ -347,16 +346,19 @@ class TestRefreshSpaceEndpoint:
         app = _make_app()
         space_file = tmp_path / "space.yaml"
         space_file.write_text("name: work\n")
-        space = {"id": "sp-1", "name": "work", "file_path": str(space_file)}
+        space = {"id": "sp-1", "name": "work", "source_file": str(space_file)}
+        updated_space = {"id": "sp-1", "name": "work", "source_file": str(space_file), "source_hash": "newhash123"}
 
         mock_cfg = MagicMock()
         mock_cfg.name = "work"
+        mock_cfg.instructions = ""
+        mock_cfg.config = {}
 
         with (
             patch("anteroom.routers.spaces.get_space", return_value=space),
             patch("anteroom.services.spaces.parse_space_file", return_value=mock_cfg),
-            patch("anteroom.services.spaces.file_hash", return_value="newhash123"),
-            patch("anteroom.services.space_storage.update_space") as mock_update,
+            patch("anteroom.services.spaces.compute_file_hash", return_value="newhash123"),
+            patch("anteroom.routers.spaces.update_space", return_value=updated_space) as mock_update,
         ):
             client = TestClient(app)
             resp = client.post("/api/spaces/sp-1/refresh")
@@ -365,9 +367,74 @@ class TestRefreshSpaceEndpoint:
         data = resp.json()
         assert data["id"] == "sp-1"
         assert data["name"] == "work"
-        assert data["file_hash"] == "newhash123"
+        assert data["source_hash"] == "newhash123"
         assert data["refreshed"] is True
-        mock_update.assert_called_once_with(app.state.db, "sp-1", file_hash="newhash123")
+        mock_update.assert_called_once_with(app.state.db, "sp-1", source_hash="newhash123", instructions="", model=None)
+
+    def test_refresh_clears_model_when_removed_from_yaml(self, tmp_path) -> None:
+        """Regression: removing model from YAML should clear it in the DB."""
+        app = _make_app()
+        space_file = tmp_path / "space.yaml"
+        space_file.write_text("name: work\n")
+        space = {"id": "sp-1", "name": "work", "source_file": str(space_file), "model": "gpt-4o"}
+        updated_space = {
+            "id": "sp-1",
+            "name": "work",
+            "source_file": str(space_file),
+            "source_hash": "newhash",
+            "model": None,
+        }
+
+        mock_cfg = MagicMock()
+        mock_cfg.name = "work"
+        mock_cfg.instructions = ""
+        mock_cfg.config = {}  # No model in YAML
+
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=space),
+            patch("anteroom.services.spaces.parse_space_file", return_value=mock_cfg),
+            patch("anteroom.services.spaces.compute_file_hash", return_value="newhash"),
+            patch("anteroom.routers.spaces.update_space", return_value=updated_space) as mock_update,
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/spaces/sp-1/refresh")
+
+        assert resp.status_code == 200
+        # Model should be explicitly set to None (cleared), not omitted
+        mock_update.assert_called_once_with(app.state.db, "sp-1", source_hash="newhash", instructions="", model=None)
+
+    def test_refresh_sets_model_from_yaml(self, tmp_path) -> None:
+        """Refresh should set model when present in YAML config."""
+        app = _make_app()
+        space_file = tmp_path / "space.yaml"
+        space_file.write_text("name: work\nconfig:\n  model: gpt-4o\n")
+        space = {"id": "sp-1", "name": "work", "source_file": str(space_file), "model": None}
+        updated_space = {
+            "id": "sp-1",
+            "name": "work",
+            "source_file": str(space_file),
+            "source_hash": "newhash",
+            "model": "gpt-4o",
+        }
+
+        mock_cfg = MagicMock()
+        mock_cfg.name = "work"
+        mock_cfg.instructions = ""
+        mock_cfg.config = {"model": "gpt-4o"}
+
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=space),
+            patch("anteroom.services.spaces.parse_space_file", return_value=mock_cfg),
+            patch("anteroom.services.spaces.compute_file_hash", return_value="newhash"),
+            patch("anteroom.routers.spaces.update_space", return_value=updated_space) as mock_update,
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/spaces/sp-1/refresh")
+
+        assert resp.status_code == 200
+        mock_update.assert_called_once_with(
+            app.state.db, "sp-1", source_hash="newhash", instructions="", model="gpt-4o"
+        )
 
 
 class TestGetSpaceSourcesEndpoint:
@@ -470,7 +537,7 @@ class TestLinkSpaceSourceEndpoint:
             client = TestClient(app)
             resp = client.post("/api/spaces/sp-1/sources", json={"source_id": "bad-src"})
         assert resp.status_code == 400
-        assert "source not found" in resp.json()["detail"]
+        assert resp.json()["detail"] == "Invalid source link configuration"
 
     def test_link_calls_service_with_all_args(self) -> None:
         app = _make_app()
@@ -674,3 +741,230 @@ class TestGetSpacePacksEndpoint:
         assert len(data) == 2
         names = {p["name"] for p in data}
         assert names == {"pack-a", "pack-b"}
+
+
+class TestSpaceUpdateRequestValidation:
+    def test_valid_name(self) -> None:
+        req = SpaceUpdateRequest(name="new-name")
+        assert req.name == "new-name"
+
+    def test_none_name_allowed(self) -> None:
+        req = SpaceUpdateRequest(name=None, instructions="hello")
+        assert req.name is None
+        assert req.instructions == "hello"
+
+    def test_invalid_name_rejected(self) -> None:
+        import pytest
+
+        with pytest.raises(Exception):
+            SpaceUpdateRequest(name="has space")
+
+    def test_all_fields(self) -> None:
+        req = SpaceUpdateRequest(name="updated", instructions="do things", model="gpt-4")
+        assert req.name == "updated"
+        assert req.instructions == "do things"
+        assert req.model == "gpt-4"
+
+
+_UUID1 = "a0000000-0000-4000-8000-000000000001"
+
+
+class TestUpdateSpaceEndpoint:
+    def test_update_name(self) -> None:
+        app = _make_app()
+        existing = {"id": _UUID1, "name": "old", "source_file": "", "source_hash": ""}
+        updated = {"id": _UUID1, "name": "new-name", "source_file": "", "source_hash": ""}
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=existing),
+            patch("anteroom.routers.spaces.update_space", return_value=updated),
+        ):
+            client = TestClient(app)
+            resp = client.patch(f"/api/spaces/{_UUID1}", json={"name": "new-name"})
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "new-name"
+
+    def test_update_instructions(self) -> None:
+        app = _make_app()
+        existing = {"id": _UUID1, "name": "work", "source_file": "", "source_hash": ""}
+        updated = {**existing, "instructions": "Be helpful"}
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=existing),
+            patch("anteroom.routers.spaces.update_space", return_value=updated),
+        ):
+            client = TestClient(app)
+            resp = client.patch(f"/api/spaces/{_UUID1}", json={"instructions": "Be helpful"})
+        assert resp.status_code == 200
+        assert resp.json()["instructions"] == "Be helpful"
+
+    def test_update_not_found(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.spaces.get_space", return_value=None):
+            client = TestClient(app)
+            resp = client.patch(f"/api/spaces/{_UUID1}", json={"name": "new"})
+        assert resp.status_code == 404
+
+    def test_update_empty_body_returns_existing(self) -> None:
+        app = _make_app()
+        existing = {"id": _UUID1, "name": "work", "source_file": "", "source_hash": ""}
+        with patch("anteroom.routers.spaces.get_space", return_value=existing):
+            client = TestClient(app)
+            resp = client.patch(f"/api/spaces/{_UUID1}", json={})
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "work"
+
+    def test_update_invalid_uuid_returns_400(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.patch("/api/spaces/not-a-uuid", json={"name": "x"})
+        assert resp.status_code == 400
+
+
+class TestSyncSpaceEndpoint:
+    def test_sync_success(self) -> None:
+        app = _make_app()
+        file_path = "/projects/myapp/.anteroom/space.yaml"
+        synced = {"id": "sp-1", "name": "myspace", "source_file": file_path, "source_hash": "abc"}
+        with patch("anteroom.services.spaces.sync_space_from_file", return_value=synced):
+            with patch("pathlib.Path.is_file", return_value=True):
+                client = TestClient(app)
+                resp = client.post(
+                    "/api/spaces/sync",
+                    json={"file_path": file_path},
+                    headers={"Content-Type": "application/json"},
+                )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "myspace"
+
+    def test_sync_missing_file_path(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/api/spaces/sync",
+            json={},
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+        assert "file_path" in resp.json()["detail"]
+
+    def test_sync_path_traversal_rejected(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/api/spaces/sync",
+            json={"file_path": "/tmp/../etc/passwd"},
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+        assert "traversal" in resp.json()["detail"].lower()
+
+    def test_sync_path_traversal_backslash(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/api/spaces/sync",
+            json={"file_path": "C:\\Users\\..\\etc\\passwd"},
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+
+    def test_sync_arbitrary_path_rejected(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/api/spaces/sync",
+            json={"file_path": "/etc/passwd"},
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+        assert ".anteroom" in resp.json()["detail"]
+
+    def test_sync_wrong_content_type(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/api/spaces/sync",
+            content='{"file_path": "/tmp/space.yaml"}',
+            headers={"Content-Type": "text/plain"},
+        )
+        assert resp.status_code == 415
+
+    def test_sync_file_not_found(self) -> None:
+        app = _make_app()
+        with patch("pathlib.Path.is_file", return_value=False):
+            client = TestClient(app)
+            resp = client.post(
+                "/api/spaces/sync",
+                json={"file_path": "/nonexistent/.anteroom/space.yaml"},
+                headers={"Content-Type": "application/json"},
+            )
+        assert resp.status_code == 400
+
+
+class TestExportSpaceEndpoint:
+    def test_export_success(self) -> None:
+        from anteroom.services.spaces import SpaceConfig
+
+        app = _make_app()
+        space = {"id": _UUID1, "name": "work", "source_file": "", "source_hash": ""}
+        cfg = SpaceConfig(name="work", instructions="Be helpful", config={"model": "gpt-4"})
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=space),
+            patch("anteroom.services.spaces.export_space_to_yaml", return_value=cfg),
+        ):
+            client = TestClient(app)
+            resp = client.get(f"/api/spaces/{_UUID1}/export")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "work"
+        assert data["instructions"] == "Be helpful"
+        assert data["config"]["model"] == "gpt-4"
+
+    def test_export_not_found(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.spaces.get_space", return_value=None):
+            client = TestClient(app)
+            resp = client.get(f"/api/spaces/{_UUID1}/export")
+        assert resp.status_code == 404
+
+    def test_export_invalid_uuid(self) -> None:
+        app = _make_app()
+        client = TestClient(app)
+        resp = client.get("/api/spaces/not-a-uuid/export")
+        assert resp.status_code == 400
+
+    def test_export_minimal_space(self) -> None:
+        from anteroom.services.spaces import SpaceConfig
+
+        app = _make_app()
+        space = {"id": _UUID1, "name": "minimal", "source_file": "", "source_hash": ""}
+        cfg = SpaceConfig(name="minimal")
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=space),
+            patch("anteroom.services.spaces.export_space_to_yaml", return_value=cfg),
+        ):
+            client = TestClient(app)
+            resp = client.get(f"/api/spaces/{_UUID1}/export")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "minimal"
+        assert "instructions" not in data
+        assert "config" not in data
+
+
+class TestEnrichOriginLocal:
+    def test_local_space_origin(self) -> None:
+        app = _make_app()
+        space = {
+            "id": "sp-1",
+            "name": "local",
+            "source_file": "/projects/myapp/.anteroom/space.yaml",
+            "source_hash": "abc",
+        }
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=space),
+            patch("anteroom.routers.spaces.is_local_space", return_value=True),
+        ):
+            client = TestClient(app)
+            resp = client.get("/api/spaces/sp-1")
+        assert resp.status_code == 200
+        assert resp.json()["origin"] == "local"

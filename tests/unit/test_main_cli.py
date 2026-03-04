@@ -1018,92 +1018,6 @@ class TestRunAudit:
 
 
 # ---------------------------------------------------------------------------
-# _run_projects
-# ---------------------------------------------------------------------------
-
-
-class TestRunProjects:
-    def test_run_projects_empty(self, capsys: pytest.CaptureFixture[str]) -> None:
-        from anteroom.__main__ import _run_projects
-
-        mock_config = _make_config()
-
-        with (
-            patch("anteroom.db.get_db") as mock_get_db,
-            patch("anteroom.services.storage.list_projects", return_value=[]),
-        ):
-            mock_get_db.return_value = MagicMock()
-            _run_projects(mock_config)
-
-        captured = capsys.readouterr()
-        assert "No projects found" in captured.out
-
-    def test_run_projects_lists_projects(self, capsys: pytest.CaptureFixture[str]) -> None:
-        from anteroom.__main__ import _run_projects
-
-        mock_config = _make_config()
-
-        projects = [
-            {
-                "name": "MyProject",
-                "model": "gpt-4",
-                "instructions": "Be helpful",
-                "updated_at": "2024-01-01T00:00:00Z",
-            }
-        ]
-
-        with (
-            patch("anteroom.db.get_db") as mock_get_db,
-            patch("anteroom.services.storage.list_projects", return_value=projects),
-        ):
-            mock_get_db.return_value = MagicMock()
-            _run_projects(mock_config)
-
-        captured = capsys.readouterr()
-        assert "MyProject" in captured.out
-
-    def test_run_projects_long_instructions_truncated(self, capsys: pytest.CaptureFixture[str]) -> None:
-        from anteroom.__main__ import _run_projects
-
-        mock_config = _make_config()
-
-        projects = [
-            {
-                "name": "TestProject",
-                "model": None,
-                "instructions": "A" * 100,
-                "updated_at": "2024-01-01T00:00:00Z",
-            }
-        ]
-
-        with (
-            patch("anteroom.db.get_db") as mock_get_db,
-            patch("anteroom.services.storage.list_projects", return_value=projects),
-        ):
-            mock_get_db.return_value = MagicMock()
-            _run_projects(mock_config)
-
-        captured = capsys.readouterr()
-        assert "TestProject" in captured.out
-        # Rich truncates with an ellipsis character (…) or three dots
-        assert "A" * 20 in captured.out
-
-    def test_main_dispatches_projects(self) -> None:
-        from anteroom.__main__ import main
-
-        with (
-            patch("anteroom.__main__._load_config_or_exit") as mock_load,
-            patch("anteroom.__main__._run_projects") as mock_run,
-        ):
-            config = _make_config()
-            mock_load.return_value = (Path("/tmp/config.yaml"), config, [])
-            with patch("sys.argv", ["aroom", "projects"]):
-                main()
-
-        mock_run.assert_called_once_with(config)
-
-
-# ---------------------------------------------------------------------------
 # _validate_pack_ref
 # ---------------------------------------------------------------------------
 
@@ -1440,8 +1354,9 @@ class TestRunSpaceDispatch:
         with (
             patch("anteroom.db.get_db") as mock_get_db,
             patch("anteroom.services.spaces.write_space_template"),
-            patch("anteroom.services.spaces.file_hash", return_value="fakehash"),
+            patch("anteroom.services.spaces.compute_file_hash", return_value="fakehash"),
             patch("anteroom.services.space_storage.create_space", return_value=mock_space),
+            patch("anteroom.services.space_storage.get_space_by_name", return_value=None),
             patch("anteroom.services.space_storage.sync_space_paths"),
             patch("pathlib.Path.exists", return_value=False),
             patch("pathlib.Path.cwd", return_value=tmp_path),
@@ -1705,24 +1620,6 @@ class TestMainDispatch:
 
         mock_chat.assert_called_once()
 
-    def test_main_project_flag_resolves_id(self) -> None:
-        from anteroom.__main__ import main
-
-        with (
-            patch("anteroom.__main__._load_config_or_exit") as mock_load,
-            patch("anteroom.__main__._resolve_project_id", return_value="proj-123") as mock_resolve,
-            patch("anteroom.__main__._run_chat") as mock_chat,
-        ):
-            config = _make_config()
-            mock_load.return_value = (Path("/tmp/config.yaml"), config, [])
-            # --project is a global flag; must appear before the subcommand
-            with patch("sys.argv", ["aroom", "--project", "my-project", "chat"]):
-                main()
-
-        mock_resolve.assert_called_once_with(config, "my-project")
-        _, kwargs = mock_chat.call_args
-        assert kwargs["project_id"] == "proj-123"
-
     def test_main_space_flag_resolves_id(self) -> None:
         from anteroom.__main__ import main
 
@@ -1743,41 +1640,11 @@ class TestMainDispatch:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_project_id / _resolve_space_id
+# _resolve_space_id
 # ---------------------------------------------------------------------------
 
 
 class TestResolveIds:
-    def test_resolve_project_id_success(self) -> None:
-        from anteroom.__main__ import _resolve_project_id
-
-        mock_config = _make_config()
-        mock_project = {"id": "proj-abc-123"}
-
-        with (
-            patch("anteroom.db.get_db") as mock_get_db,
-            patch("anteroom.services.storage.get_project_by_name", return_value=mock_project),
-        ):
-            mock_get_db.return_value = MagicMock()
-            result = _resolve_project_id(mock_config, "MyProject")
-
-        assert result == "proj-abc-123"
-
-    def test_resolve_project_id_not_found_exits(self, capsys: pytest.CaptureFixture[str]) -> None:
-        from anteroom.__main__ import _resolve_project_id
-
-        mock_config = _make_config()
-
-        with (
-            patch("anteroom.db.get_db") as mock_get_db,
-            patch("anteroom.services.storage.get_project_by_name", return_value=None),
-            pytest.raises(SystemExit) as exc_info,
-        ):
-            mock_get_db.return_value = MagicMock()
-            _resolve_project_id(mock_config, "NonExistentProject")
-
-        assert exc_info.value.code == 1
-
     def test_resolve_space_id_success(self) -> None:
         from anteroom.__main__ import _resolve_space_id
 

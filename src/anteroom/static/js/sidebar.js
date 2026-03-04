@@ -23,25 +23,18 @@ const Sidebar = (() => {
         document.getElementById('btn-folder-add').addEventListener('click', () => _createFolder());
     }
 
-    function _projectParam() {
-        const pid = App.state.currentProjectId;
-        return pid ? `project_id=${encodeURIComponent(pid)}` : '';
-    }
-
     async function refresh() {
         try {
-            const pp = _projectParam();
             const typeEl = document.getElementById('sidebar-type-filter');
             const typeFilter = typeEl ? typeEl.value : '';
             const params = [];
-            if (pp) params.push(pp);
             if (typeFilter) params.push(`type=${encodeURIComponent(typeFilter)}`);
+            if (App.state.currentSpaceId) params.push(`space_id=${encodeURIComponent(App.state.currentSpaceId)}`);
             const qs = params.length ? `?${params.join('&')}` : '';
             const convUrl = `/api/conversations${qs}`;
-            const folderUrl = pp ? `/api/folders?${pp}` : '/api/folders';
             [conversations, folders, allTags] = await Promise.all([
                 App.api(convUrl),
-                App.api(folderUrl).catch(e => { console.error('Failed to fetch folders:', e); return []; }),
+                App.api('/api/folders').catch(e => { console.error('Failed to fetch folders:', e); return []; }),
                 App.api('/api/tags').catch(() => []),
             ]);
             render();
@@ -56,13 +49,12 @@ const Sidebar = (() => {
     async function search(query) {
         try {
             const q = query.trim();
-            const pp = _projectParam();
             const typeEl = document.getElementById('sidebar-type-filter');
             const typeFilter = typeEl ? typeEl.value : '';
             const params = [];
             if (q) params.push(`search=${encodeURIComponent(q)}`);
-            if (pp) params.push(pp);
             if (typeFilter) params.push(`type=${encodeURIComponent(typeFilter)}`);
+            if (App.state.currentSpaceId) params.push(`space_id=${encodeURIComponent(App.state.currentSpaceId)}`);
             const qs = params.length ? `?${params.join('&')}` : '';
             conversations = await App.api(`/api/conversations${qs}`);
             render();
@@ -530,9 +522,6 @@ const Sidebar = (() => {
         try {
             const payload = { name: name.trim() };
             if (parentId) payload.parent_id = parentId;
-            if (App.state.currentProjectId) {
-                payload.project_id = App.state.currentProjectId;
-            }
             await App.api('/api/folders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

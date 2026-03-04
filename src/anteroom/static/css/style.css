@@ -2651,7 +2651,7 @@ body {
 
 
 /* ============================================================
-   SIDEBAR SECTIONS & PROJECTS
+   SIDEBAR SECTIONS & SPACES
    ============================================================ */
 
 .sidebar-section-header {
@@ -2763,114 +2763,7 @@ body {
     color: var(--danger, #ef4444);
 }
 
-/* --- Projects --- */
-
-.sidebar-projects {
-    padding: 4px 0 0;
-    border-bottom: 1px solid rgba(197, 160, 89, 0.15);
-    margin-bottom: 4px;
-}
-
-.project-list {
-    padding: 0 8px;
-    max-height: 120px;
-    overflow-y: auto;
-}
-.project-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 13px;
-    color: var(--text-secondary);
-    transition: all var(--transition-speed) var(--easing);
-}
-.project-item:hover {
-    background: var(--bg-hover);
-}
-.project-item.active {
-    background: var(--bg-active);
-    color: var(--text-primary);
-}
-.project-item-icon {
-    flex-shrink: 0;
-    color: var(--text-muted);
-    display: flex;
-}
-.project-item.active .project-item-icon {
-    color: var(--accent);
-}
-.project-item-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.project-all {
-    color: var(--text-muted);
-    font-size: 12px;
-}
-.project-all.active {
-    color: var(--text-primary);
-}
-.project-empty {
-    padding: 8px 12px;
-    font-size: 12px;
-    color: var(--text-muted);
-    font-style: italic;
-}
-
-.project-active-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 6px 12px 8px;
-    gap: 8px;
-}
-.project-active-info {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--accent);
-    font-size: 12px;
-    font-weight: 500;
-    min-width: 0;
-}
-.project-active-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.project-active-actions {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    flex-shrink: 0;
-}
-.btn-project-action {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: color var(--transition-speed) var(--easing),
-                background var(--transition-speed) var(--easing);
-}
-.btn-project-action:hover {
-    color: var(--text-primary);
-    background: var(--bg-hover);
-}
-.btn-project-action-danger:hover {
-    color: var(--error);
-}
-
-/* Space active bar (mirrors project-active-bar) */
+/* Space active bar */
 .space-active-bar {
     display: flex;
     align-items: center;
@@ -2919,6 +2812,75 @@ body {
     font-size: 10px;
     color: var(--text-muted);
     margin-left: 4px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+
+.sidebar-spaces {
+    padding: 4px 0 0;
+}
+.space-list {
+    padding: 2px 8px;
+}
+.space-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-secondary);
+    transition: all var(--transition-speed) var(--easing);
+}
+.space-item:hover {
+    background: var(--bg-hover);
+}
+.space-item.active {
+    background: var(--bg-active);
+    color: var(--accent);
+    font-weight: 500;
+}
+.space-item-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.space-item-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+}
+.space-item-action {
+    opacity: 0;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    transition: opacity 0.15s, color 0.15s;
+}
+.space-item:hover .space-item-action {
+    opacity: 0.6;
+}
+.space-item-action:hover {
+    opacity: 1 !important;
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+.space-item-delete:hover {
+    color: var(--danger, #ef4444) !important;
+}
+.space-empty-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 8px;
+    font-style: italic;
 }
 
 /* Space indicator in chat header */
@@ -4468,11 +4430,6 @@ body {
     border: 1px solid var(--accent) !important;
 }
 .source-edit-btn {
-    background: var(--bg-input) !important;
-    color: var(--text-primary) !important;
-    border: 1px solid var(--border-color) !important;
-}
-.source-link-project-btn {
     background: var(--bg-input) !important;
     color: var(--text-primary) !important;
     border: 1px solid var(--border-color) !important;

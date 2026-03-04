@@ -684,7 +684,7 @@ def _build_system_prompt(
     instructions: str | None,
     builtin_tools: list[str] | None = None,
     mcp_servers: dict[str, Any] | None = None,
-    project_instructions: str | None = None,
+    space_instructions: str | None = None,
     artifact_registry: Any = None,
 ) -> str:
     runtime_ctx = build_runtime_context(
@@ -696,15 +696,15 @@ def _build_system_prompt(
     )
     parts = [trusted_section_marker() + runtime_ctx]
 
-    # Project context
+    # Project context (ANTEROOM.md filesystem context)
     project_ctx = _detect_project_context(working_dir)
     if project_ctx:
         parts.append(f"\n<project_context>\nWorking directory: {working_dir}\n{project_ctx}\n</project_context>")
     else:
         parts.append(f"\n<project_context>\nWorking directory: {working_dir}\n</project_context>")
 
-    if project_instructions:
-        parts.append(f"\n{project_instructions}")
+    if space_instructions:
+        parts.append(f"\n{space_instructions}")
     if instructions:
         parts.append(f"\n{instructions}")
 
@@ -1012,7 +1012,6 @@ async def run_cli(
     no_tools: bool = False,
     continue_last: bool = False,
     conversation_id: str | None = None,
-    project_id: str | None = None,
     trust_project: bool = False,
     no_project_context: bool = False,
     plan_mode: bool = False,
@@ -1044,21 +1043,6 @@ async def run_cli(
 
     db = init_db(db_path, vec_dimensions=vec_dims, encryption_key=encryption_key)
 
-    # Load named project if specified via --project
-    _project: dict[str, Any] | None = None
-    _project_instructions: str | None = None
-    if project_id:
-        _project = storage.get_project(db, project_id)
-        if _project:
-            if _project.get("instructions"):
-                _project_instructions = _project["instructions"]
-            if _project.get("model") and not config.ai.model:
-                config.ai.model = _project["model"]
-            renderer.console.print(f"[dim]Project:[/dim] {_project['name']}")
-        else:
-            renderer.render_error(f"Project ID {project_id} not found in database")
-            project_id = None
-
     # Load space if specified via --space or auto-detect by cwd
     _space: dict[str, Any] | None = None
     _space_instructions: str | None = None
@@ -1084,33 +1068,17 @@ async def run_cli(
         _discovered_path = discover_space_file(working_dir)
         if _discovered_path:
             try:
-                from ..services.spaces import file_hash, parse_space_file, validate_space
+                from ..services.spaces import sync_space_from_file as _sync_disc
 
-                _disc_cfg = parse_space_file(_discovered_path)
-                _disc_errors = validate_space(_disc_cfg)
-                if not _disc_errors:
-                    from ..services.space_storage import get_space_by_name as _gsbn_disc
-
-                    if not _gsbn_disc(db, _disc_cfg.name):
-                        from ..services.space_storage import create_space as _cs_disc
-
-                        _space = _cs_disc(db, _disc_cfg.name, str(_discovered_path), file_hash(_discovered_path))
-                        space_id = _space["id"]
-                        renderer.console.print(f"[dim]Space (discovered):[/dim] {_disc_cfg.name}")
-                else:
-                    logger.debug("Discovered space file %s has errors: %s", _discovered_path, _disc_errors)
+                _space = _sync_disc(db, _discovered_path)
+                space_id = _space["id"]
+                renderer.console.print(f"[dim]Space (discovered):[/dim] {_space['name']}")
             except Exception:
                 logger.debug("Failed to load discovered space file %s", _discovered_path, exc_info=True)
     if _space:
-        # Load space instructions from the space YAML file
-        try:
-            from ..services.spaces import parse_space_file
-
-            space_cfg = parse_space_file(Path(_space["file_path"]))
-            if space_cfg.instructions:
-                _space_instructions = space_cfg.instructions
-        except Exception:
-            logger.debug("Failed to load space instructions", exc_info=True)
+        # Load space instructions from the DB record
+        if _space.get("instructions"):
+            _space_instructions = _space["instructions"]
 
     # Clean up empty conversations
     try:
@@ -1508,7 +1476,7 @@ async def run_cli(
         instructions,
         builtin_tools=tool_registry.list_tools(),
         mcp_servers=mcp_statuses,
-        project_instructions=_project_instructions,
+        space_instructions=_space_instructions,
         artifact_registry=_artifact_registry,
     )
 
@@ -1604,7 +1572,6 @@ async def run_cli(
                 dlp_scanner=_dlp_scanner,
                 injection_detector=_injection_detector,
                 output_filter=_output_filter,
-                project_id=project_id,
             )
         else:
             git_branch = _detect_git_branch()
@@ -1676,9 +1643,7 @@ async def run_cli(
                 dlp_scanner=_dlp_scanner,
                 injection_detector=_injection_detector,
                 output_filter=_output_filter,
-                project_id=project_id,
                 instructions=instructions,
-                project_instructions=_project_instructions,
                 artifact_registry=_artifact_registry,
                 space=_space,
                 space_instructions=_space_instructions,
@@ -1709,7 +1674,6 @@ async def _run_one_shot(
     dlp_scanner: Any | None = None,
     injection_detector: Any | None = None,
     output_filter: Any | None = None,
-    project_id: str | None = None,
 ) -> None:
     """Run a single prompt and exit."""
     id_kw = _identity_kwargs(config)
@@ -1723,7 +1687,7 @@ async def _run_one_shot(
         working_dir = _restore_working_dir(conv, tool_registry, working_dir)
         messages = _load_conversation_messages(db, resume_conversation_id)
     else:
-        conv = storage.create_conversation(db, working_dir=working_dir, project_id=project_id, **id_kw)
+        conv = storage.create_conversation(db, working_dir=working_dir, **id_kw)
         messages = []
 
     storage.create_message(db, conv["id"], "user", expanded, **id_kw)
@@ -1981,9 +1945,7 @@ async def _run_repl(
     dlp_scanner: Any | None = None,
     injection_detector: Any | None = None,
     output_filter: Any | None = None,
-    project_id: str | None = None,
     instructions: str | None = None,
-    project_instructions: str | None = None,
     artifact_registry: Any = None,
     space: dict[str, Any] | None = None,
     space_instructions: str | None = None,
@@ -2016,15 +1978,13 @@ async def _run_repl(
         "slug": "show conversation slug",
         "rewind": "undo messages",
         "compact": "compress context",
-        "conventions": "show project conventions",
-        "instructions": "show project conventions (alias)",
+        "conventions": "show directory conventions",
+        "instructions": "show directory conventions (alias)",
         "tools": "list available tools",
         "skills": "list loaded skills",
         "reload-skills": "reload skill files",
         "pack": "manage packs",
         "packs": "list installed packs",
-        "project": "manage projects",
-        "projects": "list projects",
         "space": "manage spaces",
         "spaces": "list spaces",
         "mcp": "MCP server status",
@@ -2158,8 +2118,6 @@ async def _run_repl(
         "artifact-check",
         "pack",
         "packs",
-        "project",
-        "projects",
         "space",
         "spaces",
         "mcp",
@@ -2359,7 +2317,7 @@ async def _run_repl(
     async def _fs_sub_prompt(prompt_text: str = "  ") -> str:
         """Prompt for a single line of input within the fullscreen app.
 
-        Used by interactive slash commands (/project create, /model, etc.)
+        Used by interactive slash commands (/space create, /model, etc.)
         that need sub-prompt input without leaving fullscreen.
         """
         evt = asyncio.Event()
@@ -2403,9 +2361,6 @@ async def _run_repl(
     _cached_git_branch: list[str] = [""]
     _cached_git_branch_time: list[float] = [0.0]
     _git_branch_pending: list[bool] = [False]
-    _cached_project_name: list[str] = [""]
-    _cached_project_id: list[str | None] = [None]
-    _cached_project_time: list[float] = [0.0]
     _header_plan_mode: list[bool] = [plan_mode]
 
     def _fetch_git_branch_sync() -> str:
@@ -2448,22 +2403,10 @@ async def _run_repl(
             except RuntimeError:
                 pass  # no event loop yet
 
-        # Use conv["project_id"] which is updated by /project select
-        _pid = conv.get("project_id") or project_id
-        _pname = ""
-        if _pid:
-            if now - _cached_project_time[0] > 30.0 or _cached_project_id[0] != _pid:
-                _pdata = storage.get_project(db, _pid)
-                _cached_project_name[0] = _pdata.get("name", "") if _pdata else ""
-                _cached_project_id[0] = _pid
-                _cached_project_time[0] = now
-            _pname = _cached_project_name[0]
-
         return format_header(
             model=current_model,
             working_dir=working_dir,
             git_branch=_cached_git_branch[0],
-            project_name=_pname,
             space_name=space["name"] if space else "",
             conv_title=conv.get("title", "") or "",
             plan_mode=_header_plan_mode[0],
@@ -2514,26 +2457,6 @@ async def _run_repl(
             working_dir = _restore_working_dir(conv, tool_registry, working_dir)
             # Resume info is deferred to _run_fullscreen() so it renders in the output pane
             _pending_resume_info = True
-            # Load project from resumed conversation if not already set via --project
-            if not project_id and conv.get("project_id"):
-                project_id = str(conv["project_id"])
-                _proj = storage.get_project(db, project_id)
-                if _proj:
-                    if _proj.get("instructions"):
-                        project_instructions = _proj["instructions"]
-                    if _proj.get("model") and not config.ai.model:
-                        config.ai.model = _proj["model"]
-                    renderer.console.print(f"[dim]Project:[/dim] {_proj['name']}")
-                    # Rebuild system prompt with project instructions
-                    extra_system_prompt = _build_system_prompt(
-                        config,
-                        working_dir,
-                        instructions,
-                        builtin_tools=tool_registry.list_tools(),
-                        mcp_servers=mcp_manager.get_server_statuses() if mcp_manager else None,
-                        project_instructions=project_instructions,
-                        artifact_registry=artifact_registry,
-                    )
             # Load space from resumed conversation
             if not space and conv.get("space_id"):
                 from ..services.space_storage import get_space as _get_resumed_space
@@ -2544,11 +2467,11 @@ async def _run_repl(
                     renderer.console.print(f"[dim]Space:[/dim] {_resumed_space['name']}")
         else:
             renderer.render_error(f"Conversation {resume_conversation_id} not found, starting new")
-            conv = storage.create_conversation(db, working_dir=working_dir, project_id=project_id, **id_kw)
+            conv = storage.create_conversation(db, working_dir=working_dir, **id_kw)
             ai_messages = []
             is_first_message = True
     else:
-        conv = storage.create_conversation(db, working_dir=working_dir, project_id=project_id, **id_kw)
+        conv = storage.create_conversation(db, working_dir=working_dir, **id_kw)
         ai_messages = []
         is_first_message = True
 
@@ -3004,42 +2927,6 @@ async def _run_repl(
             prompt = re.sub(r"\n*<planning_mode>.*?</planning_mode>", "", prompt, flags=re.DOTALL)
             return prompt
 
-        # -- Project state --
-        _active_project: list[dict[str, Any] | None] = [None]
-
-        def _resolve_project(name_or_id: str) -> dict[str, Any] | None:
-            """Look up a project by name (case-insensitive) or UUID prefix."""
-            proj = storage.get_project_by_name(db, name_or_id)
-            if proj:
-                return proj
-            proj = storage.get_project(db, name_or_id)
-            if proj:
-                return proj
-            # Try UUID prefix match
-            all_projects = storage.list_projects(db)
-            matches = [p for p in all_projects if p["id"].startswith(name_or_id)]
-            if len(matches) == 1:
-                return matches[0]
-            return None
-
-        def _inject_project_instructions(project: dict[str, Any]) -> None:
-            nonlocal extra_system_prompt
-            extra_system_prompt = _strip_project_instructions(extra_system_prompt)
-            instructions = project.get("instructions", "")
-            if instructions:
-                safe_name = sanitize_trust_tags(project["name"]).replace('"', "&quot;")
-                safe_instructions = sanitize_trust_tags(instructions)
-                extra_system_prompt += (
-                    '\n\n<project_instructions project="'
-                    + safe_name
-                    + '">\n'
-                    + safe_instructions
-                    + "\n</project_instructions>"
-                )
-
-        def _strip_project_instructions(prompt: str) -> str:
-            return re.sub(r"\n*<project_instructions[^>]*>.*?</project_instructions>", "", prompt, flags=re.DOTALL)
-
         # -- Space state --
         _active_space: list[dict[str, Any] | None] = [space]
 
@@ -3085,14 +2972,7 @@ async def _run_repl(
             nonlocal extra_system_prompt
             extra_system_prompt = _strip_space_instructions(extra_system_prompt)
             if not instr:
-                # Load from file
-                try:
-                    from ..services.spaces import parse_space_file as _psf
-
-                    cfg = _psf(Path(sp["file_path"]))
-                    instr = cfg.instructions
-                except Exception:
-                    pass
+                instr = sp.get("instructions", "")
             if instr:
                 safe_name = sanitize_trust_tags(sp["name"]).replace('"', "&quot;")
                 safe_instr = sanitize_trust_tags(instr)
@@ -3136,14 +3016,12 @@ async def _run_repl(
                     if len(parts) >= 2 and parts[1] in ("note", "doc", "document"):
                         conv_type = "document" if parts[1] in ("doc", "document") else "note"
                         conv_title = parts[2].strip() if len(parts) >= 3 else f"New {conv_type.title()}"
-                    active_pid = _active_project[0]["id"] if _active_project[0] else None
                     active_sid = _active_space[0]["id"] if _active_space[0] else None
                     conv = storage.create_conversation(
                         db,
                         title=conv_title,
                         conversation_type=conv_type,
                         working_dir=working_dir,
-                        project_id=active_pid,
                         **id_kw,
                     )
                     if active_sid:
@@ -3332,7 +3210,7 @@ async def _run_repl(
                     storage.delete_conversation(db, to_delete["id"], config.app.data_dir)
                     renderer.console.print(f"[{CHROME}]Deleted: {title}[/{CHROME}]\n")
                     if conv.get("id") == to_delete["id"]:
-                        conv = storage.create_conversation(db, working_dir=working_dir, project_id=project_id, **id_kw)
+                        conv = storage.create_conversation(db, working_dir=working_dir, **id_kw)
                         ai_messages = []
                         is_first_message = True
                     continue
@@ -3532,212 +3410,6 @@ async def _run_repl(
                             {s.name: s.description for s in skills},
                         )
                     continue
-                elif cmd in ("/projects", "/project"):
-                    parts = user_input.split(maxsplit=2)
-                    sub = parts[1].lower() if len(parts) >= 2 else ""
-
-                    # /projects is shorthand for /project list
-                    if cmd == "/projects":
-                        sub = "list"
-
-                    if sub == "list" or (cmd == "/project" and not sub):
-                        projects = storage.list_projects(db)
-                        if not projects:
-                            renderer.console.print(
-                                f"[{CHROME}]No projects. Create one with /project create <name>[/{CHROME}]\n"
-                            )
-                            continue
-                        renderer.console.print("\n[bold]Projects:[/bold]")
-                        for p in projects:
-                            cnt = storage.count_project_conversations(db, p["id"])
-                            model_info = f" model={p['model']}" if p.get("model") else ""
-                            active = (
-                                " [green](active)[/green]"
-                                if (_active_project[0] and _active_project[0]["id"] == p["id"])
-                                else ""
-                            )
-                            renderer.console.print(
-                                f"  {p['name']} — {cnt} conversations{model_info}{active}"
-                                f" [{MUTED}]{p['id'][:8]}...[/{MUTED}]"
-                            )
-                        renderer.console.print()
-
-                    elif sub == "create":
-                        pname = parts[2].strip() if len(parts) >= 3 else ""
-                        if not pname:
-                            renderer.console.print(f"[{CHROME}]Usage: /project create <name>[/{CHROME}]\n")
-                            continue
-                        existing = storage.get_project_by_name(db, pname)
-                        if existing:
-                            renderer.render_error(f"Project '{pname}' already exists.")
-                            continue
-                        renderer.console.print(
-                            f"[{CHROME}]Enter instructions (empty line to finish, Enter to skip):[/{CHROME}]"
-                        )
-                        instr_lines: list[str] = []
-                        try:
-                            while True:
-                                line = await _fs_sub_prompt("  ")
-                                if line == "":
-                                    break
-                                instr_lines.append(line)
-                        except (EOFError, KeyboardInterrupt):
-                            pass
-                        instr_text = "\n".join(instr_lines).strip()
-                        renderer.console.print(f"[{CHROME}]Model override (press Enter for default):[/{CHROME}]")
-                        try:
-                            model_input = await _fs_sub_prompt("  ")
-                        except (EOFError, KeyboardInterrupt):
-                            model_input = ""
-                        model_val = model_input.strip() or None
-                        proj = storage.create_project(
-                            db,
-                            name=pname,
-                            instructions=instr_text,
-                            model=model_val,
-                            **id_kw,
-                        )
-                        renderer.console.print(
-                            f"[green]Created project: {proj['name']}[/green] [{MUTED}]{proj['id'][:8]}...[/{MUTED}]\n"
-                        )
-
-                    elif sub in ("select", "use"):
-                        target = parts[2].strip() if len(parts) >= 3 else ""
-                        if not target:
-                            renderer.console.print(f"[{CHROME}]Usage: /project select <name|id>[/{CHROME}]\n")
-                            continue
-                        proj = _resolve_project(target)  # type: ignore[assignment]
-                        if not proj:
-                            renderer.render_error(
-                                f"Project '{target}' not found. Run /projects to list available projects."
-                            )
-                            continue
-                        _active_project[0] = proj
-                        storage.update_conversation_project(db, conv["id"], proj["id"])
-                        conv["project_id"] = proj["id"]
-                        _inject_project_instructions(proj)
-                        if proj.get("model") and not conv.get("model"):
-                            current_model = proj["model"]
-                            ai_service = create_ai_service(config.ai)
-                            ai_service.config.model = proj["model"]
-                            _toolbar_refresh()
-                            renderer.console.print(f"[{CHROME}]Model: {proj['model']}[/{CHROME}]")
-                        renderer.console.print(f"[green]Active project: {proj['name']}[/green]\n")
-
-                    elif sub == "edit":
-                        target = parts[2].strip() if len(parts) >= 3 else ""
-                        if not target:
-                            if _active_project[0]:
-                                target = _active_project[0]["name"]
-                            else:
-                                renderer.console.print(f"[{CHROME}]Usage: /project edit <name|id>[/{CHROME}]\n")
-                                continue
-                        proj = _resolve_project(target)  # type: ignore[assignment]
-                        if not proj:
-                            renderer.render_error(f"Project '{target}' not found.")
-                            continue
-                        renderer.console.print(f"[bold]Editing: {proj['name']}[/bold]")
-                        renderer.console.print(f"[{CHROME}]New name (Enter to keep '{proj['name']}'):[/{CHROME}]")
-                        try:
-                            new_name = await _fs_sub_prompt("  ")
-                        except (EOFError, KeyboardInterrupt):
-                            new_name = ""
-                        renderer.console.print(
-                            f"[{CHROME}]New instructions (Enter to keep current, 'clear' to remove):[/{CHROME}]"
-                        )
-                        new_instr_lines: list[str] = []
-                        try:
-                            while True:
-                                line = await _fs_sub_prompt("  ")
-                                if line == "":
-                                    break
-                                new_instr_lines.append(line)
-                        except (EOFError, KeyboardInterrupt):
-                            pass
-                        new_instr = "\n".join(new_instr_lines).strip()
-                        renderer.console.print(f"[{CHROME}]New model (Enter to keep, 'clear' to remove):[/{CHROME}]")
-                        try:
-                            new_model_input = await _fs_sub_prompt("  ")
-                        except (EOFError, KeyboardInterrupt):
-                            new_model_input = ""
-                        update_kw: dict[str, Any] = {}
-                        if new_name.strip():
-                            update_kw["name"] = new_name.strip()
-                        if new_instr == "clear":
-                            update_kw["instructions"] = ""
-                        elif new_instr:
-                            update_kw["instructions"] = new_instr
-                        if new_model_input.strip() == "clear":
-                            update_kw["model"] = None
-                        elif new_model_input.strip():
-                            update_kw["model"] = new_model_input.strip()
-                        if update_kw:
-                            updated = storage.update_project(db, proj["id"], **update_kw)
-                            if updated and _active_project[0] and _active_project[0]["id"] == proj["id"]:
-                                _active_project[0] = updated
-                                _inject_project_instructions(updated)
-                            renderer.console.print("[green]Project updated[/green]\n")
-                        else:
-                            renderer.console.print(f"[{CHROME}]No changes[/{CHROME}]\n")
-
-                    elif sub == "delete":
-                        target = parts[2].strip() if len(parts) >= 3 else ""
-                        if not target:
-                            renderer.console.print(f"[{CHROME}]Usage: /project delete <name|id>[/{CHROME}]\n")
-                            continue
-                        proj = _resolve_project(target)  # type: ignore[assignment]
-                        if not proj:
-                            renderer.render_error(f"Project '{target}' not found.")
-                            continue
-                        renderer.console.print(f"[yellow]Delete project '{proj['name']}'? (y/N)[/yellow]")
-                        try:
-                            confirm = await _fs_sub_prompt("  ")
-                        except (EOFError, KeyboardInterrupt):
-                            confirm = "n"
-                        if confirm.strip().lower() != "y":
-                            renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
-                            continue
-                        storage.delete_project(db, proj["id"])
-                        if _active_project[0] and _active_project[0]["id"] == proj["id"]:
-                            _active_project[0] = None
-                            extra_system_prompt = _strip_project_instructions(extra_system_prompt)
-                        renderer.console.print(f"[green]Deleted: {proj['name']}[/green]\n")
-
-                    elif sub == "clear":
-                        if not _active_project[0]:
-                            renderer.console.print(f"[{CHROME}]No active project[/{CHROME}]\n")
-                            continue
-                        old_name = _active_project[0]["name"]
-                        _active_project[0] = None
-                        storage.update_conversation_project(db, conv["id"], None)
-                        conv["project_id"] = None
-                        extra_system_prompt = _strip_project_instructions(extra_system_prompt)
-                        renderer.console.print(f"[{CHROME}]Cleared project: {old_name}[/{CHROME}]\n")
-
-                    elif sub == "sources":
-                        proj = _active_project[0]  # type: ignore[assignment]
-                        if not proj:
-                            renderer.console.print(
-                                f"[{CHROME}]No active project. Use /project select <name> first.[/{CHROME}]\n"
-                            )
-                            continue
-                        sources = storage.get_project_sources(db, proj["id"])
-                        if not sources:
-                            renderer.console.print(f"[{CHROME}]No sources linked to '{proj['name']}'[/{CHROME}]\n")
-                            continue
-                        renderer.console.print(f"\n[bold]Sources for {proj['name']}:[/bold]")
-                        for psrc in sources:
-                            title = psrc.get("title") or psrc.get("url") or psrc["id"][:8]
-                            renderer.console.print(f"  {title} [{MUTED}]{psrc['id'][:8]}...[/{MUTED}]")
-                        renderer.console.print()
-
-                    else:
-                        if _active_project[0]:
-                            renderer.console.print(f"[{CHROME}]Active project: {_active_project[0]['name']}[/{CHROME}]")
-                        renderer.console.print(
-                            f"[{CHROME}]Usage: /project [list|create|select|edit|delete|clear|sources][/{CHROME}]\n"
-                        )
-                    continue
                 elif cmd in ("/spaces", "/space"):
                     from ..services.space_storage import (
                         count_space_conversations,
@@ -3774,8 +3446,8 @@ async def _run_repl(
                                 if (_active_space[0] and _active_space[0]["id"] == sp["id"])
                                 else ""
                             )
-                            _fp = sp["file_path"]
-                            origin = "local" if (_fp and _is_local(_fp)) else "global"
+                            _sf = sp.get("source_file", "")
+                            origin = "local" if (_sf and _is_local(_sf)) else "global"
                             renderer.console.print(
                                 f"  {sp['name']}{active}"
                                 f" [{MUTED}]{origin} · {cnt} conversations · {sp['id'][:8]}...[/{MUTED}]"
@@ -3813,7 +3485,16 @@ async def _run_repl(
                         paths = _get_sp_paths(db, sp["id"])
                         cnt = count_space_conversations(db, sp["id"])
                         renderer.console.print(f"\n[bold]{sp['name']}[/bold]")
-                        renderer.console.print(f"  File:  {sp['file_path']}")
+                        _sf = sp.get("source_file", "")
+                        if _sf:
+                            renderer.console.print(f"  Source: {_sf}")
+                        else:
+                            renderer.console.print("  Source: (DB-only)")
+                        if sp.get("instructions"):
+                            _instr_preview = sp["instructions"][:80].replace("\n", " ")
+                            renderer.console.print(f"  Instructions: {_instr_preview}...")
+                        if sp.get("model"):
+                            renderer.console.print(f"  Model: {sp['model']}")
                         renderer.console.print(f"  Convs: {cnt}")
                         if paths:
                             renderer.console.print("  Paths:")
@@ -3827,24 +3508,39 @@ async def _run_repl(
                         if not sp:
                             renderer.console.print(f"[{CHROME}]No active space[/{CHROME}]\n")
                             continue
-                        from ..services.spaces import file_hash as _fh
+                        _sf = sp.get("source_file", "")
+                        if not _sf:
+                            renderer.render_error("This space has no source file to refresh from.")
+                            continue
+                        from ..services.spaces import compute_file_hash as _cfh
                         from ..services.spaces import parse_space_file as _psf2
 
-                        fpath = Path(sp["file_path"])
+                        fpath = Path(_sf)
                         if not fpath.is_file():
                             renderer.render_error(f"Space file not found: {fpath}")
                             continue
                         from ..services.space_storage import update_space as _update_sp
 
-                        new_hash = _fh(fpath)
-                        _update_sp(db, sp["id"], file_hash=new_hash)
+                        new_hash = _cfh(fpath)
                         try:
                             cfg = _psf2(fpath)
+                            _updates: dict[str, Any] = {
+                                "source_hash": new_hash,
+                                "instructions": cfg.instructions or "",
+                                "model": cfg.config.get("model") or None,
+                            }
+                            _update_sp(db, sp["id"], **_updates)
+                            from ..services.space_storage import get_space as _get_sp_ref
+
+                            sp_refreshed = _get_sp_ref(db, sp["id"])
+                            if sp_refreshed:
+                                _active_space[0] = sp_refreshed
                             if cfg.instructions:
-                                _inject_space_instructions(sp, cfg.instructions)
+                                _inject_space_instructions(sp_refreshed or sp, cfg.instructions)
+                            renderer.console.print(f"[green]Refreshed: {sp['name']}[/green]\n")
                         except Exception:
-                            pass
-                        renderer.console.print(f"[green]Refreshed: {sp['name']}[/green]\n")
+                            renderer.render_error(f"Failed to refresh space from {fpath}")
+                        continue
 
                     elif sub == "clear":
                         if not _active_space[0]:
@@ -3866,7 +3562,7 @@ async def _run_repl(
                         from ..services.space_storage import (
                             sync_space_paths as _ssp,
                         )
-                        from ..services.spaces import file_hash as _fh2
+                        from ..services.spaces import compute_file_hash as _cfh2
                         from ..services.spaces import slugify_dir_name as _slug
                         from ..services.spaces import write_space_template as _wst
 
@@ -3910,7 +3606,7 @@ async def _run_repl(
                             continue
 
                         _wst(spath, name)
-                        sp = _cs(db, name, str(spath), _fh2(spath))
+                        sp = _cs(db, name, source_file=str(spath), source_hash=_cfh2(spath))
                         _ssp(db, sp["id"], [{"local_path": str(_cwd)}])
 
                         # Auto-activate the new space
@@ -3929,7 +3625,7 @@ async def _run_repl(
                             renderer.console.print(f"[{CHROME}]Usage: /space load <path-to-yaml>[/{CHROME}]\n")
                             continue
                         from ..services.space_storage import create_space as _cs
-                        from ..services.spaces import file_hash as _fh2
+                        from ..services.spaces import compute_file_hash as _cfh2
                         from ..services.spaces import parse_space_file as _psf3
                         from ..services.spaces import validate_space as _vs
 
@@ -3957,7 +3653,14 @@ async def _run_repl(
                                 f" Use [bold]/space show {scfg.name}[/bold] to view it.\n"
                             )
                             continue
-                        sp = _cs(db, scfg.name, str(spath), _fh2(spath))
+                        sp = _cs(
+                            db,
+                            name=scfg.name,
+                            source_file=str(spath),
+                            source_hash=_cfh2(spath),
+                            instructions=scfg.instructions or "",
+                            model=scfg.config.get("model"),
+                        )
                         renderer.console.print(
                             f"[green]Loaded space: {sp['name']}[/green] [{MUTED}]{sp['id'][:8]}...[/{MUTED}]\n"
                         )
@@ -3976,7 +3679,7 @@ async def _run_repl(
                             from ..services.space_bootstrap import bootstrap_space as _boot_space
                             from ..services.spaces import parse_space_file as _psf_clone
 
-                            sp_file = _sp_match.get("file_path")
+                            sp_file = _sp_match.get("source_file")
                             if not sp_file or not Path(sp_file).is_file():
                                 renderer.render_error("Space has no valid YAML file to clone from.")
                                 continue
@@ -4021,12 +3724,97 @@ async def _run_repl(
                         except Exception as e:
                             renderer.render_error(str(e))
 
+                    elif sub == "edit":
+                        sp = _active_space[0]  # type: ignore[assignment]
+                        if not sp:
+                            renderer.console.print(f"[{CHROME}]No active space[/{CHROME}]\n")
+                            continue
+                        from ..services.space_storage import get_space as _get_sp_edit
+                        from ..services.space_storage import update_space as _update_sp_edit
+
+                        _edit_rest = parts[2].strip() if len(parts) >= 3 else ""
+                        if not _edit_rest:
+                            renderer.console.print(
+                                f"[{CHROME}]Usage: /space edit instructions <text>[/{CHROME}]\n"
+                                f"[{CHROME}]       /space edit model <model-name>[/{CHROME}]\n"
+                                f"[{CHROME}]       /space edit name <new-name>[/{CHROME}]\n"
+                            )
+                            continue
+                        _edit_parts = _edit_rest.split(maxsplit=1)
+                        _edit_field = _edit_parts[0].lower()
+                        _edit_value = _edit_parts[1] if len(_edit_parts) >= 2 else ""
+                        if _edit_field == "instructions":
+                            _update_sp_edit(db, sp["id"], instructions=_edit_value)
+                            sp_updated = _get_sp_edit(db, sp["id"])
+                            if sp_updated:
+                                _active_space[0] = sp_updated
+                            if _edit_value:
+                                _inject_space_instructions(sp_updated or sp, _edit_value)
+                            renderer.console.print(f"[green]Updated instructions for {sp['name']}[/green]\n")
+                        elif _edit_field == "model":
+                            _update_sp_edit(db, sp["id"], model=_edit_value or None)
+                            sp_updated = _get_sp_edit(db, sp["id"])
+                            if sp_updated:
+                                _active_space[0] = sp_updated
+                            renderer.console.print(
+                                f"[green]Updated model for {sp['name']}: {_edit_value or '(cleared)'}[/green]\n"
+                            )
+                        elif _edit_field == "name":
+                            if not _edit_value:
+                                renderer.console.print(f"[{CHROME}]Usage: /space edit name <new-name>[/{CHROME}]\n")
+                                continue
+                            _update_sp_edit(db, sp["id"], name=_edit_value)
+                            sp_updated = _get_sp_edit(db, sp["id"])
+                            if sp_updated:
+                                _active_space[0] = sp_updated
+                            renderer.console.print(f"[green]Renamed space to: {_edit_value}[/green]\n")
+                        else:
+                            renderer.console.print(
+                                f"[{CHROME}]Unknown field: {_edit_field}. Use: instructions, model, name[/{CHROME}]\n"
+                            )
+
+                    elif sub == "export":
+                        sp = _active_space[0]  # type: ignore[assignment]
+                        target_name = parts[2].strip() if len(parts) >= 3 else ""
+                        if target_name:
+                            sp = await _resolve_space(target_name)  # type: ignore[assignment]
+                        if not sp:
+                            renderer.console.print(
+                                f"[{CHROME}]No active space (or specify name: /space export <name>)[/{CHROME}]\n"
+                            )
+                            continue
+                        from ..services.spaces import export_space_to_yaml as _export
+                        from ..services.spaces import write_space_file as _wsf
+
+                        try:
+                            cfg = _export(db, sp["id"])
+                        except ValueError as e:
+                            renderer.render_error(str(e))
+                            continue
+                        _export_path = Path(working_dir) / ".anteroom" / "space.yaml"
+                        if _export_path.exists():
+                            renderer.console.print(f"[yellow]File already exists:[/yellow] {_export_path}")
+                            renderer.console.print("  Overwrite? Use /space export and manually save.\n")
+                            # Print YAML to console instead
+                            import yaml as _yaml_mod
+
+                            _data: dict[str, Any] = {"name": cfg.name, "version": cfg.version}
+                            if cfg.instructions:
+                                _data["instructions"] = cfg.instructions
+                            if cfg.config:
+                                _data["config"] = cfg.config
+                            renderer.console.print("\n[bold]Space YAML:[/bold]")
+                            renderer.console.print(_yaml_mod.dump(_data, default_flow_style=False, sort_keys=False))
+                        else:
+                            _wsf(_export_path, cfg)
+                            renderer.console.print(f"[green]Exported space to:[/green] {_export_path}\n")
+
                     else:
                         if _active_space[0]:
                             renderer.console.print(f"[{CHROME}]Active space: {_active_space[0]['name']}[/{CHROME}]")
                         renderer.console.print(
                             f"[{CHROME}]Usage: /space [list|show|switch|create|init|load|refresh|clear|"
-                            f"clone|map][/{CHROME}]\n"
+                            f"clone|map|edit|export][/{CHROME}]\n"
                         )
                     continue
                 elif cmd in ("/packs", "/pack"):
@@ -4843,7 +4631,6 @@ async def _run_repl(
                             config=config.rag,
                             current_conversation_id=conv["id"],
                             space_id=conv.get("space_id"),
-                            project_id=conv.get("project_id"),
                         )
                         if _rag_chunks:
                             extra_system_prompt += format_rag_context(_rag_chunks)

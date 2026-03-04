@@ -4,7 +4,6 @@ const App = (() => {
     const state = {
         currentConversationId: null,
         currentConversationType: 'chat',
-        currentProjectId: null,
         currentSpaceId: null,
         currentDatabase: null,
         isStreaming: false,
@@ -254,9 +253,6 @@ const App = (() => {
         // Settings modal
         initSettings();
 
-        // Project modal
-        initProjectModal();
-
         // MCP modal
         _initMcpModal();
 
@@ -294,9 +290,10 @@ const App = (() => {
         await loadDatabases();
         document.getElementById('btn-db-add').addEventListener('click', addDatabase);
 
-        // Load spaces and projects
+        // Load spaces
+        _initSpaceModal();
         await loadSpaces();
-        await loadProjects();
+        document.getElementById('btn-space-add').addEventListener('click', () => _openSpaceModal(null));
 
         // Read URL params for shared DB links
         const urlParams = _readUrlParams();
@@ -573,7 +570,6 @@ const App = (() => {
         try {
             const convType = type || document.getElementById('new-conv-type').value || 'chat';
             const payload = { type: convType };
-            if (state.currentProjectId) payload.project_id = state.currentProjectId;
             if (state.currentSpaceId) payload.space_id = state.currentSpaceId;
             const opts = {
                 method: 'POST',
@@ -880,6 +876,7 @@ const App = (() => {
 
     // --- Spaces ---
     let _spacesLoaded = false;
+    let _loadedSpaces = [];
 
     async function loadSpaces() {
         const list = document.getElementById('space-list');
@@ -905,6 +902,7 @@ const App = (() => {
             // ignore — spaces feature may not be available
         }
 
+        _loadedSpaces = spaces;
         _renderSpaceList(spaces);
 
         if (!_spacesLoaded) {
@@ -914,8 +912,19 @@ const App = (() => {
                 clearBtn.addEventListener('click', async () => {
                     state.currentSpaceId = null;
                     select.value = '';
+                    state.currentConversationId = null;
+                    Chat.loadMessages([]);
                     await loadSpaces();
                     await Sidebar.refresh();
+                });
+            }
+            const editActiveBtn = document.getElementById('btn-space-edit-active');
+            if (editActiveBtn) {
+                editActiveBtn.addEventListener('click', () => {
+                    const active = _loadedSpaces.find(s => s.id === state.currentSpaceId);
+                    if (active && active.origin !== 'local') {
+                        _openSpaceModal(active);
+                    }
                 });
             }
         }
@@ -930,31 +939,93 @@ const App = (() => {
 
         // "All" item
         const allItem = document.createElement('div');
-        allItem.className = 'project-item project-all' + (!state.currentSpaceId ? ' active' : '');
+        allItem.className = 'space-item space-all' + (!state.currentSpaceId ? ' active' : '');
         allItem.innerHTML = '<span>All Spaces</span>';
         allItem.addEventListener('click', async () => {
             state.currentSpaceId = null;
             document.getElementById('space-select').value = '';
+            state.currentConversationId = null;
+            Chat.loadMessages([]);
             await loadSpaces();
             await Sidebar.refresh();
         });
         list.appendChild(allItem);
 
+        if (spaces.length === 0) {
+            const hint = document.createElement('div');
+            hint.className = 'space-empty-hint';
+            hint.textContent = 'No spaces yet. Create one to organize your conversations.';
+            list.appendChild(hint);
+        }
+
         spaces.forEach(s => {
             const item = document.createElement('div');
-            item.className = 'project-item' + (state.currentSpaceId === s.id ? ' active' : '');
+            item.className = 'space-item' + (state.currentSpaceId === s.id ? ' active' : '');
             const nameSpan = document.createElement('span');
+            nameSpan.className = 'space-item-name';
             nameSpan.textContent = s.name;
             if (s.origin) {
                 const badge = document.createElement('span');
                 badge.className = 'space-origin';
-                badge.textContent = s.origin;
+                badge.title = s.origin === 'local' ? 'Synced from a YAML file' : 'User-wide space';
+                badge.textContent = s.origin === 'local' ? 'synced' : 'global';
                 nameSpan.appendChild(badge);
             }
             item.appendChild(nameSpan);
+
+            // Action buttons
+            const actions = document.createElement('span');
+            actions.className = 'space-item-actions';
+
+            // Edit button (only for DB-created spaces without a source file)
+            if (s.origin !== 'local') {
+                const editBtn = document.createElement('button');
+                editBtn.className = 'space-item-action';
+                editBtn.title = 'Edit space';
+                editBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+                editBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    _openSpaceModal(s);
+                });
+                actions.appendChild(editBtn);
+            }
+
+            // Delete button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'space-item-action space-item-delete';
+            deleteBtn.title = 'Delete space';
+            deleteBtn.innerHTML = '&times;';
+            deleteBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                if (!confirm(`Delete space "${s.name}"?`)) return;
+                try {
+                    const resp = await fetch(`/api/spaces/${encodeURIComponent(s.id)}`, {
+                        method: 'DELETE',
+                        credentials: 'same-origin',
+                        headers: { 'X-CSRF-Token': _getCsrfToken() },
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.json().catch(() => ({}));
+                        alert(err.detail || `Failed to delete space (${resp.status})`);
+                        return;
+                    }
+                    if (state.currentSpaceId === s.id) {
+                        state.currentSpaceId = null;
+                    }
+                    await loadSpaces();
+                    await Sidebar.refresh();
+                } catch (e) {
+                    alert('Failed to delete space: ' + (e.message || 'network error'));
+                }
+            });
+            actions.appendChild(deleteBtn);
+
+            item.appendChild(actions);
             item.addEventListener('click', async () => {
                 state.currentSpaceId = s.id;
                 document.getElementById('space-select').value = s.id;
+                state.currentConversationId = null;
+                Chat.loadMessages([]);
                 await loadSpaces();
                 await Sidebar.refresh();
             });
@@ -970,11 +1041,15 @@ const App = (() => {
             if (active && activeBar && activeName) {
                 activeName.textContent = active.name;
                 activeBar.style.display = 'flex';
+                const editActiveBtn = document.getElementById('btn-space-edit-active');
+                if (editActiveBtn) {
+                    editActiveBtn.style.display = active.origin === 'local' ? 'none' : '';
+                }
             }
             if (active && chatIndicator && chatIndicatorName) {
                 chatIndicatorName.textContent = active.name;
                 if (chatIndicatorOrigin) {
-                    chatIndicatorOrigin.textContent = active.origin || '';
+                    chatIndicatorOrigin.textContent = active.origin === 'local' ? 'synced' : (active.origin === 'global' ? 'global' : '');
                 }
                 chatIndicator.style.display = 'flex';
             }
@@ -984,201 +1059,92 @@ const App = (() => {
         }
     }
 
-    // --- Projects ---
+    function _openSpaceModal(space) {
+        const modal = document.getElementById('space-modal');
+        const title = document.getElementById('space-modal-title');
+        const idInput = document.getElementById('space-modal-id');
+        const nameInput = document.getElementById('space-name-input');
+        const instructionsInput = document.getElementById('space-instructions-input');
+        const modelInput = document.getElementById('space-model-input');
+        const saveBtn = document.getElementById('space-modal-save');
 
-    let _projectsLoaded = false;
-
-    async function loadProjects() {
-        const list = document.getElementById('project-list');
-        const activeBar = document.getElementById('project-active-bar');
-        const activeName = document.getElementById('project-active-name');
-        const select = document.getElementById('project-select');
-
-        let projects = [];
-        try {
-            projects = await api('/api/projects');
-            while (select.options.length > 1) select.remove(1);
-            projects.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = p.id;
-                opt.textContent = p.name;
-                select.appendChild(opt);
-            });
-            if (state.currentProjectId) {
-                select.value = state.currentProjectId;
-            }
-        } catch {
-            // ignore
-        }
-
-        _renderProjectList(projects);
-
-        if (!_projectsLoaded) {
-            _projectsLoaded = true;
-            document.getElementById('btn-project-add').addEventListener('click', () => openProjectModal());
-            document.getElementById('btn-project-edit').addEventListener('click', () => {
-                if (state.currentProjectId) openProjectModal(state.currentProjectId);
-            });
-            document.getElementById('btn-project-delete').addEventListener('click', async () => {
-                if (!state.currentProjectId) return;
-                if (!confirm('Delete this project? Conversations will be kept but unlinked.')) return;
-                try {
-                    await api(`/api/projects/${state.currentProjectId}`, { method: 'DELETE' });
-                    state.currentProjectId = null;
-                    select.value = '';
-                    await loadProjects();
-                    await Sidebar.refresh();
-                } catch { /* ignore */ }
-            });
-            document.getElementById('btn-project-clear').addEventListener('click', async () => {
-                state.currentProjectId = null;
-                select.value = '';
-                await loadProjects();
-                await Sidebar.refresh();
-                state.currentConversationId = null;
-                Chat.loadMessages([]);
-            });
-        }
-    }
-
-    function _renderProjectList(projects) {
-        const list = document.getElementById('project-list');
-        const activeBar = document.getElementById('project-active-bar');
-        const activeName = document.getElementById('project-active-name');
-        list.innerHTML = '';
-
-        const folderSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>';
-
-        // "All" item
-        const allItem = document.createElement('div');
-        allItem.className = 'project-item project-all' + (!state.currentProjectId ? ' active' : '');
-        allItem.innerHTML = '<span class="project-item-name">All Conversations</span>';
-        allItem.addEventListener('click', async () => {
-            state.currentProjectId = null;
-            document.getElementById('project-select').value = '';
-            _renderProjectList(projects);
-            await Sidebar.refresh();
-            state.currentConversationId = null;
-            Chat.loadMessages([]);
-        });
-        list.appendChild(allItem);
-
-        if (projects.length === 0) {
-            activeBar.style.display = 'none';
-            return;
-        }
-
-        projects.forEach(p => {
-            const item = document.createElement('div');
-            item.className = 'project-item' + (state.currentProjectId === p.id ? ' active' : '');
-            item.innerHTML = `<span class="project-item-icon">${folderSvg}</span><span class="project-item-name">${DOMPurify.sanitize(p.name)}</span>`;
-            item.addEventListener('click', async () => {
-                state.currentProjectId = p.id;
-                document.getElementById('project-select').value = p.id;
-                _renderProjectList(projects);
-                await Sidebar.refresh();
-                state.currentConversationId = null;
-                Chat.loadMessages([]);
-            });
-            list.appendChild(item);
-        });
-
-        // Update active bar
-        if (state.currentProjectId) {
-            const active = projects.find(p => p.id === state.currentProjectId);
-            if (active) {
-                activeName.textContent = active.name;
-                activeBar.style.display = 'flex';
-            } else {
-                activeBar.style.display = 'none';
-            }
+        if (space) {
+            title.textContent = 'Edit Space';
+            saveBtn.textContent = 'Save';
+            idInput.value = space.id;
+            nameInput.value = space.name || '';
+            instructionsInput.value = space.instructions || '';
+            modelInput.value = space.model || '';
         } else {
-            activeBar.style.display = 'none';
-        }
-    }
-
-    function initProjectModal() {
-        const modal = document.getElementById('project-modal');
-        const closeBtn = document.getElementById('project-close');
-        const cancelBtn = document.getElementById('project-cancel');
-        const saveBtn = document.getElementById('project-save');
-
-        closeBtn.addEventListener('click', () => modal.style.display = 'none');
-        cancelBtn.addEventListener('click', () => modal.style.display = 'none');
-        saveBtn.addEventListener('click', saveProject);
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) modal.style.display = 'none';
-        });
-    }
-
-    let _editingProjectId = null;
-
-    async function openProjectModal(projectId) {
-        const modal = document.getElementById('project-modal');
-        const titleEl = document.getElementById('project-modal-title');
-        const nameInput = document.getElementById('project-name');
-        const instructionsInput = document.getElementById('project-instructions');
-        const modelSelect = document.getElementById('project-model');
-
-        _editingProjectId = projectId || null;
-        let currentModel = '';
-
-        if (projectId) {
-            titleEl.textContent = 'Edit Project';
-            try {
-                const proj = await api(`/api/projects/${projectId}`);
-                nameInput.value = proj.name || '';
-                instructionsInput.value = proj.instructions || '';
-                currentModel = proj.model || '';
-            } catch {
-                nameInput.value = '';
-                instructionsInput.value = '';
-            }
-        } else {
-            titleEl.textContent = 'New Project';
+            title.textContent = 'New Space';
+            saveBtn.textContent = 'Create';
+            idInput.value = '';
             nameInput.value = '';
             instructionsInput.value = '';
+            modelInput.value = '';
         }
-
         modal.style.display = 'flex';
         nameInput.focus();
-
-        await refreshModels();
-        _populateModelSelect(modelSelect, currentModel, true);
     }
 
-    async function saveProject() {
-        const name = document.getElementById('project-name').value.trim();
-        const instructions = document.getElementById('project-instructions').value;
-        const model = document.getElementById('project-model').value.trim();
+    function _initSpaceModal() {
+        const modal = document.getElementById('space-modal');
+        if (!modal) return;
+        const closeBtn = document.getElementById('space-modal-close');
+        const cancelBtn = document.getElementById('space-modal-cancel');
+        const saveBtn = document.getElementById('space-modal-save');
 
-        if (!name) {
-            alert('Project name is required.');
-            return;
-        }
+        const closeModal = () => { modal.style.display = 'none'; };
+        closeBtn.addEventListener('click', closeModal);
+        cancelBtn.addEventListener('click', closeModal);
+        modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
 
-        try {
-            const payload = { name, instructions, model: model || null };
-            if (_editingProjectId) {
-                await api(`/api/projects/${_editingProjectId}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-            } else {
-                const created = await api('/api/projects', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                });
-                state.currentProjectId = created.id;
+        saveBtn.addEventListener('click', async () => {
+            const id = document.getElementById('space-modal-id').value;
+            const name = document.getElementById('space-name-input').value.trim();
+            const instructions = document.getElementById('space-instructions-input').value;
+            const model = document.getElementById('space-model-input').value.trim();
+
+            if (!name) { alert('Space name is required.'); return; }
+            if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name)) {
+                alert('Invalid name. Must start with a letter or number, and contain only letters, numbers, hyphens, and underscores (max 64 chars).');
+                return;
             }
-            document.getElementById('project-modal').style.display = 'none';
-            await loadProjects();
-            await Sidebar.refresh();
-        } catch (e) {
-            alert('Failed to save project: ' + e.message);
-        }
+
+            try {
+                let resp;
+                if (id) {
+                    resp = await fetch(`/api/spaces/${encodeURIComponent(id)}`, {
+                        method: 'PATCH',
+                        credentials: 'same-origin',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-Token': _getCsrfToken(),
+                        },
+                        body: JSON.stringify({ name, instructions, model: model || null }),
+                    });
+                } else {
+                    resp = await fetch('/api/spaces', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-Token': _getCsrfToken(),
+                        },
+                        body: JSON.stringify({ name, instructions, model: model || null }),
+                    });
+                }
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    alert(err.detail || `Failed to save space (${resp.status})`);
+                    return;
+                }
+                modal.style.display = 'none';
+                await loadSpaces();
+            } catch (e) {
+                alert('Failed to save space: ' + e.message);
+            }
+        });
     }
 
     // --- Databases ---
@@ -1487,7 +1453,7 @@ const App = (() => {
 
     return {
         state, api, _handle401, _getCsrfToken, _selectModel, newConversation, loadConversation,
-        loadProjects, loadDatabases, addDatabase, refreshModels, formatTimestamp,
+        loadDatabases, addDatabase, loadSpaces, refreshModels, formatTimestamp,
         getTheme, setTheme, THEMES, openMcpModal,
         setPlanMode, _showPlanContent, _debugLog,
     };

@@ -23,22 +23,13 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS projects (
+CREATE TABLE IF NOT EXISTS spaces (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     instructions TEXT NOT NULL DEFAULT '',
     model TEXT DEFAULT NULL,
-    user_id TEXT DEFAULT NULL,
-    user_display_name TEXT DEFAULT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS spaces (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    file_path TEXT NOT NULL,
-    file_hash TEXT NOT NULL DEFAULT '',
+    source_file TEXT NOT NULL DEFAULT '',
+    source_hash TEXT NOT NULL DEFAULT '',
     last_loaded_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -57,7 +48,6 @@ CREATE TABLE IF NOT EXISTS folders (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     parent_id TEXT DEFAULT NULL,
-    project_id TEXT DEFAULT NULL,
     space_id TEXT DEFAULT NULL,
     position INTEGER NOT NULL DEFAULT 0,
     collapsed INTEGER NOT NULL DEFAULT 0,
@@ -66,7 +56,6 @@ CREATE TABLE IF NOT EXISTS folders (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE,
-    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
     FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE SET NULL
 );
 
@@ -93,7 +82,6 @@ CREATE TABLE IF NOT EXISTS conversations (
     slug TEXT UNIQUE DEFAULT NULL,
     type TEXT NOT NULL DEFAULT 'chat' CHECK(type IN ('chat', 'note', 'document')),
     model TEXT DEFAULT NULL,
-    project_id TEXT DEFAULT NULL,
     space_id TEXT DEFAULT NULL,
     folder_id TEXT DEFAULT NULL,
     user_id TEXT DEFAULT NULL,
@@ -101,7 +89,6 @@ CREATE TABLE IF NOT EXISTS conversations (
     working_dir TEXT DEFAULT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
     FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL,
     FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE SET NULL
 );
@@ -219,22 +206,6 @@ CREATE TABLE IF NOT EXISTS source_group_members (
     PRIMARY KEY (group_id, source_id),
     FOREIGN KEY (group_id) REFERENCES source_groups(id) ON DELETE CASCADE,
     FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS project_sources (
-    project_id TEXT NOT NULL,
-    source_id TEXT,
-    group_id TEXT,
-    tag_filter TEXT,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-    FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE,
-    FOREIGN KEY (group_id) REFERENCES source_groups(id) ON DELETE CASCADE,
-    CHECK (
-        (source_id IS NOT NULL AND group_id IS NULL AND tag_filter IS NULL) OR
-        (source_id IS NULL AND group_id IS NOT NULL AND tag_filter IS NULL) OR
-        (source_id IS NULL AND group_id IS NULL AND tag_filter IS NOT NULL)
-    )
 );
 
 CREATE TABLE IF NOT EXISTS source_attachments (
@@ -530,7 +501,6 @@ def _create_indexes(conn: sqlite3.Connection) -> None:
     were introduced.  Every statement uses IF NOT EXISTS, making this
     safe to run unconditionally on both fresh and migrated databases.
     """
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_name ON projects(name)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_spaces_name ON spaces(name)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_space_paths_space ON space_paths(space_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, position)")
@@ -618,6 +588,17 @@ def init_db(
 
     conn.commit()
 
+    # Eradicate projects tables/columns — must run OUTSIDE a transaction
+    # because PRAGMA foreign_keys=OFF is silently ignored inside transactions.
+    # Table rebuilds drop indexes/triggers, so recreate them afterwards.
+    _eradicate_projects(conn)
+    _create_indexes(conn)
+    try:
+        conn.executescript(_FTS_TRIGGERS)
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+
     # Also restrict WAL/SHM sidecar files
     for suffix in ("-wal", "-shm"):
         sidecar = db_path.parent / (db_path.name + suffix)
@@ -627,6 +608,156 @@ def init_db(
     return ThreadSafeConnection(conn)
 
 
+_CONVERSATIONS_CREATE = """CREATE TABLE conversations (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    slug TEXT UNIQUE DEFAULT NULL,
+    type TEXT NOT NULL DEFAULT 'chat' CHECK(type IN ('chat', 'note', 'document')),
+    model TEXT DEFAULT NULL,
+    space_id TEXT DEFAULT NULL,
+    folder_id TEXT DEFAULT NULL,
+    user_id TEXT DEFAULT NULL,
+    user_display_name TEXT DEFAULT NULL,
+    working_dir TEXT DEFAULT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL,
+    FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE SET NULL
+)"""
+
+_FOLDERS_CREATE = """CREATE TABLE folders (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    parent_id TEXT DEFAULT NULL,
+    space_id TEXT DEFAULT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    collapsed INTEGER NOT NULL DEFAULT 0,
+    user_id TEXT DEFAULT NULL,
+    user_display_name TEXT DEFAULT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE,
+    FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE SET NULL
+)"""
+
+
+def _eradicate_projects(conn: sqlite3.Connection) -> None:
+    """Remove all projects tables and FK columns (v1.95.0 — #716).
+
+    This MUST run outside any transaction because PRAGMA foreign_keys=OFF
+    is silently ignored inside transactions.  Uses the SQLite 12-step table
+    rebuild to drop ``project_id`` columns that have broken FK references.
+
+    Order matters: conversations references folders, so we must rebuild
+    conversations first (dropping it), then folders, then recreate
+    conversations with clean FKs.  Also recovers from partial previous
+    runs that left ``_xxx_old`` tables.
+    """
+    all_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+
+    # Detect actual table names (recover from partial previous runs)
+    conv_table = "conversations" if "conversations" in all_tables else None
+    folder_table = "folders" if "folders" in all_tables else None
+
+    # Recovery: if a previous run left _xxx_old tables, use those as source
+    if not conv_table and "_conversations_old" in all_tables:
+        conv_table = "_conversations_old"
+    if not folder_table and "_folders_old" in all_tables:
+        folder_table = "_folders_old"
+
+    # Use lists to preserve column order from PRAGMA table_info (important
+    # for matching SELECT column order with INSERT column order).
+    conv_cols_ordered: list[str] = []
+    folder_cols_ordered: list[str] = []
+    if conv_table:
+        conv_cols_ordered = [row[1] for row in conn.execute(f"PRAGMA table_info({conv_table})").fetchall()]  # noqa: S608
+    if folder_table:
+        folder_cols_ordered = [row[1] for row in conn.execute(f"PRAGMA table_info({folder_table})").fetchall()]  # noqa: S608
+    conv_cols = set(conv_cols_ordered)
+    folder_cols = set(folder_cols_ordered)
+
+    # Check for corrupted FK references (previous partial migration renamed
+    # folders to _folders_old but conversations FK captured the temp name)
+    conv_sql = ""
+    if conv_table:
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (conv_table,)).fetchone()
+        conv_sql = row[0] if row else ""
+
+    has_corrupted_fk = "_folders_old" in conv_sql or "_conversations_old" in conv_sql
+
+    need_work = (
+        "project_id" in conv_cols
+        or "project_id" in folder_cols
+        or "_conversations_old" in all_tables
+        or "_folders_old" in all_tables
+        or "project_sources" in all_tables
+        or "projects" in all_tables
+        or has_corrupted_fk
+    )
+    if not need_work:
+        return
+
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        # Step 1: Drop conversations (or its leftover) so folders can be
+        #         rebuilt without anything referencing it.
+        #         Only rebuild if conversations actually has project_id,
+        #         has corrupted FKs, or is a recovery leftover.
+        conv_needs_rebuild = (
+            "project_id" in conv_cols or has_corrupted_fk or (conv_table and conv_table == "_conversations_old")
+        )
+        conv_data: list[tuple[str, ...]] = []
+        conv_keep: list[str] = []
+        if conv_table and conv_needs_rebuild:
+            conv_keep = [c for c in conv_cols_ordered if c != "project_id"]
+            keep = conv_keep
+            cols_csv = ", ".join(keep)
+            conv_data = conn.execute(f"SELECT {cols_csv} FROM {conv_table}").fetchall()  # noqa: S608
+            conn.execute(f"DROP TABLE {conv_table}")  # noqa: S608
+        # Clean up any leftover from a prior partial run
+        if "_conversations_old" in all_tables and conv_table != "_conversations_old":
+            conn.execute("DROP TABLE IF EXISTS _conversations_old")
+
+        # Step 2: Rebuild folders without project_id
+        if folder_table and "project_id" in folder_cols:
+            keep = [c for c in folder_cols_ordered if c != "project_id"]
+            cols_csv = ", ".join(keep)
+            folder_data = conn.execute(f"SELECT {cols_csv} FROM {folder_table}").fetchall()  # noqa: S608
+            conn.execute(f"DROP TABLE {folder_table}")  # noqa: S608
+            conn.execute(_FOLDERS_CREATE)
+            if folder_data:
+                placeholders = ", ".join("?" * len(keep))
+                conn.executemany(f"INSERT INTO folders ({cols_csv}) VALUES ({placeholders})", folder_data)  # noqa: S608
+        elif "_folders_old" in all_tables and folder_table == "_folders_old":
+            # Recovery: _folders_old exists but folders doesn't
+            keep = [c for c in folder_cols_ordered if c != "project_id"]
+            cols_csv = ", ".join(keep)
+            folder_data = conn.execute(f"SELECT {cols_csv} FROM _folders_old").fetchall()
+            conn.execute("DROP TABLE _folders_old")
+            conn.execute(_FOLDERS_CREATE)
+            if folder_data:
+                placeholders = ", ".join("?" * len(keep))
+                conn.executemany(f"INSERT INTO folders ({cols_csv}) VALUES ({placeholders})", folder_data)  # noqa: S608
+
+        # Step 3: Recreate conversations with clean FKs (only if we dropped it)
+        if conv_needs_rebuild:
+            conn.execute(_CONVERSATIONS_CREATE)
+            if conv_data:
+                placeholders = ", ".join("?" * len(conv_keep))
+                cols_csv = ", ".join(conv_keep)
+                conn.executemany(f"INSERT INTO conversations ({cols_csv}) VALUES ({placeholders})", conv_data)  # noqa: S608
+
+        # Step 4: Drop project tables
+        if "project_sources" in all_tables:
+            conn.execute("DROP TABLE IF EXISTS project_sources")
+        if "projects" in all_tables:
+            conn.execute("DROP TABLE IF EXISTS projects")
+
+        conn.commit()
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
 def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None:
     """Apply schema migrations for existing databases."""
     cursor = conn.execute("PRAGMA table_info(conversations)")
@@ -634,9 +765,6 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
 
     if "model" not in cols:
         conn.execute("ALTER TABLE conversations ADD COLUMN model TEXT DEFAULT NULL")
-
-    if "project_id" not in cols:
-        conn.execute("ALTER TABLE conversations ADD COLUMN project_id TEXT DEFAULT NULL")
 
     if "folder_id" not in cols:
         conn.execute("ALTER TABLE conversations ADD COLUMN folder_id TEXT DEFAULT NULL")
@@ -656,13 +784,13 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             parent_id TEXT DEFAULT NULL,
-            project_id TEXT DEFAULT NULL,
+            space_id TEXT DEFAULT NULL,
             position INTEGER NOT NULL DEFAULT 0,
             collapsed INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE,
-            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+            FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE SET NULL
         )"""
     )
 
@@ -705,8 +833,8 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
     # Add user_id / user_display_name columns to all entity tables
     # DDL cannot use parameterized placeholders for identifiers in SQLite;
     # table names are validated against this hardcoded set before interpolation.
-    allowed_entity_tables = {"conversations", "messages", "projects", "folders", "tags"}
-    for table in ("conversations", "messages", "projects", "folders", "tags"):
+    allowed_entity_tables = {"conversations", "messages", "folders", "tags"}
+    for table in ("conversations", "messages", "folders", "tags"):
         assert table in allowed_entity_tables, f"Unexpected table in migration: {table}"
         table_cursor = conn.execute(f"PRAGMA table_info({table})")
         table_cols = {row[1] for row in table_cursor.fetchall()}
@@ -832,23 +960,6 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
         )"""
     )
     conn.execute(
-        """CREATE TABLE IF NOT EXISTS project_sources (
-            project_id TEXT NOT NULL,
-            source_id TEXT,
-            group_id TEXT,
-            tag_filter TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE,
-            FOREIGN KEY (group_id) REFERENCES source_groups(id) ON DELETE CASCADE,
-            CHECK (
-                (source_id IS NOT NULL AND group_id IS NULL AND tag_filter IS NULL) OR
-                (source_id IS NULL AND group_id IS NOT NULL AND tag_filter IS NULL) OR
-                (source_id IS NULL AND group_id IS NULL AND tag_filter IS NOT NULL)
-            )
-        )"""
-    )
-    conn.execute(
         """CREATE TABLE IF NOT EXISTS source_attachments (
             source_id TEXT NOT NULL,
             attachment_id TEXT NOT NULL,
@@ -967,8 +1078,10 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
         """CREATE TABLE IF NOT EXISTS spaces (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            file_hash TEXT NOT NULL DEFAULT '',
+            source_file TEXT NOT NULL DEFAULT '',
+            source_hash TEXT NOT NULL DEFAULT '',
+            instructions TEXT NOT NULL DEFAULT '',
+            model TEXT DEFAULT NULL,
             last_loaded_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -1050,6 +1163,20 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
         conn.execute("PRAGMA foreign_keys=ON")
         conn.commit()
         logger.info("FK repair complete for: %s", _repair_broken_fk_refs)
+    # Migrate spaces columns from v1.74.0 schema to v1.95.0 (rename + add)
+    sp_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "spaces" in sp_tables:
+        sp_cols = {row[1] for row in conn.execute("PRAGMA table_info(spaces)").fetchall()}
+        # Rename file_path → source_file, file_hash → source_hash (SQLite 3.25+)
+        if "file_path" in sp_cols and "source_file" not in sp_cols:
+            conn.execute("ALTER TABLE spaces RENAME COLUMN file_path TO source_file")
+        if "file_hash" in sp_cols and "source_hash" not in sp_cols:
+            conn.execute("ALTER TABLE spaces RENAME COLUMN file_hash TO source_hash")
+        # Add new columns
+        if "instructions" not in sp_cols:
+            conn.execute("ALTER TABLE spaces ADD COLUMN instructions TEXT NOT NULL DEFAULT ''")
+        if "model" not in sp_cols:
+            conn.execute("ALTER TABLE spaces ADD COLUMN model TEXT DEFAULT NULL")
     conn.execute(
         """CREATE TABLE IF NOT EXISTS space_paths (
             id TEXT PRIMARY KEY,

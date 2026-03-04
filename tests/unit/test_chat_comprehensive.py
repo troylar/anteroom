@@ -101,7 +101,6 @@ def _make_conv(conv_id: str | None = None, *, conv_type: str = "chat") -> dict:
         "title": "New Conversation",
         "type": conv_type,
         "model": None,
-        "project_id": None,
         "space_id": None,
     }
 
@@ -340,30 +339,6 @@ class TestResolveSources:
         fetched_ids = {c[0][1] for c in calls}
         assert denied_src not in fetched_ids
 
-    def test_group_sources_scoped_by_project(self) -> None:
-        """Group-resolved sources outside the project's allowed set are excluded."""
-        db = MagicMock()
-        group_id = str(uuid.uuid4())
-        project_id = str(uuid.uuid4())
-        allowed_src = str(uuid.uuid4())
-        denied_src = str(uuid.uuid4())
-        with patch("anteroom.routers.chat.storage") as mock_storage:
-            mock_storage.get_project_sources.return_value = [{"id": allowed_src}]
-            mock_storage.list_sources.return_value = [
-                {"id": allowed_src, "content": "ok"},
-                {"id": denied_src, "content": "nope"},
-            ]
-            mock_storage.get_source.return_value = {
-                "id": allowed_src,
-                "title": "Allowed",
-                "content": "ok",
-            }
-            result = _resolve_sources(db, [], None, group_id, project_id=project_id)
-        assert "Allowed" in result
-        calls = mock_storage.get_source.call_args_list
-        fetched_ids = {c[0][1] for c in calls}
-        assert denied_src not in fetched_ids
-
 
 # ---------------------------------------------------------------------------
 # _build_tool_list
@@ -528,7 +503,7 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=conv_id,
-                project_instructions=None,
+                space_instructions=None,
                 plan_prompt="",
                 plan_mode=False,
                 message_text="hello",
@@ -539,48 +514,6 @@ class TestBuildChatSystemPrompt:
 
         assert "RUNTIME_CTX" in result
         assert isinstance(meta, dict)
-
-    @pytest.mark.asyncio
-    async def test_project_instructions_injected(self) -> None:
-        from anteroom.routers.chat import _build_chat_system_prompt
-
-        ai_service = MagicMock()
-        ai_service.config.model = "gpt-4o"
-        tool_registry = MagicMock()
-        tool_registry.list_tools.return_value = []
-        tool_registry._working_dir = None
-        mcp_manager = MagicMock()
-        mcp_manager.get_server_statuses.return_value = []
-        config = MagicMock()
-        config.app.tls = False
-        config.rag = None
-        config.codebase_index.map_tokens = 1000
-        db = MagicMock()
-
-        with (
-            patch("anteroom.routers.chat.build_runtime_context", return_value="CTX"),
-            patch("anteroom.routers.chat.load_instructions", return_value=None),
-            patch("anteroom.routers.chat.storage") as mock_storage,
-            patch("anteroom.services.codebase_index.create_index_service", return_value=None),
-        ):
-            mock_storage.get_canvas_for_conversation.return_value = None
-            result, _meta = await _build_chat_system_prompt(
-                ai_service=ai_service,
-                tool_registry=tool_registry,
-                mcp_manager=mcp_manager,
-                config=config,
-                db=db,
-                conversation_id=str(uuid.uuid4()),
-                project_instructions="PROJECT INSTRUCTIONS HERE",
-                plan_prompt="",
-                plan_mode=False,
-                message_text="hello",
-                source_ids=[],
-                source_tag=None,
-                source_group_id=None,
-            )
-
-        assert "PROJECT INSTRUCTIONS HERE" in result
 
     @pytest.mark.asyncio
     async def test_space_instructions_injected(self) -> None:
@@ -613,7 +546,6 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=str(uuid.uuid4()),
-                project_instructions=None,
                 space_instructions="SPACE RULES",
                 plan_prompt="",
                 plan_mode=False,
@@ -657,7 +589,7 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=str(uuid.uuid4()),
-                project_instructions=None,
+                space_instructions=None,
                 plan_prompt="\n\nPLAN PROMPT",
                 plan_mode=True,
                 message_text="make a plan",
@@ -707,7 +639,7 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=str(uuid.uuid4()),
-                project_instructions=None,
+                space_instructions=None,
                 plan_prompt="",
                 plan_mode=False,
                 message_text="edit canvas",
@@ -758,7 +690,7 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=str(uuid.uuid4()),
-                project_instructions=None,
+                space_instructions=None,
                 plan_prompt="",
                 plan_mode=False,
                 message_text="hello",
@@ -800,7 +732,7 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=str(uuid.uuid4()),
-                project_instructions=None,
+                space_instructions=None,
                 plan_prompt="",
                 plan_mode=False,
                 message_text="hello",
@@ -850,7 +782,7 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=str(uuid.uuid4()),
-                project_instructions=None,
+                space_instructions=None,
                 plan_prompt="",
                 plan_mode=False,
                 message_text="hello",
@@ -898,7 +830,7 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=str(uuid.uuid4()),
-                project_instructions=None,
+                space_instructions=None,
                 plan_prompt="",
                 plan_mode=False,
                 message_text="search query",
@@ -945,7 +877,7 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=str(uuid.uuid4()),
-                project_instructions=None,
+                space_instructions=None,
                 plan_prompt="",
                 plan_mode=False,
                 message_text="search query",
@@ -992,7 +924,7 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=str(uuid.uuid4()),
-                project_instructions=None,
+                space_instructions=None,
                 plan_prompt="",
                 plan_mode=False,
                 message_text="search query",
@@ -1037,7 +969,7 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=str(uuid.uuid4()),
-                project_instructions=None,
+                space_instructions=None,
                 plan_prompt="",
                 plan_mode=False,
                 message_text="search query",
@@ -1081,7 +1013,7 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=conv_id,
-                project_instructions=None,
+                space_instructions=None,
                 plan_prompt="",
                 plan_mode=False,
                 message_text="summarize this",
@@ -1128,7 +1060,7 @@ class TestBuildChatSystemPrompt:
                 config=config,
                 db=db,
                 conversation_id=conv_id,
-                project_instructions=None,
+                space_instructions=None,
                 plan_prompt="",
                 plan_mode=False,
                 message_text="hello",
