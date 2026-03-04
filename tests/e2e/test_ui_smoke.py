@@ -7,7 +7,7 @@ Acceptance criteria from #93:
 - Boot server, load page, verify no console errors (CSP violations)
 - Click "New Chat", verify conversation is created
 - Send a message, verify SSE stream starts
-- Create a conversation with a project selected
+- Create a conversation with a space selected
 """
 
 from __future__ import annotations
@@ -190,49 +190,49 @@ class TestChatSSEStream:
         assert any("test persistence" in m["content"] for m in user_messages)
 
 
-class TestProjectConversation:
-    """Verify creating a conversation linked to a project."""
+class TestSpaceConversation:
+    """Verify creating a conversation linked to a space."""
 
-    def test_create_project(self, api_client) -> None:
-        """POST /api/projects should create a new project."""
+    def test_create_space(self, api_client) -> None:
+        """POST /api/spaces should create a new space."""
         resp = api_client.post(
-            "/api/projects",
-            json={"name": "Smoke Test Project", "instructions": "You are a test assistant."},
+            "/api/spaces",
+            json={"name": "smoke-test-space", "instructions": "You are a test assistant."},
         )
         assert resp.status_code == 201
         data = resp.json()
-        assert data["name"] == "Smoke Test Project"
+        assert data["name"] == "smoke-test-space"
         assert "id" in data
 
-    def test_create_conversation_with_project(self, api_client) -> None:
-        """A conversation created with a project_id should be linked to that project."""
-        project = api_client.post(
-            "/api/projects",
-            json={"name": "Project Link Test"},
+    def test_create_conversation_with_space(self, api_client) -> None:
+        """A conversation created with a space_id should be linked to that space."""
+        space = api_client.post(
+            "/api/spaces",
+            json={"name": "space-link-test"},
         ).json()
 
         conv = api_client.post(
             "/api/conversations",
-            json={"title": "Project Chat", "project_id": project["id"]},
+            json={"title": "Space Chat", "space_id": space["id"]},
         )
         assert conv.status_code == 201
         conv_data = conv.json()
-        assert conv_data["project_id"] == project["id"]
+        assert conv_data["space_id"] == space["id"]
 
-    def test_list_conversations_by_project(self, api_client) -> None:
-        """Conversations should be filterable by project_id."""
-        project = api_client.post("/api/projects", json={"name": "Filter Test"}).json()
+    def test_list_conversations_by_space(self, api_client) -> None:
+        """Conversations should be filterable by space_id."""
+        space = api_client.post("/api/spaces", json={"name": "filter-test"}).json()
         api_client.post(
             "/api/conversations",
-            json={"title": "In Project", "project_id": project["id"]},
+            json={"title": "In Space", "space_id": space["id"]},
         )
-        api_client.post("/api/conversations", json={"title": "No Project"})
+        api_client.post("/api/conversations", json={"title": "No Space"})
 
-        resp = api_client.get(f"/api/conversations?project_id={project['id']}")
+        resp = api_client.get(f"/api/conversations?space_id={space['id']}")
         assert resp.status_code == 200
         filtered = resp.json()
-        assert any(c["title"] == "In Project" for c in filtered)
-        assert not any(c["title"] == "No Project" for c in filtered)
+        assert any(c["title"] == "In Space" for c in filtered)
+        assert not any(c["title"] == "No Space" for c in filtered)
 
 
 # ---------------------------------------------------------------------------
