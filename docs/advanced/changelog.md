@@ -7,6 +7,21 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 4, 2026
 
+### v1.96.0
+
+**New:**
+
+- Spaces are now the universal workspace primitive — Projects have been completely removed and replaced by Spaces with full CRUD in both web UI and CLI (#716)
+- Export any space to YAML with `aroom space export` for git-committable workspace configuration (#716)
+- DB-authoritative with file sync — spaces created anywhere (UI, CLI, YAML) converge in the database (#716)
+
+**Improved:**
+
+- Safe automatic migration converts existing projects to spaces, preserving all conversations and folders (#716)
+- Net code reduction: ~1050 lines removed while adding full space CRUD parity (#716)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.96.0)
+
 ### v1.95.1
 
 **Fixed:**
