@@ -7,6 +7,19 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 4, 2026
 
+### v1.98.0
+
+**New:**
+
+- Built-in `/excalidraw` skill for creating interactive diagrams rendered live in the web UI canvas panel (#751)
+
+**Fixed:**
+
+- Streaming stability: hard tool timeouts, Anthropic provider cancel-aware streams, EventBus retry-with-backoff (#751)
+- SSE task leak on client disconnect, postMessage wildcard origins, page lifecycle stream cleanup (#751)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.98.0)
+
 ### v1.97.0
 
 **New:**
