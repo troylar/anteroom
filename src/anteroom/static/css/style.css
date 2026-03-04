@@ -1359,6 +1359,10 @@ body {
     color: var(--accent);
 }
 
+.message.system-hidden {
+    display: none;
+}
+
 .message-content {
     line-height: 1.65;
     font-size: 15px;

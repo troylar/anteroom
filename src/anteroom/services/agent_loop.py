@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator
 
@@ -232,11 +233,21 @@ async def run_agent_loop(
     request_tokens = 0  # tokens accumulated in this run_agent_loop invocation
     consecutive_text_only = 0
 
+    _loop_start = time.monotonic()
+
     while iteration < max_iterations:
         iteration += 1
+        _iter_start = time.monotonic()
         tool_calls_pending: list[dict[str, Any]] = []
         assistant_content = ""
         got_context_error = False
+        logger.debug(
+            "agent_loop iteration=%d messages=%d tools=%d elapsed=%.1fs",
+            iteration,
+            len(messages),
+            len(tools_openai) if tools_openai else 0,
+            _iter_start - _loop_start,
+        )
 
         # Budget enforcement: check before each API call
         if budget_config and budget_config.enabled and get_token_totals:
@@ -305,6 +316,9 @@ async def run_agent_loop(
         yield AgentEvent(kind="thinking", data={})
 
         _dlp_blocked = False
+        _ai_call_start = time.monotonic()
+        _first_token_logged = False
+        logger.debug("agent_loop ai_call_start iteration=%d", iteration)
         async for event in ai_service.stream_chat(
             messages,
             tools=tools_openai,
@@ -312,6 +326,14 @@ async def run_agent_loop(
             extra_system_prompt=extra_system_prompt,
         ):
             etype = event["event"]
+            if not _first_token_logged and etype in ("token", "tool_call"):
+                logger.debug(
+                    "agent_loop first_response iteration=%d type=%s elapsed=%.2fs",
+                    iteration,
+                    etype,
+                    time.monotonic() - _ai_call_start,
+                )
+                _first_token_logged = True
             if etype == "token":
                 chunk = event["data"]["content"]
                 # Per-chunk DLP: redact inline, block breaks stream.
@@ -514,6 +536,13 @@ async def run_agent_loop(
                 )
 
         # Save assistant message with tool calls into message history
+        logger.debug(
+            "agent_loop ai_stream_done iteration=%d tool_calls=%d content_len=%d elapsed=%.2fs",
+            iteration,
+            len(tool_calls_pending),
+            len(assistant_content),
+            time.monotonic() - _ai_call_start,
+        )
         yield AgentEvent(kind="assistant_message", data={"content": assistant_content})
         messages.append(
             {
@@ -534,6 +563,13 @@ async def run_agent_loop(
         )
 
         # Execute tool calls in parallel
+        _tools_start = time.monotonic()
+        logger.debug(
+            "agent_loop tool_exec_start iteration=%d count=%d tools=%s",
+            iteration,
+            len(tool_calls_pending),
+            [tc["function_name"] for tc in tool_calls_pending],
+        )
         if cancel_event and cancel_event.is_set():
             for tc in tool_calls_pending:
                 cancelled_result = {"error": "Cancelled by user"}
@@ -613,6 +649,12 @@ async def run_agent_loop(
                 )
             total_tool_calls += len(tool_calls_pending)
             consecutive_text_only = 0
+            logger.debug(
+                "agent_loop tool_exec_done iteration=%d count=%d elapsed=%.2fs",
+                iteration,
+                len(tool_calls_pending),
+                time.monotonic() - _tools_start,
+            )
 
         if cancel_event and cancel_event.is_set():
             yield AgentEvent(kind="done", data={})

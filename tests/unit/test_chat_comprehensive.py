@@ -2256,9 +2256,11 @@ class TestStreamStatusEndpoint:
         conv_id = str(uuid.uuid4())
         import time
 
+        mock_request = AsyncMock()
+        mock_request.is_disconnected = AsyncMock(return_value=False)
         _active_streams[conv_id] = {
             "started_at": time.monotonic() - 5,
-            "request": MagicMock(),
+            "request": mock_request,
             "cancel_event": asyncio.Event(),
         }
         app = _make_app()
