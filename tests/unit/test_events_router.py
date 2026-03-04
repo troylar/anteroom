@@ -181,21 +181,16 @@ class TestSSERetryField:
         assert "retry: 5000" in retry_lines[0] or "retry:5000" in retry_lines[0]
 
     def test_connected_event_includes_retry_field(self) -> None:
-        """When event_bus is present but no events queued, the initial
-        connected event should carry the retry: field."""
+        """When event_bus is present, the initial connected event should
+        carry the retry: field unconditionally."""
         app = _make_app(with_event_bus=True, sse_retry_ms=3000)
         event_bus = app.state.event_bus
         mock_queue = MagicMock()
         mock_queue.get_nowait.side_effect = asyncio.QueueEmpty()
         event_bus.subscribe.return_value = mock_queue
 
-        # Disconnect after first iteration so the loop yields the connected event then exits
-        call_count = 0
-
         async def mock_disconnect(self: object) -> bool:
-            nonlocal call_count
-            call_count += 1
-            return call_count > 1
+            return True
 
         client = TestClient(app)
         with patch("starlette.requests.Request.is_disconnected", mock_disconnect):

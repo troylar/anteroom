@@ -783,11 +783,11 @@ const App = (() => {
             const elapsed = Date.now() - _esConnectedAt;
             _esFailCount++;
 
-            // Rapid failure (< 3s after connect) likely means 401 or rate limit.
-            // After 2 consecutive rapid failures, trigger auth recovery.
-            // The server sends retry: to control reconnect interval, so
-            // reaching 2 rapid failures indicates a persistent auth problem.
-            if (elapsed < 3000 && _esFailCount >= 2) {
+            // Rapid failure (< 3s after connect) likely means 401.
+            // After 5 consecutive rapid failures, trigger auth recovery.
+            // The server sends retry: to control reconnect interval for
+            // rate-limit scenarios; this guard is strictly for broken auth.
+            if (elapsed < 3000 && _esFailCount >= 5) {
                 if (_eventSource) {
                     _eventSource.close();
                     _eventSource = null;

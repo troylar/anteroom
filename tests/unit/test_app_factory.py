@@ -368,6 +368,21 @@ class TestRateLimitMiddleware:
         assert client.get("/api/test").status_code == 200
         assert client.get("/api/test").status_code == 429
 
+    def test_429_includes_retry_after_header(self) -> None:
+        """429 response must include Retry-After header per RFC 6585."""
+        app = FastAPI()
+        app.add_middleware(RateLimitMiddleware, max_requests=1, window_seconds=60)
+
+        @app.get("/api/test")
+        async def _test() -> dict[str, bool]:
+            return {"ok": True}
+
+        client = TestClient(app)
+        client.get("/api/test")
+        resp = client.get("/api/test")
+        assert resp.status_code == 429
+        assert resp.headers.get("retry-after") == "60"
+
 
 # ---------------------------------------------------------------------------
 # session_id_from_token

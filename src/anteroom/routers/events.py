@@ -71,7 +71,9 @@ async def event_stream(
         conv_queue = event_bus.subscribe(conv_channel)
 
     async def generate() -> Any:
-        first_event = True
+        # Send retry: hint and connected event immediately so the browser
+        # knows the backoff interval regardless of queue state.
+        yield {"event": "connected", "data": "{}", "retry": sse_retry_ms}
         try:
             while True:
                 if await request.is_disconnected():
@@ -93,20 +95,12 @@ async def event_stream(
                 if event is None:
                     # Wait briefly before checking again
                     await asyncio.sleep(0.05)
-                    # Send keepalive every ~15s (300 * 0.05s)
-                    if first_event:
-                        first_event = False
-                        yield {"event": "connected", "data": "{}", "retry": sse_retry_ms}
                     continue
 
-                sse_event: dict[str, Any] = {
+                yield {
                     "event": event.get("type", "message"),
                     "data": json.dumps(event.get("data", {})),
                 }
-                if first_event:
-                    first_event = False
-                    sse_event["retry"] = sse_retry_ms
-                yield sse_event
         finally:
             event_bus.unsubscribe(global_channel, global_queue)
             if conv_channel and conv_queue:

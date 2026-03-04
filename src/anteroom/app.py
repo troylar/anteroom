@@ -369,7 +369,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         if len(hits) >= self.max_requests:
             security_logger.warning("Rate limit exceeded for IP %s", client_ip)
-            return JSONResponse(status_code=429, content={"detail": "Too many requests"})
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many requests"},
+                headers={"Retry-After": str(self.window)},
+            )
         hits.append(now)
         return await call_next(request)
 
