@@ -693,8 +693,8 @@ def create_app(config: AppConfig | None = None, enforced_fields: list[str] | Non
     app.add_middleware(SecurityHeadersMiddleware, tls_enabled=config.app.tls)  # type: ignore[arg-type]
     app.add_middleware(MaxBodySizeMiddleware)  # type: ignore[arg-type]
     rl = config.rate_limit
-    app.add_middleware(  # type: ignore[arg-type]
-        RateLimitMiddleware,
+    app.add_middleware(
+        RateLimitMiddleware,  # type: ignore[arg-type]
         max_requests=rl.max_requests,
         window_seconds=rl.window_seconds,
         exempt_paths=set(rl.exempt_paths),
