@@ -537,7 +537,7 @@ class TestLinkSpaceSourceEndpoint:
             client = TestClient(app)
             resp = client.post("/api/spaces/sp-1/sources", json={"source_id": "bad-src"})
         assert resp.status_code == 400
-        assert "source not found" in resp.json()["detail"]
+        assert resp.json()["detail"] == "Invalid source link configuration"
 
     def test_link_calls_service_with_all_args(self) -> None:
         app = _make_app()

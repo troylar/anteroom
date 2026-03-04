@@ -244,8 +244,8 @@ async def api_sync_space(request: Request) -> dict[str, Any]:
     db = _get_db(request)
     try:
         space = sync_space_from_file(db, path, track_source=body.get("track_source", True))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid space configuration")
 
     return _enrich_origin(space)
 
@@ -263,8 +263,8 @@ async def api_export_space(request: Request, space_id: str) -> dict[str, Any]:
 
     try:
         cfg = export_space_to_yaml(db, space_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid space configuration")
 
     result: dict[str, Any] = {"name": cfg.name, "version": cfg.version}
     if cfg.instructions:
@@ -304,8 +304,8 @@ async def api_link_space_source(request: Request, space_id: str, body: SpaceSour
             group_id=body.group_id,
             tag_filter=body.tag_filter,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid source link configuration")
 
 
 @router.delete("/spaces/{space_id}/sources/{source_id}", status_code=204)

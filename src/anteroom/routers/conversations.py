@@ -97,6 +97,8 @@ async def list_conversations(
     type: str | None = Query(default=None, pattern=r"^(chat|note|document)$"),
     space_id: str | None = None,
 ) -> Any:
+    if space_id:
+        _validate_uuid(space_id)
     db = _get_db(request)
     return storage.list_conversations(db, search=search, conversation_type=type, space_id=space_id)
 
