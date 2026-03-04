@@ -293,7 +293,11 @@ const Chat = (() => {
     function handleSSEEvent(type, data) {
         _resetWatchdog();
         if (typeof App._debugLog === 'function' && type !== 'token') {
-            App._debugLog('sse', 'event=' + type, data);
+            const safe = {type: type};
+            if (data.phase) safe.phase = data.phase;
+            if (data.tool_name) safe.tool_name = data.tool_name;
+            if (data.id) safe.id = data.id;
+            App._debugLog('sse', 'event=' + type, safe);
         }
         switch (type) {
             case 'thinking':
