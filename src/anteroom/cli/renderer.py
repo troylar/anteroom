@@ -959,7 +959,7 @@ def render_response_end() -> None:
 
     from rich.padding import Padding
 
-    _stdout_console.print(Padding(_make_markdown(full_text), (0, 2, 0, 2)))
+    _stdout_console.print(Padding(_make_markdown(full_text), (0, 2, 1, 2)))
 
 
 def render_newline() -> None:

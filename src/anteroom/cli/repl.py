@@ -4159,6 +4159,9 @@ async def _run_repl(
             storage.create_message(db, conv["id"], "user", expanded, **id_kw)
             ai_messages.append({"role": "user", "content": expanded})
 
+            # Breathing room after user prompt echo
+            renderer.render_newline()
+
             # RAG: retrieve relevant context from knowledge base
             if config.rag.enabled and not _plan_active[0]:
                 try:
@@ -4480,7 +4483,8 @@ async def _run_repl(
                                     response_tokens=response_token_count,
                                     elapsed=total_elapsed,
                                 )
-                                _toolbar_refresh()
+                                invalidate_toolbar()
+                                renderer.render_newline()
                                 renderer.render_newline()
 
                     if not should_retry:
