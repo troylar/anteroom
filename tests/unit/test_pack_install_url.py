@@ -160,7 +160,7 @@ class TestCollectPackOverlay:
 
         with (
             patch("anteroom.config._resolve_data_dir", return_value=data_dir),
-            patch("anteroom.db.get_db") as mock_get_db,
+            patch("anteroom.db.get_db"),
             patch(
                 "anteroom.services.pack_attachments.get_active_pack_ids",
                 return_value=["pack1"],
