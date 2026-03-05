@@ -4515,6 +4515,10 @@ async def _run_repl(
                 exit_flag.set()
                 return
 
+            if _exit_flag[0]:
+                exit_flag.set()
+                return
+
             _collapse_long_input(user_input_raw)
             text = user_input_raw.strip()
             if not text:
