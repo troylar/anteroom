@@ -533,15 +533,14 @@ def detect_artifact_conflicts(
 
     Artifact types fall into two categories:
 
-    - **Exclusive** (``skill``, ``mcp_server``): two packs providing the
-      same name is a real conflict — the user can only invoke one
-      ``/deploy`` skill or connect to one MCP server named "github".
+    - **Exclusive** (``skill``): two packs providing the same name is a
+      real conflict — the user can only invoke one ``/deploy`` skill.
       Same-name collisions are always errors regardless of priority.
 
-    - **Additive** (``rule``, ``instruction``, ``context``, ``memory``):
-      multiple packs providing same-named artifacts is fine — they all
-      apply.  Rules add guidance, instructions add context, etc.
-      No conflict detection.
+    - **Additive** (``rule``, ``instruction``, ``context``, ``memory``,
+      ``mcp_server``): multiple packs providing same-named artifacts is
+      fine — they all apply.  Rules add guidance, MCP servers merge
+      configs, etc.  No conflict detection.
 
     ``config_overlay`` artifacts are excluded — they have their own
     dot-path-level conflict detection in :func:`detect_overlay_conflicts`

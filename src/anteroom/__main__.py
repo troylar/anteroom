@@ -202,11 +202,21 @@ def _run_config_view(team_config_path: Path | None = None, *, with_sources: bool
         interactive=False,
     )
 
+    sensitive_keys = {"ai.api_key", "embeddings.api_key"}
+
+    def _redact_sensitive(flat: dict[str, Any]) -> dict[str, Any]:
+        """Replace sensitive values with '***' in a flat dot-path dict."""
+        return {k: "***" if k in sensitive_keys and v else v for k, v in flat.items()}
+
     if not with_sources:
         import yaml
 
+        from .services.config_overlays import flatten_to_dot_paths
+
         console = Console()
-        console.print(yaml.dump(asdict(config), default_flow_style=False, sort_keys=True))
+        flat = flatten_to_dot_paths(asdict(config))
+        redacted = _redact_sensitive(flat)
+        console.print(yaml.dump(redacted, default_flow_style=False, sort_keys=True))
         return
 
     import os
@@ -273,7 +283,7 @@ def _run_config_view(team_config_path: Path | None = None, *, with_sources: bool
     source_map = track_config_sources(layers)
 
     # Flatten final merged config for display
-    final_flat = flatten_to_dot_paths(asdict(config))
+    final_flat = _redact_sensitive(flatten_to_dot_paths(asdict(config)))
 
     console = Console()
     table = Table(title="Configuration", show_lines=False)
@@ -1323,7 +1333,9 @@ def _install_from_url(
         sys.exit(1)
 
     cache_path = result.path
-    assert cache_path is not None
+    if cache_path is None:
+        console.print("[red]Clone succeeded but no path returned.[/red]")
+        sys.exit(1)
 
     # Discover pack.yaml manifests in the cloned repo
     subpath = getattr(args, "subpath", None)
@@ -1341,7 +1353,11 @@ def _install_from_url(
         console.print(f"[red]Subdirectory not found:[/red] {escape(subpath or '')}")
         sys.exit(1)
 
-    manifests = sorted(search_root.rglob("pack.yaml"))
+    manifests = sorted(
+        p
+        for p in search_root.rglob("pack.yaml")
+        if ".git" not in p.parts and p.resolve().is_relative_to(search_root.resolve())
+    )
     if not manifests:
         console.print(f"[red]No pack.yaml found in {escape(str(search_root))}[/red]")
         sys.exit(1)
