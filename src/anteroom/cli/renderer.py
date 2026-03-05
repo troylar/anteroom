@@ -1382,11 +1382,9 @@ def render_welcome(
     branch = f" ({git_branch})" if git_branch else ""
 
     console.print()
-    console.print(f"[{GOLD}]      \u25b2[/]")
-    console.print(f"[{GOLD}]     / \\[/]")
-    console.print(f"[{GOLD}]    /   \\[/]")
-    console.print(f"[{GOLD}]   / [{BLUE}]\u25fc\u25fc[/{GOLD}] \\      [bold]A N T E R O O M[/bold][/]")
-    console.print(f"[{GOLD}]  /_______\\     [{SLATE}]the secure AI gateway[/]")
+    console.print(f"  [{GOLD}]  \u2584\u2584\u2584[/]")
+    console.print(f"  [{GOLD}] \u2588[{BLUE}]\u2588\u2588[/{GOLD}]\u2588 [/]  [bold]A N T E R O O M[/bold]")
+    console.print(f"  [{GOLD}]\u2588\u2588\u2588\u2588\u2588[/]  [{SLATE}]the secure AI gateway[/]")
     console.print()
 
     version_parts = []

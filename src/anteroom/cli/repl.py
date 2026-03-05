@@ -918,7 +918,7 @@ async def _resolve_pack_interactive(
                 f"  {_pi}. {_c.get('namespace', '')}/{_c.get('name', '')} v{_c.get('version', '')} [{_c['id'][:8]}...]"
             )
         try:
-            _ch = input(f"Select (1-{len(_pc)}): ").strip()
+            _ch = (await asyncio.to_thread(input, f"Select (1-{len(_pc)}): ")).strip()
             _idx = int(_ch) - 1
             if 0 <= _idx < len(_pc):
                 _pm = _pc[_idx]
@@ -2555,7 +2555,7 @@ async def _run_repl(
                 for i, c in enumerate(candidates, 1):
                     renderer.console.print(f"  {i}. {c['name']} [{c['id'][:8]}...]")
                 try:
-                    choice = input(f"Select (1-{len(candidates)}): ").strip()
+                    choice = (await asyncio.to_thread(input, f"Select (1-{len(candidates)}): ")).strip()
                     idx = int(choice) - 1
                     if 0 <= idx < len(candidates):
                         return candidates[idx]
@@ -2776,7 +2776,7 @@ async def _run_repl(
                         continue
                     title = to_delete.get("title", "Untitled")
                     try:
-                        answer = input(f'  Delete "{title}"? [y/N] ').strip().lower()
+                        answer = (await asyncio.to_thread(input, f'  Delete "{title}"? [y/N] ')).strip().lower()
                     except (EOFError, KeyboardInterrupt):
                         renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
                         continue
@@ -4027,7 +4027,7 @@ async def _run_repl(
                         f"\n[{CHROME}]Enter position to rewind to (keep that message, delete after):[/{CHROME}]"
                     )
                     try:
-                        pos_input = input("  Position: ").strip()
+                        pos_input = (await asyncio.to_thread(input, "  Position: ")).strip()
                     except (EOFError, KeyboardInterrupt):
                         renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
                         continue
@@ -4054,7 +4054,7 @@ async def _run_repl(
                         for fp in sorted(file_paths):
                             renderer.console.print(f"  - {fp}")
                         try:
-                            answer = input("  Undo file changes? [y/N] ").strip().lower()
+                            answer = (await asyncio.to_thread(input, "  Undo file changes? [y/N] ")).strip().lower()
                             undo_files = answer in ("y", "yes")
                         except (EOFError, KeyboardInterrupt):
                             renderer.console.print(f"[{CHROME}]Cancelled[/{CHROME}]\n")
