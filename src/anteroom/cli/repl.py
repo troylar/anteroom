@@ -4498,17 +4498,13 @@ async def _run_repl(
 
     async def _collect_input_simple() -> None:
         """Collect user input via prompt_async and feed into input_queue."""
-        from .layout import InputLexer, input_line_prefix
-
-        def _prompt_message() -> list[tuple[str, str]]:
-            """Dynamic prompt prefix colored by approval mode."""
-            return input_line_prefix(0, 0)
+        from .layout import InputLexer
 
         while not exit_flag.is_set():
             try:
                 user_input_raw = await session.prompt_async(
-                    _prompt_message,
-                    prompt_continuation=input_line_prefix,
+                    _prompt,
+                    prompt_continuation=_continuation,
                     lexer=InputLexer(),
                 )
             except (EOFError, KeyboardInterrupt):
@@ -4533,17 +4529,20 @@ async def _run_repl(
             await input_queue.put(text)
             agent_busy.set()
 
-    input_task = asyncio.create_task(_collect_input_simple())
-    runner_task = asyncio.create_task(_agent_runner())
+    from prompt_toolkit.patch_stdout import patch_stdout as _patch_stdout
 
-    done_tasks, pending_tasks = await asyncio.wait({input_task, runner_task}, return_when=asyncio.FIRST_COMPLETED)
-    exit_flag.set()
-    for t in pending_tasks:
-        t.cancel()
-        try:
-            await t
-        except BaseException:
-            pass
+    with _patch_stdout(raw=True):
+        input_task = asyncio.create_task(_collect_input_simple())
+        runner_task = asyncio.create_task(_agent_runner())
+
+        done_tasks, pending_tasks = await asyncio.wait({input_task, runner_task}, return_when=asyncio.FIRST_COMPLETED)
+        exit_flag.set()
+        for t in pending_tasks:
+            t.cancel()
+            try:
+                await t
+            except BaseException:
+                pass
 
     # Show resume hint after exit
     if conv.get("id") and not is_first_message:
