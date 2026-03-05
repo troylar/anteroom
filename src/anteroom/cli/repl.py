@@ -2128,12 +2128,14 @@ async def _run_repl(
 
     _toolbar_cache: list[tuple[str, str]] = []
     _toolbar_msg_count: list[int] = [0]
+    _toolbar_dirty: list[bool] = [True]
 
     _cached_git_branch: list[str] = [_detect_git_branch() or ""]
 
     def _toolbar_refresh() -> None:
         """Recompute the cached toolbar content."""
         _toolbar_msg_count[0] = len(ai_messages)
+        _toolbar_dirty[0] = False
         # _active_space and _plan_active are defined later in _run_repl but
         # _toolbar_refresh is only ever called during prompt rendering, which
         # happens after those variables exist.  Guard with try/except for safety.
@@ -2164,8 +2166,12 @@ async def _run_repl(
             conversation_name=cn,
         )
 
+    def invalidate_toolbar() -> None:
+        """Mark the toolbar as needing a refresh on next render."""
+        _toolbar_dirty[0] = True
+
     def _bottom_toolbar() -> list[tuple[str, str] | tuple[str, str, Any]]:
-        if len(ai_messages) != _toolbar_msg_count[0] or not _toolbar_cache:
+        if _toolbar_dirty[0]:
             _toolbar_refresh()
         return _toolbar_cache
 
@@ -2875,6 +2881,7 @@ async def _run_repl(
                         try:
                             storage.update_conversation_slug(db, conv["id"], desired)
                             conv["slug"] = desired
+                            invalidate_toolbar()
                             renderer.console.print(f"[{CHROME}]Slug set to: {desired}[/{CHROME}]\n")
                         except _sqlite3.IntegrityError:
                             # Race: slug was taken between check and write
@@ -4524,6 +4531,7 @@ async def _run_repl(
         from .layout import InputLexer
 
         while not exit_flag.is_set():
+            invalidate_toolbar()
             try:
                 user_input_raw = await session.prompt_async(
                     _prompt,
