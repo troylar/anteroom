@@ -896,7 +896,10 @@ _SUB_PROMPT_TIMEOUT: float = 300.0  # 5 min timeout for interactive sub-prompts
 
 async def _timed_input(prompt_text: str, timeout: float = _SUB_PROMPT_TIMEOUT) -> str:
     """Read a line of input with a timeout. Raises TimeoutError on expiry."""
-    return await asyncio.wait_for(asyncio.to_thread(input, prompt_text), timeout=timeout)
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(input, prompt_text), timeout=timeout)
+    except asyncio.TimeoutError:
+        raise TimeoutError("Input timed out") from None
 
 
 async def _resolve_pack_interactive(
