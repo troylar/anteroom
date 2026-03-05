@@ -8,6 +8,43 @@ config and personal config::
 
 Team-enforced fields always win (re-applied after every merge).
 
+Priority model (config overlays only)
+--------------------------------------
+
+Each pack attachment has an integer ``priority`` (default 50).
+**Lower number = higher precedence** (1 = highest, 100 = lowest).
+
+When two packs set the same config key (dot-path):
+
+- **Different priorities** — the lower-number pack wins.  No error.
+- **Same priority** — this is an error.  The user must either change one
+  pack's priority (``aroom pack attach --priority N``) or detach the
+  conflicting pack.
+
+Range guidance::
+
+    1-19   high-priority   (compliance, security baselines)
+    20-49  above-normal
+    50     default
+    51-80  below-normal
+    81-100 low-priority    (fallback defaults, easily overridden)
+
+Artifact conflict model
+-----------------------
+
+Non-config artifacts are categorized by merge behavior:
+
+- **Exclusive** (``skill``): same name from two packs is always a
+  conflict.  Only one ``/deploy`` skill can be active — the user must
+  detach one pack.  Priority does not help here.
+
+- **Additive** (``rule``, ``instruction``, ``context``, ``memory``,
+  ``mcp_server``): same name from multiple packs is fine — they all
+  apply.  Rules add guidance, instructions add context, MCP server
+  configs merge settings.
+
+- **Config overlay**: uses the priority-based merge model above.
+
 Overview
 --------
 
@@ -17,15 +54,13 @@ The overlay lifecycle has four phases:
    artifacts from the DB for a set of pack IDs.
 
 2. **Conflict detection** — :func:`detect_overlay_conflicts` compares a
-   new pack's overlays against already-attached packs.  The policy is
-   "forbid overlaps": two packs may never set the same dot-path, even to
-   the same value.  This prevents subtle precedence surprises where pack
-   install order silently changes behavior.
+   new pack's overlays against already-attached packs.  Two packs may set
+   the same dot-path only if they have different priorities; the lower
+   priority number wins.  Same priority + same key is an error.
 
 3. **Merging** — :func:`merge_pack_overlays` combines all overlay dicts
-   into a single dict using :func:`~anteroom.services.team_config.deep_merge`.
-   Because conflicts are forbidden at attach time, the merge order is
-   irrelevant for correctness.
+   sorted by priority (highest number first, so lower-number overlays
+   are applied last and win via ``deep_merge`` semantics).
 
 4. **Source tracking** — :func:`track_config_sources` builds a
    ``{dot.path: layer_name}`` map for the ``aroom config view --with-sources``
@@ -36,15 +71,16 @@ Key design decisions
 
 - **Dot-path flattening** converts nested dicts to flat ``a.b.c`` keys for
   set-intersection conflict detection.  List values are treated as opaque
-  leaves — two packs that both set a list key will conflict, even if the
-  lists contain different items.  This is intentional: list merging
-  semantics (append? replace? named-list match?) are ambiguous, so we
-  require each list-valued key to be owned by exactly one pack.
+  leaves — two packs that both set a list key will conflict at the same
+  priority, even if the lists contain different items.  This is intentional:
+  list merging semantics (append? replace? named-list match?) are ambiguous,
+  so we require each list-valued key to be owned by exactly one pack at a
+  given priority level.
 
 - **Intra-pack conflicts are allowed.**  A single pack may have multiple
   ``config_overlay`` artifacts that set the same key.  This lets pack
   authors compose overlays (e.g., a base overlay + an environment-specific
-  override).  Only *cross-pack* conflicts are forbidden.
+  override).  Only *cross-pack* conflicts at the same priority are errors.
 
 - **Graceful degradation.**  :func:`collect_pack_overlays` catches
   ``sqlite3.OperationalError`` so it works against minimal DB schemas
@@ -211,37 +247,54 @@ def collect_pack_overlays(
 
 def merge_pack_overlays(
     overlays: list[tuple[str, dict[str, Any]]],
+    priorities: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Merge multiple pack overlays into a single config dict.
 
     Uses :func:`~anteroom.services.team_config.deep_merge` for recursive
-    merging.  Returns the combined overlay dict (empty dict if no overlays).
+    merging.  When *priorities* is provided, overlays are sorted so that
+    **lower-priority-number packs win** (applied last in the merge chain,
+    since ``deep_merge`` overlay values override base values).
 
     Parameters
     ----------
     overlays:
         List of ``(pack_label, overlay_dict)`` pairs as returned by
-        :func:`collect_pack_overlays`.  The pack labels are ignored
-        during merging (they exist for conflict error messages).
+        :func:`collect_pack_overlays`.
+    priorities:
+        Optional ``{pack_label: priority_int}`` map from
+        :func:`~anteroom.services.pack_attachments.get_attachment_priorities`.
+        When provided, overlays are sorted by priority descending (highest
+        number first) so that lower-number packs are applied last and win.
+        When ``None``, overlays are merged in the order given (backward
+        compatible with pre-priority code).
 
     Returns
     -------
     dict[str, Any]
-        A single merged dict.  If overlays have non-overlapping keys
-        (the normal case after conflict detection), order doesn't matter.
-        If they overlap (e.g., ``check_overlay_conflicts=False`` was used),
-        later overlays in the list win — but the order is determined by
-        ``get_active_pack_ids()`` which uses ``SELECT DISTINCT`` with
-        no guaranteed order.  Relying on this order is a bug; use
-        conflict detection to prevent it.
+        A single merged dict.  With priorities, the merge is deterministic:
+        lower priority number wins for overlapping keys.  Without priorities,
+        merge order is undefined for overlapping keys (use conflict
+        detection to prevent this).
     """
     if not overlays:
         return {}
 
     from .team_config import deep_merge
 
+    sorted_overlays = overlays
+    if priorities is not None:
+        # Sort by priority descending — highest number (lowest precedence) first.
+        # deep_merge(base, overlay) → overlay wins, so the last overlay applied
+        # (lowest priority number = highest precedence) wins.
+        sorted_overlays = sorted(
+            overlays,
+            key=lambda pair: priorities.get(pair[0], 50),
+            reverse=True,
+        )
+
     merged: dict[str, Any] = {}
-    for _label, overlay in overlays:
+    for _label, overlay in sorted_overlays:
         merged = deep_merge(merged, overlay)
     return merged
 
@@ -254,16 +307,20 @@ def merge_pack_overlays(
 def detect_overlay_conflicts(
     existing_overlays: list[tuple[str, dict[str, Any]]],
     new_overlay: tuple[str, dict[str, Any]],
+    *,
+    new_priority: int | None = None,
+    existing_priorities: dict[str, int] | None = None,
 ) -> list[str]:
     """Find dot-paths where *new_overlay* conflicts with *existing_overlays*.
 
-    A conflict is a dot-path set by both the new overlay and an existing one
-    (regardless of whether the values match — "forbid overlaps" policy).
+    Conflict policy (priority-aware):
 
-    This is called during ``pack attach`` to prevent two packs from setting
-    the same configuration key.  The strict policy avoids precedence
-    surprises: rather than silently picking one value, we force the user
-    to choose which pack should own the key.
+    - If *new_priority* and *existing_priorities* are both provided,
+      overlapping keys are only conflicts when the two packs share the
+      same priority.  Different priorities are allowed — the lower number
+      wins at merge time.
+    - If priority info is not provided (backward compat), **any** overlap
+      is a conflict ("forbid overlaps" — the pre-priority behavior).
 
     Parameters
     ----------
@@ -272,6 +329,13 @@ def detect_overlay_conflicts(
         :func:`collect_pack_overlays`).
     new_overlay:
         The ``(pack_label, overlay_dict)`` pair for the pack being attached.
+    new_priority:
+        Priority of the pack being attached.  ``None`` falls back to
+        strict "forbid overlaps" mode.
+    existing_priorities:
+        ``{pack_label: priority}`` map for already-attached packs, from
+        :func:`~anteroom.services.pack_attachments.get_attachment_priorities`.
+        ``None`` falls back to strict mode.
 
     Returns
     -------
@@ -284,18 +348,35 @@ def detect_overlay_conflicts(
     - Only detects **cross-pack** conflicts.  A single pack with multiple
       overlays that set the same key is allowed (intra-pack conflict).
     - List-valued keys are compared at the list level, not element-by-element.
-      Two packs that both set ``mcp_servers`` will conflict even if their
-      lists contain different server entries.
+      Two packs that both set ``mcp_servers`` will conflict at the same
+      priority even if their lists contain different server entries.
     """
     new_label, new_dict = new_overlay
     new_paths = set(flatten_to_dot_paths(new_dict).keys())
+    use_priorities = new_priority is not None and existing_priorities is not None
 
     conflicts: list[str] = []
     for existing_label, existing_dict in existing_overlays:
         existing_paths = set(flatten_to_dot_paths(existing_dict).keys())
         overlap = new_paths & existing_paths
+        if not overlap:
+            continue
+
+        if use_priorities:
+            existing_pri = existing_priorities.get(existing_label, 50)
+            if existing_pri != new_priority:
+                # Different priorities — lower number wins at merge time.
+                # Not a conflict.
+                continue
+
         for path in sorted(overlap):
-            conflicts.append(f"'{path}' is set by both {existing_label} and {new_label}")
+            if use_priorities:
+                conflicts.append(
+                    f"'{path}' is set by both {existing_label} and {new_label}"
+                    f" (both at priority {new_priority})"
+                )
+            else:
+                conflicts.append(f"'{path}' is set by both {existing_label} and {new_label}")
 
     return conflicts
 
@@ -363,3 +444,174 @@ def track_config_sources(
         for dot_path in flatten_to_dot_paths(raw):
             sources[dot_path] = layer_name
     return sources
+
+
+# ---------------------------------------------------------------------------
+# Generalized artifact conflict detection (all artifact types)
+# ---------------------------------------------------------------------------
+
+
+def collect_pack_artifact_names(
+    db: ThreadSafeConnection,
+    pack_ids: list[str],
+) -> dict[str, list[tuple[str, str]]]:
+    """Collect ``{type/name: [(pack_label, fqn), ...]}`` for all artifacts in given packs.
+
+    Groups artifacts by their user-facing identifier (``type/name``), which
+    is the level at which collisions matter.  Two packs with
+    ``@ns-a/skill/deploy`` and ``@ns-b/skill/deploy`` both expose ``/deploy``
+    to the user — that's a collision even though their FQNs differ.
+
+    Parameters
+    ----------
+    db:
+        Thread-safe SQLite connection.
+    pack_ids:
+        Pack IDs to collect artifacts for.
+
+    Returns
+    -------
+    dict[str, list[tuple[str, str]]]
+        Map from ``type/name`` to a list of ``(pack_label, fqn)`` pairs.
+        Only entries with 2+ items represent actual multi-pack presence.
+    """
+    import sqlite3
+
+    if not pack_ids:
+        return {}
+
+    names: dict[str, list[tuple[str, str]]] = {}
+
+    for pack_id in pack_ids:
+        row = db.execute("SELECT namespace, name FROM packs WHERE id = ?", (pack_id,)).fetchone()
+        if not row:
+            continue
+        ns = row[0] if isinstance(row, (tuple, list)) else row["namespace"]
+        nm = row[1] if isinstance(row, (tuple, list)) else row["name"]
+        label = f"{ns}/{nm}"
+
+        try:
+            art_rows = db.execute(
+                "SELECT a.type, a.name, a.fqn FROM artifacts a "
+                "JOIN pack_artifacts pa ON a.id = pa.artifact_id "
+                "WHERE pa.pack_id = ?",
+                (pack_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            continue
+
+        for art_row in art_rows:
+            a_type = art_row[0] if isinstance(art_row, (tuple, list)) else art_row["type"]
+            a_name = art_row[1] if isinstance(art_row, (tuple, list)) else art_row["name"]
+            a_fqn = art_row[2] if isinstance(art_row, (tuple, list)) else art_row["fqn"]
+            key = f"{a_type}/{a_name}"
+            names.setdefault(key, []).append((label, a_fqn))
+
+    return names
+
+
+# Artifact types that are inherently additive — multiple packs can provide
+# artifacts with the same type/name and they all apply.  Rules add guidance,
+# instructions add context, MCP server configs merge settings, etc.
+# No conflict detection needed for these types.
+_ADDITIVE_ARTIFACT_TYPES = frozenset({"rule", "instruction", "context", "memory", "mcp_server"})
+
+# Artifact types where same name = real collision (two /deploy skills).
+# Only one can be active — the user must detach one pack to resolve.
+# config_overlay is handled separately by detect_overlay_conflicts.
+_EXCLUSIVE_ARTIFACT_TYPES = frozenset({"skill"})
+
+
+def detect_artifact_conflicts(
+    db: ThreadSafeConnection,
+    new_pack_id: str,
+    existing_pack_ids: list[str],
+    *,
+    new_priority: int | None = None,
+    existing_priorities: dict[str, int] | None = None,
+) -> list[str]:
+    """Detect user-facing name collisions for exclusive artifact types.
+
+    Artifact types fall into two categories:
+
+    - **Exclusive** (``skill``, ``mcp_server``): two packs providing the
+      same name is a real conflict — the user can only invoke one
+      ``/deploy`` skill or connect to one MCP server named "github".
+      Same-name collisions are always errors regardless of priority.
+
+    - **Additive** (``rule``, ``instruction``, ``context``, ``memory``):
+      multiple packs providing same-named artifacts is fine — they all
+      apply.  Rules add guidance, instructions add context, etc.
+      No conflict detection.
+
+    ``config_overlay`` artifacts are excluded — they have their own
+    dot-path-level conflict detection in :func:`detect_overlay_conflicts`
+    where priority-based resolution IS supported.
+
+    Parameters
+    ----------
+    db:
+        Thread-safe SQLite connection.
+    new_pack_id:
+        Pack being attached.
+    existing_pack_ids:
+        Already-attached pack IDs.
+    new_priority:
+        Reserved for future use (not used for non-config artifacts).
+    existing_priorities:
+        Reserved for future use (not used for non-config artifacts).
+
+    Returns
+    -------
+    list[str]
+        Human-readable conflict descriptions.  Empty = no conflicts.
+    """
+    import sqlite3
+
+    # Get new pack's artifacts (only exclusive types need checking)
+    new_row = db.execute("SELECT namespace, name FROM packs WHERE id = ?", (new_pack_id,)).fetchone()
+    if not new_row:
+        return []
+    new_ns = new_row[0] if isinstance(new_row, (tuple, list)) else new_row["namespace"]
+    new_nm = new_row[1] if isinstance(new_row, (tuple, list)) else new_row["name"]
+    new_label = f"{new_ns}/{new_nm}"
+
+    try:
+        new_art_rows = db.execute(
+            "SELECT a.type, a.name FROM artifacts a "
+            "JOIN pack_artifacts pa ON a.id = pa.artifact_id "
+            "WHERE pa.pack_id = ? AND a.type != 'config_overlay'",
+            (new_pack_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    if not new_art_rows:
+        return []
+
+    new_keys: set[str] = set()
+    for art_row in new_art_rows:
+        a_type = art_row[0] if isinstance(art_row, (tuple, list)) else art_row["type"]
+        a_name = art_row[1] if isinstance(art_row, (tuple, list)) else art_row["name"]
+        # Only check exclusive types — additive types can coexist
+        if a_type in _ADDITIVE_ARTIFACT_TYPES:
+            continue
+        new_keys.add(f"{a_type}/{a_name}")
+
+    if not new_keys:
+        return []
+
+    # Get existing packs' artifacts
+    existing_names = collect_pack_artifact_names(db, existing_pack_ids)
+
+    conflicts: list[str] = []
+    for key in sorted(new_keys):
+        if key not in existing_names:
+            continue
+        if key.startswith("config_overlay/"):
+            continue
+
+        for existing_label, _existing_fqn in existing_names[key]:
+            conflicts.append(f"{key} provided by both {existing_label} and {new_label}")
+
+    return conflicts
