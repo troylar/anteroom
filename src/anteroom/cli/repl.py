@@ -2128,9 +2128,22 @@ async def _run_repl(
     _toolbar_cache: list[tuple[str, str]] = []
     _toolbar_msg_count: list[int] = [0]
 
+    _cached_git_branch: list[str] = [_detect_git_branch() or ""]
+
     def _toolbar_refresh() -> None:
         """Recompute the cached toolbar content."""
         _toolbar_msg_count[0] = len(ai_messages)
+        # _active_space and _plan_active are defined later in _run_repl but
+        # _toolbar_refresh is only ever called during prompt rendering, which
+        # happens after those variables exist.  Guard with try/except for safety.
+        try:
+            sn = _active_space[0]["name"] if _active_space[0] else ""
+        except NameError:
+            sn = ""
+        try:
+            pm = _plan_active[0]
+        except NameError:
+            pm = False
         _toolbar_cache[:] = renderer.format_status_toolbar(
             model=current_model,
             current_tokens=_estimate_tokens(ai_messages),
@@ -2139,6 +2152,10 @@ async def _run_repl(
             approval_mode=config.safety.approval_mode,
             tool_count=len(all_tool_names),
             mcp_statuses=mcp_manager.get_server_statuses() if mcp_manager else None,
+            working_dir=working_dir,
+            git_branch=_cached_git_branch[0],
+            space_name=sn,
+            plan_mode=pm,
         )
 
     def _bottom_toolbar() -> list[tuple[str, str] | tuple[str, str, Any]]:

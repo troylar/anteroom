@@ -1386,7 +1386,7 @@ def render_welcome(
     console.print(Text("     / \\", style=GOLD))
     console.print(Text("    /   \\", style=GOLD))
     _logo4 = Text()
-    _logo4.append("   /  ", style=GOLD)
+    _logo4.append("   / ", style=GOLD)
     _logo4.append("\u25a0\u25a0", style=BLUE)
     _logo4.append("  \\", style=GOLD)
     _logo4.append("   ")
@@ -1514,6 +1514,7 @@ def format_status_toolbar(
     space_name: str = "",
     plan_mode: bool = False,
     working_dir: str = "",
+    git_branch: str = "",
 ) -> list[tuple[str, str]]:
     """Format the persistent bottom toolbar for the REPL.
 
@@ -1528,7 +1529,10 @@ def format_status_toolbar(
         parts.append(("class:bottom-toolbar.sep", " \u00b7 "))
 
     if working_dir:
-        parts.append(("class:bottom-toolbar.dim", _shorten_path(working_dir)))
+        dir_text = _shorten_path(working_dir)
+        if git_branch:
+            dir_text += f" ({git_branch})"
+        parts.append(("class:bottom-toolbar.dim", dir_text))
         parts.append(("class:bottom-toolbar.sep", " \u00b7 "))
 
     if space_name:
