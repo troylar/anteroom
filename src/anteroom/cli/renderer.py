@@ -1515,6 +1515,7 @@ def format_status_toolbar(
     plan_mode: bool = False,
     working_dir: str = "",
     git_branch: str = "",
+    conversation_name: str = "",
 ) -> list[tuple[str, str]]:
     """Format the persistent bottom toolbar for the REPL.
 
@@ -1532,7 +1533,11 @@ def format_status_toolbar(
         dir_text = _shorten_path(working_dir)
         if git_branch:
             dir_text += f" ({git_branch})"
-        parts.append(("class:bottom-toolbar.dim", dir_text))
+        parts.append(("class:bottom-toolbar.dir", dir_text))
+        parts.append(("class:bottom-toolbar.sep", " \u00b7 "))
+
+    if conversation_name:
+        parts.append(("class:bottom-toolbar.dir", conversation_name))
         parts.append(("class:bottom-toolbar.sep", " \u00b7 "))
 
     if space_name:

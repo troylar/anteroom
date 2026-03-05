@@ -2120,6 +2120,7 @@ async def _run_repl(
             "bottom-toolbar.tokens-warn": "#e8b830",
             "bottom-toolbar.tokens-danger": "#e05050",
             "bottom-toolbar.dim": "#707888",
+            "bottom-toolbar.dir": "#a0a8b8",
             "bottom-toolbar.sep": "#505868",
             "bottom-toolbar.mcp": "#88a0b8",
         }
@@ -2144,6 +2145,10 @@ async def _run_repl(
             pm = _plan_active[0]
         except NameError:
             pm = False
+        try:
+            cn = conv.get("slug") or ""
+        except NameError:
+            cn = ""
         _toolbar_cache[:] = renderer.format_status_toolbar(
             model=current_model,
             current_tokens=_estimate_tokens(ai_messages),
@@ -2156,6 +2161,7 @@ async def _run_repl(
             git_branch=_cached_git_branch[0],
             space_name=sn,
             plan_mode=pm,
+            conversation_name=cn,
         )
 
     def _bottom_toolbar() -> list[tuple[str, str] | tuple[str, str, Any]]:
