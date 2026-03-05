@@ -31,6 +31,7 @@ def _make_db() -> sqlite3.Connection:
         "id TEXT PRIMARY KEY, pack_id TEXT NOT NULL, project_path TEXT, "
         "space_id TEXT DEFAULT NULL, "
         "scope TEXT NOT NULL CHECK(scope IN ('global', 'project', 'space')), "
+        "priority INTEGER NOT NULL DEFAULT 50, "
         "created_at TEXT, UNIQUE(pack_id, project_path), "
         "FOREIGN KEY(pack_id) REFERENCES packs(id) ON DELETE CASCADE, "
         "FOREIGN KEY(space_id) REFERENCES spaces(id) ON DELETE CASCADE)"

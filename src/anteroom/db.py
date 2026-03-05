@@ -269,6 +269,7 @@ CREATE TABLE IF NOT EXISTS pack_attachments (
     project_path TEXT,
     space_id TEXT DEFAULT NULL,
     scope TEXT NOT NULL CHECK(scope IN ('global', 'project', 'space')),
+    priority INTEGER NOT NULL DEFAULT 50,
     created_at TEXT NOT NULL,
     FOREIGN KEY(pack_id) REFERENCES packs(id) ON DELETE CASCADE,
     FOREIGN KEY(space_id) REFERENCES spaces(id) ON DELETE CASCADE
@@ -1072,6 +1073,11 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
         pa_cols = {row[1] for row in conn.execute("PRAGMA table_info(pack_attachments)").fetchall()}
         if "space_id" not in pa_cols:
             conn.execute("ALTER TABLE pack_attachments ADD COLUMN space_id TEXT DEFAULT NULL")
+        # Add priority column to pack_attachments if missing (v1.99.0)
+        # Lower number = higher precedence (priority 10 beats priority 50).
+        # Default 50 gives room for both high-priority (1-49) and low-priority (51-100) packs.
+        if "priority" not in pa_cols:
+            conn.execute("ALTER TABLE pack_attachments ADD COLUMN priority INTEGER NOT NULL DEFAULT 50")
 
     # Spaces tables (v1.74.0)
     conn.execute(
