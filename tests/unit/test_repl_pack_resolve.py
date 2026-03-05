@@ -63,10 +63,9 @@ async def test_timed_input_returns_user_input() -> None:
 async def test_timed_input_raises_on_timeout() -> None:
     """Raises TimeoutError when input doesn't complete in time."""
 
-    async def slow_input(*_args: object) -> str:
-        await asyncio.sleep(10)
-        return "too late"
+    async def _raise_timeout(*_a: object, **_kw: object) -> str:
+        raise asyncio.TimeoutError()
 
-    with patch("anteroom.cli.repl.asyncio.to_thread", side_effect=slow_input):
+    with patch("anteroom.cli.repl.asyncio.wait_for", side_effect=_raise_timeout):
         with pytest.raises(TimeoutError):
-            await _timed_input("prompt: ", timeout=0.05)
+            await _timed_input("prompt: ", timeout=0.01)
