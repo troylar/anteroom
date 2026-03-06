@@ -543,6 +543,138 @@ class TestFullLifecycleThroughAPI:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Tests: Duplicate prevention
+# ---------------------------------------------------------------------------
+
+
+class TestDuplicatePrevention:
+    def test_reinstall_does_not_duplicate_pack_rows(
+        self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
+    ) -> None:
+        """Installing the same pack twice should update, not create a second row (#772)."""
+        pack_dir = _security_pack(tmp_path)
+        r1 = _install_pack(db, pack_dir)
+        r2 = _install_pack(db, pack_dir)
+
+        assert r1["id"] != r2["id"]
+        assert r2["action"] == "updated"
+
+        # Only one pack in DB
+        resp = client.get("/api/packs")
+        assert len(resp.json()) == 1
+
+    def test_reinstall_does_not_duplicate_artifacts(
+        self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
+    ) -> None:
+        """Reinstalling a pack must not create duplicate artifact rows."""
+        pack_dir = _security_pack(tmp_path)
+        _install_pack(db, pack_dir)
+        count_before = db.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0]
+
+        _install_pack(db, pack_dir)
+        count_after = db.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0]
+
+        assert count_after == count_before
+
+    def test_attach_same_pack_global_and_project_rejected(
+        self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
+    ) -> None:
+        """Attaching the same pack globally AND to a project is rejected.
+
+        Global attachments are included in project scope, so the pack's
+        artifacts would conflict with themselves.
+        """
+        _install_pack(db, _security_pack(tmp_path))
+
+        resp1 = client.post("/api/packs/acme/security-baseline/attach", json={})
+        assert resp1.status_code == 200
+
+        resp2 = client.post(
+            "/api/packs/acme/security-baseline/attach",
+            json={"project_path": "/my/project"},
+        )
+        assert resp2.status_code == 409
+
+    def test_attach_different_packs_to_different_scopes(
+        self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
+    ) -> None:
+        """Different packs can be attached at different scopes."""
+        _install_pack(db, _security_pack(tmp_path))
+        _install_pack(db, _python_pack(tmp_path))
+
+        resp1 = client.post("/api/packs/acme/security-baseline/attach", json={})
+        assert resp1.status_code == 200
+
+        resp2 = client.post(
+            "/api/packs/acme/python-dev/attach",
+            json={"project_path": "/my/project"},
+        )
+        assert resp2.status_code == 200
+
+    def test_attach_same_pack_same_project_twice_returns_409(
+        self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
+    ) -> None:
+        """Attaching the same pack to the same project scope twice is rejected."""
+        _install_pack(db, _security_pack(tmp_path))
+
+        resp1 = client.post(
+            "/api/packs/acme/security-baseline/attach",
+            json={"project_path": "/my/project"},
+        )
+        assert resp1.status_code == 200
+
+        resp2 = client.post(
+            "/api/packs/acme/security-baseline/attach",
+            json={"project_path": "/my/project"},
+        )
+        assert resp2.status_code == 409
+
+    def test_reinstall_preserves_attachments(
+        self, tmp_path: Path, db: ThreadSafeConnection, app: FastAPI, client: TestClient
+    ) -> None:
+        """Reinstalling a pack must not lose existing attachments."""
+        pack_dir = _security_pack(tmp_path)
+        _install_pack(db, pack_dir)
+
+        # Attach via API
+        resp = client.post("/api/packs/acme/security-baseline/attach", json={})
+        assert resp.status_code == 200
+
+        # Reinstall (update)
+        _install_pack(db, pack_dir)
+
+        # Attachment should still exist (transferred to new pack ID)
+        resp2 = client.get("/api/packs/acme/security-baseline/attachments")
+        assert resp2.status_code == 200
+        assert len(resp2.json()) == 1
+
+    def test_remove_and_reinstall_is_clean(self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient) -> None:
+        """Removing then reinstalling a pack should leave exactly one pack, no stale data."""
+        pack_dir = _security_pack(tmp_path)
+        _install_pack(db, pack_dir)
+        client.post("/api/packs/acme/security-baseline/attach", json={})
+
+        # Remove
+        client.delete("/api/packs/acme/security-baseline")
+        assert db.execute("SELECT COUNT(*) FROM pack_attachments").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 0
+
+        # Reinstall fresh
+        _install_pack(db, pack_dir)
+        resp = client.get("/api/packs")
+        assert len(resp.json()) == 1
+
+        # Can attach again
+        resp2 = client.post("/api/packs/acme/security-baseline/attach", json={})
+        assert resp2.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Tests: Security (info disclosure, input validation)
+# ---------------------------------------------------------------------------
+
+
 class TestAPISecurityBehavior:
     def test_source_path_never_in_list_response(
         self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
