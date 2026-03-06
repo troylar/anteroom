@@ -513,11 +513,6 @@ def collect_pack_artifact_names(
 # No conflict detection needed for these types.
 _ADDITIVE_ARTIFACT_TYPES = frozenset({"skill", "rule", "instruction", "context", "memory", "mcp_server"})
 
-# Artifact types where same name = real collision (two /deploy skills).
-# Only one can be active — the user must detach one pack to resolve.
-# config_overlay is handled separately by detect_overlay_conflicts.
-_EXCLUSIVE_ARTIFACT_TYPES = frozenset({"skill"})
-
 
 def detect_artifact_conflicts(
     db: ThreadSafeConnection,

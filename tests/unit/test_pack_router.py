@@ -317,7 +317,7 @@ class TestValidatePackPathParams:
         with patch("anteroom.routers.packs.packs") as mock_packs:
             mock_packs.resolve_pack.return_value = (None, [])
             client = TestClient(app)
-            resp = client.get("/api/packs/INVALID-NS/test-pack")
+            resp = client.get("/api/packs/-invalid-ns/test-pack")
             assert resp.status_code == 400
             assert "Invalid namespace" in resp.json()["detail"]
 
@@ -326,7 +326,7 @@ class TestValidatePackPathParams:
         with patch("anteroom.routers.packs.packs") as mock_packs:
             mock_packs.resolve_pack.return_value = (None, [])
             client = TestClient(app)
-            resp = client.get("/api/packs/valid-ns/INVALID-NAME")
+            resp = client.get("/api/packs/valid-ns/-invalid-name")
             assert resp.status_code == 400
             assert "Invalid pack name" in resp.json()["detail"]
 
@@ -344,6 +344,24 @@ class TestValidatePackPathParams:
             client = TestClient(app)
             resp = client.get("/api/packs/valid-ns/valid-name")
             assert resp.status_code == 404
+
+    def test_uppercase_namespace_and_name_pass_validation(self) -> None:
+        """Uppercase names are valid per pack manifest parser regex."""
+        app = _make_app()
+        with patch("anteroom.routers.packs.packs") as mock_packs:
+            mock_packs.resolve_pack.return_value = (None, [])
+            client = TestClient(app)
+            resp = client.get("/api/packs/MyOrg/MyPack")
+            assert resp.status_code == 404  # 404 = validation passed, pack not found
+
+    def test_name_with_dots_passes_validation(self) -> None:
+        """Dotted names are valid per pack manifest parser regex."""
+        app = _make_app()
+        with patch("anteroom.routers.packs.packs") as mock_packs:
+            mock_packs.resolve_pack.return_value = (None, [])
+            client = TestClient(app)
+            resp = client.get("/api/packs/acme.corp/my.pack")
+            assert resp.status_code == 404  # 404 = validation passed, pack not found
 
 
 class TestRemovePackEndpointExtended:

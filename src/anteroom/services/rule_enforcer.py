@@ -110,7 +110,9 @@ def parse_rule(artifact: Artifact) -> ParsedRule | None:
     if not rule_matches:
         return None
 
-    reason = meta.get("reason", artifact.content.strip().split("\n")[0][:120] if artifact.content else artifact.fqn)
+    content_stripped = artifact.content.strip() if artifact.content else ""
+    fallback = content_stripped.split("\n")[0][:120] if content_stripped else artifact.fqn
+    reason = meta.get("reason") or fallback
     return ParsedRule(fqn=artifact.fqn, reason=reason, matches=tuple(rule_matches))
 
 

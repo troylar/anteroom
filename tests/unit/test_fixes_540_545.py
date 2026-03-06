@@ -305,10 +305,18 @@ class TestPackPathParamValidation:
         assert not _SAFE_NAME_RE.match("")
         assert not _SAFE_NAME_RE.match("-starts-with-dash")
         assert not _SAFE_NAME_RE.match("_starts-with-underscore")
-        assert not _SAFE_NAME_RE.match("HAS-CAPS")
         assert not _SAFE_NAME_RE.match("has spaces")
         assert not _SAFE_NAME_RE.match("../traversal")
         assert not _SAFE_NAME_RE.match("a" * 65)  # Too long
+
+    def test_valid_names_with_uppercase_and_dots(self) -> None:
+        """Router regex must accept the same names as the manifest parser."""
+        from anteroom.routers.packs import _SAFE_NAME_RE
+
+        assert _SAFE_NAME_RE.match("HAS-CAPS")
+        assert _SAFE_NAME_RE.match("MyOrg")
+        assert _SAFE_NAME_RE.match("acme.corp")
+        assert _SAFE_NAME_RE.match("Pack.v2")
 
 
 # ---------------------------------------------------------------------------

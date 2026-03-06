@@ -13,7 +13,7 @@ from ..services.pack_sources import list_cached_sources
 
 router = APIRouter(tags=["packs"])
 
-_SAFE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 _SAFE_ID_RE = re.compile(r"^[a-f0-9-]{32,36}$")
 
 

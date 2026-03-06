@@ -108,6 +108,36 @@ class TestParseRule:
         assert result is not None
         assert "Never do this dangerous thing" in result.reason
 
+    def test_reason_fallback_whitespace_only_content(self) -> None:
+        """Whitespace-only content should fall back to fqn for reason."""
+        art = Artifact(
+            fqn="@test/rule/whitespace",
+            type=ArtifactType.RULE,
+            namespace="test",
+            name="whitespace",
+            content="   \n  ",
+            source=ArtifactSource.LOCAL,
+            metadata={"enforce": "hard", "matches": [{"tool": "bash", "pattern": "danger"}]},
+        )
+        result = parse_rule(art)
+        assert result is not None
+        assert result.reason == "@test/rule/whitespace"
+
+    def test_reason_empty_string_in_metadata_uses_fallback(self) -> None:
+        """Empty reason string in metadata should fall through to content/fqn fallback."""
+        art = Artifact(
+            fqn="@test/rule/empty-reason",
+            type=ArtifactType.RULE,
+            namespace="test",
+            name="empty-reason",
+            content="Block dangerous commands",
+            source=ArtifactSource.LOCAL,
+            metadata={"enforce": "hard", "matches": [{"tool": "bash", "pattern": "danger"}], "reason": ""},
+        )
+        result = parse_rule(art)
+        assert result is not None
+        assert result.reason == "Block dangerous commands"
+
 
 class TestCheckRule:
     def test_bash_command_matches(self) -> None:

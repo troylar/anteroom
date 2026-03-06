@@ -377,17 +377,6 @@ def update_pack(
 
     old_pack_id = existing[0] if isinstance(existing, (tuple, list)) else existing["id"]
 
-    # Find artifacts that belong ONLY to the old pack (not shared with others)
-    orphan_rows = db.execute(
-        """SELECT pa.artifact_id FROM pack_artifacts pa
-           WHERE pa.pack_id = ?
-           AND pa.artifact_id NOT IN (
-               SELECT artifact_id FROM pack_artifacts WHERE pack_id != ?
-           )""",
-        (old_pack_id, old_pack_id),
-    ).fetchall()
-    orphan_ids = [r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in orphan_rows]
-
     # Read all new artifact content (I/O outside the transaction)
     now = datetime.now(timezone.utc).isoformat()
     new_pack_id = uuid.uuid4().hex
@@ -406,6 +395,18 @@ def update_pack(
     # Atomic remove-and-reinstall in a single transaction
     artifact_ids: list[str] = []
     with db.transaction():
+        # Find artifacts that belong ONLY to the old pack (not shared with others).
+        # Must be inside the transaction to avoid TOCTOU race with concurrent installs.
+        orphan_rows = db.execute(
+            """SELECT pa.artifact_id FROM pack_artifacts pa
+               WHERE pa.pack_id = ?
+               AND pa.artifact_id NOT IN (
+                   SELECT artifact_id FROM pack_artifacts WHERE pack_id != ?
+               )""",
+            (old_pack_id, old_pack_id),
+        ).fetchall()
+        orphan_ids = [r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in orphan_rows]
+
         # Save existing attachments before removing old pack
         # (DELETE FROM packs CASCADE-deletes pack_attachments)
         attachment_rows = db.execute(
