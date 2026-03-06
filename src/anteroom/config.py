@@ -364,6 +364,7 @@ class CliConfig:
     esc_hint_delay: float = 3.0  # seconds before showing "esc to cancel" hint
     stall_display_threshold: float = 5.0  # seconds of chunk silence before showing "stalled"
     stall_warning_threshold: float = 15.0  # seconds before showing full stall warning
+    stall_throughput_threshold: float = 30.0  # chars/sec below which "slow" indicator shows
     tool_output_max_chars: int = 2000  # max chars per tool result before truncation
     file_reference_max_chars: int = 100_000  # max chars from @file references
     model_context_window: int = 128_000  # model context window size for usage bar
