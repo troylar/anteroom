@@ -1245,6 +1245,10 @@ def load_config(
     except (ValueError, TypeError):
         stall_warning_threshold = 15.0
     try:
+        stall_throughput_threshold = max(0.0, float(cli_raw.get("stall_throughput_threshold", 30.0)))
+    except (ValueError, TypeError):
+        stall_throughput_threshold = 30.0
+    try:
         tool_output_max_chars = max(100, int(cli_raw.get("tool_output_max_chars", 2000)))
     except (ValueError, TypeError):
         tool_output_max_chars = 2000
@@ -1398,6 +1402,7 @@ def load_config(
         esc_hint_delay=esc_hint_delay,
         stall_display_threshold=stall_display_threshold,
         stall_warning_threshold=stall_warning_threshold,
+        stall_throughput_threshold=stall_throughput_threshold,
         tool_output_max_chars=tool_output_max_chars,
         file_reference_max_chars=file_reference_max_chars,
         model_context_window=model_context_window,

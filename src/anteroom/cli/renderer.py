@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import time
+from collections import deque
 from enum import Enum
 from typing import Any
 
@@ -101,7 +102,7 @@ _MID_STREAM_STALL: float = 5.0  # seconds of silence before marking "stalled"
 # Throughput-based stall detection (#774): catches slow-trickle streams where
 # tiny chunks arrive often enough to avoid gap-based detection but overall
 # throughput is extremely low (e.g. 6 chars/sec over 2 minutes).
-_throughput_window: list[tuple[float, int]] = []  # (monotonic_time, chars) entries
+_throughput_window: deque[tuple[float, int]] = deque()  # (monotonic_time, chars) entries
 _THROUGHPUT_STALL_THRESHOLD: float = 30.0  # chars/sec below which "stalled" triggers
 _THROUGHPUT_WINDOW_SECS: float = 10.0  # rolling window size
 _THROUGHPUT_WARMUP_SECS: float = 8.0  # don't trigger throughput stall before this
@@ -852,7 +853,7 @@ def increment_streaming_chars(n: int) -> None:
     _throughput_window.append((now, n))
     cutoff = now - _THROUGHPUT_WINDOW_SECS
     while _throughput_window and _throughput_window[0][0] < cutoff:
-        _throughput_window.pop(0)
+        _throughput_window.popleft()
 
 
 def _phase_elapsed_str() -> str:
