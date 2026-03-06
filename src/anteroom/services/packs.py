@@ -331,20 +331,20 @@ def remove_pack(db: ThreadSafeConnection, namespace: str, name: str) -> bool:
 
     pack_id = pack_row["id"]
 
-    # Find artifacts that belong ONLY to this pack (not shared with others)
-    orphan_rows = db.execute(
-        """SELECT pa.artifact_id FROM pack_artifacts pa
-           WHERE pa.pack_id = ?
-           AND pa.artifact_id NOT IN (
-               SELECT artifact_id FROM pack_artifacts WHERE pack_id != ?
-           )""",
-        (pack_id, pack_id),
-    ).fetchall()
-
-    orphan_ids = [r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in orphan_rows]
-
-    # Remove inside a single transaction
+    # Remove inside a single transaction (orphan detection must be inside
+    # the transaction to avoid TOCTOU race with concurrent pack installs)
     with db.transaction():
+        # Find artifacts that belong ONLY to this pack (not shared with others)
+        orphan_rows = db.execute(
+            """SELECT pa.artifact_id FROM pack_artifacts pa
+               WHERE pa.pack_id = ?
+               AND pa.artifact_id NOT IN (
+                   SELECT artifact_id FROM pack_artifacts WHERE pack_id != ?
+               )""",
+            (pack_id, pack_id),
+        ).fetchall()
+        orphan_ids = [r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in orphan_rows]
+
         db.execute("DELETE FROM pack_attachments WHERE pack_id = ?", (pack_id,))
         db.execute("DELETE FROM packs WHERE id = ?", (pack_id,))
         for art_id in orphan_ids:

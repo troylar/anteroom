@@ -252,6 +252,7 @@ class TestRuleEnforcerEdgeCases:
         result = parse_rule(art)
         assert result is not None
         assert len(result.matches) == 1  # only the valid one
+        assert result.matches[0].pattern.pattern == r"git\s+push\s+--force"
 
     def test_all_bad_regex_returns_none(self) -> None:
         art = _make_rule_artifact(matches=[{"tool": "bash", "pattern": "[bad"}])
