@@ -40,7 +40,7 @@ What happens:
 4. Each artifact gets an `artifacts` row: `(id, fqn, type, namespace, name, content, content_hash, source, metadata, version)`
 5. A `pack_artifacts` junction row links each artifact to its pack
 
-**After install, the pack exists in the DB but is not yet active.** It won't affect the agent until it's attached.
+**After install, the pack exists in the DB but is not yet active.** Config overlays only apply when the pack is attached. Skills, rules, and other artifacts are currently loaded from the DB at session start regardless of attachment state — attachment-aware filtering for non-config artifacts is planned.
 
 ### Reinstall Behavior
 
@@ -113,11 +113,11 @@ When you attach a pack, Anteroom checks for conflicts with already-attached pack
 | Two packs set `safety.approval_mode`, different priorities | Allowed — lower priority number wins |
 | Two packs set `safety.approval_mode`, same priority (50) | **Error** — you must change one pack's priority or detach it |
 
-**Skills** — exclusive (no sharing):
+**Skills** — additive (namespace-aware):
 
 | Situation | Result |
 |-----------|--------|
-| Two packs both define a skill named `deploy` | **Error** — only one `/deploy` can be active. Detach one pack |
+| Two packs both define a skill named `deploy` | Allowed — both are active as `/ns-a/deploy` and `/ns-b/deploy`. Unique names keep their bare form |
 
 **Rules, instructions, context, memory, MCP servers** — additive (all apply):
 
@@ -127,7 +127,7 @@ When you attach a pack, Anteroom checks for conflicts with already-attached pack
 
 This means:
 - You can stack multiple rule packs (security + coding standards + documentation)
-- You cannot stack two packs that define the same skill name
+- You can stack skill packs — colliding names are qualified with their namespace
 - You can stack config overlays if they have different priorities or don't overlap
 
 ### Detach

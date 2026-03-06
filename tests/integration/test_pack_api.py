@@ -577,13 +577,13 @@ class TestDuplicatePrevention:
 
         assert count_after == count_before
 
-    def test_attach_same_pack_global_and_project_rejected(
+    def test_attach_same_pack_global_and_project_allowed(
         self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
     ) -> None:
-        """Attaching the same pack globally AND to a project is rejected.
+        """Attaching the same pack at global and project scope is allowed.
 
-        Global attachments are included in project scope, so the pack's
-        artifacts would conflict with themselves.
+        All non-config artifact types are additive, so the pack's
+        artifacts don't conflict with themselves across scopes.
         """
         _install_pack(db, _security_pack(tmp_path))
 
@@ -594,7 +594,7 @@ class TestDuplicatePrevention:
             "/api/packs/acme/security-baseline/attach",
             json={"project_path": "/my/project"},
         )
-        assert resp2.status_code == 409
+        assert resp2.status_code == 200
 
     def test_attach_different_packs_to_different_scopes(
         self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
@@ -717,10 +717,10 @@ class TestAPIErrorMessages:
         assert resp.status_code == 409
         assert "already attached" in resp.json()["detail"]
 
-    def test_artifact_conflict_error_includes_artifact_info(
+    def test_skill_same_name_different_namespace_is_additive(
         self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
     ) -> None:
-        """Skill name collision should include the conflicting skill name."""
+        """Skills are additive — same name from different namespaces is allowed."""
         _install_pack(
             db,
             _write_pack(
@@ -744,10 +744,7 @@ class TestAPIErrorMessages:
         assert resp1.status_code == 200
 
         resp2 = client.post("/api/packs/acme-b/pack-b/attach", json={})
-        assert resp2.status_code == 409
-        detail = resp2.json()["detail"]
-        assert "Artifact conflict" in detail
-        assert "skill/deploy" in detail
+        assert resp2.status_code == 200
 
 
 class TestAPISecurityBehavior:
@@ -921,8 +918,8 @@ class TestArtifactConflictsAPI:
         resp2 = client.post("/api/packs/org-b/pack-b/attach", json={})
         assert resp2.status_code == 200
 
-    def test_same_skill_name_conflict(self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient) -> None:
-        """Two packs with same skill name should conflict at attach."""
+    def test_same_skill_name_is_additive(self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient) -> None:
+        """Two packs with same skill name are additive — namespace-qualified display names."""
         pack_a = _write_pack(
             tmp_path,
             name="pack-a",
@@ -942,8 +939,7 @@ class TestArtifactConflictsAPI:
         assert resp1.status_code == 200
 
         resp2 = client.post("/api/packs/org-b/pack-b/attach", json={})
-        assert resp2.status_code == 409
-        assert "Artifact conflict" in resp2.json()["detail"]
+        assert resp2.status_code == 200
 
     def test_same_skill_name_same_pack_namespace_ok(
         self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
