@@ -193,6 +193,73 @@ class TestBuildSystemPrompt:
             result = _build_system_prompt(config, "/tmp/work", None)
         assert "Do stuff" not in result
 
+    def test_artifact_registry_injects_builtin(self) -> None:
+        """Built-in artifacts are injected with trusted <artifact> tags."""
+        config = MagicMock()
+        config.ai.model = "test-model"
+        art = MagicMock()
+        art.content = "Always be helpful"
+        art.fqn = "@anteroom/instruction/helpful"
+        art.source = "built_in"
+
+        registry = MagicMock()
+        registry.list_all.return_value = [art]
+
+        with patch("anteroom.cli.exec_mode.build_runtime_context", return_value="runtime"):
+            result = _build_system_prompt(config, "/tmp/work", None, artifact_registry=registry)
+        assert "Always be helpful" in result
+        assert "<artifact type=" in result
+        assert "@anteroom/instruction/helpful" in result
+
+    def test_artifact_registry_wraps_untrusted(self) -> None:
+        """Non-built-in artifacts are wrapped via context_trust."""
+        config = MagicMock()
+        config.ai.model = "test-model"
+        art = MagicMock()
+        art.content = "Team rule content"
+        art.fqn = "@team/rule/no-secrets"
+        art.source = "project"
+
+        registry = MagicMock()
+        registry.list_all.return_value = [art]
+
+        with (
+            patch("anteroom.cli.exec_mode.build_runtime_context", return_value="runtime"),
+            patch(
+                "anteroom.services.context_trust.wrap_untrusted",
+                return_value="<wrapped>Team rule content</wrapped>",
+            ) as mock_wrap,
+        ):
+            result = _build_system_prompt(config, "/tmp/work", None, artifact_registry=registry)
+        assert "<wrapped>Team rule content</wrapped>" in result
+        # Called once per artifact type (instruction, rule, context) since
+        # the mock registry returns the same artifact for all types.
+        assert mock_wrap.call_count == 3
+
+    def test_artifact_registry_none_skips(self) -> None:
+        """When artifact_registry is None, no injection happens."""
+        config = MagicMock()
+        config.ai.model = "test-model"
+        with patch("anteroom.cli.exec_mode.build_runtime_context", return_value="runtime"):
+            result = _build_system_prompt(config, "/tmp/work", None, artifact_registry=None)
+        assert "<artifact" not in result
+
+    def test_artifact_empty_content_skipped(self) -> None:
+        """Artifacts with empty/whitespace content are not injected."""
+        config = MagicMock()
+        config.ai.model = "test-model"
+        art = MagicMock()
+        art.content = "   "
+        art.fqn = "@test/instruction/empty"
+        art.source = "built_in"
+
+        registry = MagicMock()
+        registry.list_all.return_value = [art]
+
+        with patch("anteroom.cli.exec_mode.build_runtime_context", return_value="runtime"):
+            result = _build_system_prompt(config, "/tmp/work", None, artifact_registry=registry)
+        assert "<artifact" not in result
+
 
 class TestLoadInstructions:
     def test_global_only(self) -> None:
