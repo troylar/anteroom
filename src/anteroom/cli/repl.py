@@ -1351,6 +1351,13 @@ async def run_cli(
         _artifact_registry.load_from_db(db)
         if _artifact_registry.count:
             skill_registry.load_from_artifacts(_artifact_registry)
+        # Load hard-enforced rules from the registry
+        from ..services.artifacts import ArtifactType as _ArtType
+        from ..services.rule_enforcer import RuleEnforcer
+
+        _rule_enforcer = RuleEnforcer()
+        _rule_enforcer.load_rules(_artifact_registry.list_all(artifact_type=_ArtType.RULE))
+        tool_registry.set_rule_enforcer(_rule_enforcer)
     except Exception:
         pass
 
@@ -2012,8 +2019,9 @@ async def _run_repl(
         "quit",
         "exit",
     ]
-    skill_names = [s.name for s in skill_registry.list_skills()] if skill_registry else []
-    skill_descs = {s.name: s.description for s in skill_registry.list_skills()} if skill_registry else {}
+    skill_descs_list = skill_registry.get_skill_descriptions() if skill_registry else []
+    skill_names = [name for name, _ in skill_descs_list]
+    skill_descs = {name: desc for name, desc in skill_descs_list}
     completer = AnteroomCompleter(commands, skill_names, skill_descs, working_dir, db)
 
     def _rebuild_tools() -> None:
@@ -2505,6 +2513,7 @@ async def _run_repl(
         """Process messages from input_queue, run commands and agent loop."""
         nonlocal conv, ai_messages, is_first_message, tools_openai, all_tool_names
         nonlocal current_model, ai_service, extra_system_prompt, working_dir
+        nonlocal artifact_registry
 
         # -- Plan mode state --
         from .plan import (
@@ -2625,6 +2634,49 @@ async def _run_repl(
 
         def _strip_space_instructions(prompt: str) -> str:
             return re.sub(r"\n*<space_instructions[^>]*>.*?</space_instructions>", "", prompt, flags=re.DOTALL)
+
+        def _refresh_artifact_prompt() -> None:
+            """Rebuild the artifact (rules/instructions/context) section in extra_system_prompt."""
+            nonlocal extra_system_prompt, artifact_registry
+            if artifact_registry is None:
+                return
+            # Strip existing artifact tags (trusted and untrusted)
+            extra_system_prompt = re.sub(r"\n*<artifact [^>]*>.*?</artifact>", "", extra_system_prompt, flags=re.DOTALL)
+            extra_system_prompt = re.sub(
+                r"\n*<untrusted_content [^>]*origin=\"artifact:[^\"]*\"[^>]*>.*?</untrusted_content>",
+                "",
+                extra_system_prompt,
+                flags=re.DOTALL,
+            )
+            # Re-inject from current registry
+            from ..services.artifacts import ArtifactType
+
+            for art_type in (ArtifactType.INSTRUCTION, ArtifactType.RULE, ArtifactType.CONTEXT):
+                artifacts = artifact_registry.list_all(artifact_type=art_type)
+                for art in artifacts:
+                    if art.content.strip():
+                        if art.source == "built_in":
+                            tag = f'<artifact type="{art_type.value}" fqn="{art.fqn}">'
+                            extra_system_prompt += f"\n{tag}\n{art.content}\n</artifact>"
+                        else:
+                            wrapped = wrap_untrusted(
+                                art.content, origin=f"artifact:{art.fqn}", content_type=art_type.value
+                            )
+                            extra_system_prompt += f"\n{wrapped}"
+            # Reload hard-enforced rules into the tool registry's enforcer
+            enforcer = getattr(tool_registry, "_rule_enforcer", None) if tool_registry else None
+            if enforcer is not None:
+                enforcer.load_rules(artifact_registry.list_all(artifact_type=ArtifactType.RULE))
+
+        def _refresh_skill_tools() -> None:
+            """Rebuild invoke_skill tool schema and tab-completion after skill changes."""
+            if not skill_registry:
+                return
+            if config.cli.skills.auto_invoke and tools_openai is not None:
+                tools_openai[:] = [t for t in tools_openai if t.get("function", {}).get("name") != "invoke_skill"]
+                invoke_def = skill_registry.get_invoke_skill_definition()
+                if invoke_def:
+                    tools_openai.append(invoke_def)
 
         # Inject initial space instructions if space is active
         if _active_space[0] and space_instructions:
@@ -2997,12 +3049,16 @@ async def _run_repl(
                     continue
                 elif cmd in ("/skills", "/reload-skills"):
                     if skill_registry:
-                        skills = skill_registry.reload(working_dir)
-                        if skills:
+                        skill_registry.reload(working_dir)
+                        if artifact_registry is not None:
+                            skill_registry.load_from_artifacts(artifact_registry)
+                        descs = skill_registry.get_skill_descriptions()
+                        if descs:
                             renderer.console.print("\n[bold]Available skills:[/bold]")
-                            for s in skills:
-                                src = s.source
-                                renderer.console.print(f"  /{s.name} - {s.description} [{CHROME}]({src})[/{CHROME}]")
+                            for display_name, desc in descs:
+                                sk = skill_registry.get(display_name)
+                                src = sk.source if sk else "unknown"
+                                renderer.console.print(f"  /{display_name} - {desc} [{CHROME}]({src})[/{CHROME}]")
                         else:
                             renderer.console.print(
                                 f"\n[{CHROME}]No skills loaded. Add .yaml files to"
@@ -3021,18 +3077,12 @@ async def _run_repl(
                                 status = f"{sd.skill_count} skill(s)" if sd.exists else "not found"
                                 renderer.console.print(f"  [{CHROME}]{sd.path} ({sd.source}) — {status}[/{CHROME}]")
                         renderer.console.print()
-                        # Rebuild invoke_skill tool schema so LLM sees updated skill list
-                        if config.cli.skills.auto_invoke and tools_openai is not None:
-                            tools_openai[:] = [
-                                t for t in tools_openai if t.get("function", {}).get("name") != "invoke_skill"
-                            ]
-                            invoke_def = skill_registry.get_invoke_skill_definition()
-                            if invoke_def:
-                                tools_openai.append(invoke_def)
+                        _refresh_skill_tools()
                         # Refresh tab-completion skill names and descriptions
+                        descs = skill_registry.get_skill_descriptions()
                         completer.update_skill_names(
-                            [s.name for s in skills],
-                            {s.name: s.description for s in skills},
+                            [n for n, _ in descs],
+                            {n: d for n, d in descs},
                         )
                     continue
                 elif cmd in ("/spaces", "/space"):
@@ -3510,14 +3560,17 @@ async def _run_repl(
                                     renderer.console.print(f"[red]  {err}[/red]")
                                 continue
                             install_result: dict[str, Any] = packs_service.install_pack(db, manifest, pack_path)
+                            action_word = "Updated" if install_result.get("action") == "updated" else "Installed"
                             renderer.console.print(
-                                f"[green]Installed[/green] @{manifest.namespace}/{manifest.name}"
+                                f"[green]{action_word}[/green] @{manifest.namespace}/{manifest.name}"
                                 f" v{manifest.version} ({install_result.get('artifact_count', 0)} artifacts)"
                             )
-                            if _artifact_registry is not None:  # noqa: F821  # type: ignore[name-defined]
-                                _artifact_registry.load_from_db(db)  # noqa: F821  # type: ignore[name-defined]
+                            if artifact_registry is not None:
+                                artifact_registry.load_from_db(db)
                                 if skill_registry is not None:
-                                    skill_registry.load_from_artifacts(_artifact_registry)  # noqa: F821  # type: ignore[name-defined]
+                                    skill_registry.load_from_artifacts(artifact_registry)
+                                _refresh_artifact_prompt()
+                                _refresh_skill_tools()
                         except ValueError as exc:
                             renderer.console.print(f"[red]{exc}[/red]")
                         renderer.console.print()
@@ -3537,6 +3590,12 @@ async def _run_repl(
                         removed = packs_service.remove_pack_by_id(db, _pm["id"])
                         if removed:
                             renderer.console.print(f"[green]Removed[/green] @{ns}/{name}\n")
+                            if artifact_registry is not None:
+                                artifact_registry.load_from_db(db)
+                                if skill_registry is not None:
+                                    skill_registry.load_from_artifacts(artifact_registry)
+                                _refresh_artifact_prompt()
+                                _refresh_skill_tools()
                         else:
                             renderer.console.print(f"[{CHROME}]Pack @{ns}/{name} not found.[/{CHROME}]\n")
 
@@ -3648,6 +3707,12 @@ async def _run_repl(
                         renderer.console.print(
                             f"[green]Attached[/green] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
                         )
+                        if artifact_registry is not None:
+                            artifact_registry.load_from_db(db)
+                            if skill_registry is not None:
+                                skill_registry.load_from_artifacts(artifact_registry)
+                            _refresh_artifact_prompt()
+                            _refresh_skill_tools()
 
                     elif sub == "detach":
                         _detach_rest = parts[2].strip() if len(parts) >= 3 else ""
@@ -3679,6 +3744,12 @@ async def _run_repl(
                             renderer.console.print(
                                 f"[green]Detached[/green] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
                             )
+                            if artifact_registry is not None:
+                                artifact_registry.load_from_db(db)
+                                if skill_registry is not None:
+                                    skill_registry.load_from_artifacts(artifact_registry)
+                                _refresh_artifact_prompt()
+                                _refresh_skill_tools()
                         else:
                             renderer.console.print(
                                 f"[yellow]Not attached:[/yellow] @{rich_escape(ns)}/{rich_escape(name)}\n"

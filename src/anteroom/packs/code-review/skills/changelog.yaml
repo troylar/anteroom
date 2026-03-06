@@ -1,0 +1,16 @@
+name: changelog
+description: Generate a changelog entry from recent commits or code changes
+content: |
+  Generate a user-friendly changelog entry from the recent changes. Structure it as:
+
+  ## What's New
+  - Feature highlights written for end users, not developers
+
+  ## Bug Fixes
+  - What was broken and that it's now fixed
+
+  ## Improvements
+  - Performance, UX, or quality-of-life improvements
+
+  Write in plain language. Skip internal refactors unless they affect users.
+  Include issue references where applicable.

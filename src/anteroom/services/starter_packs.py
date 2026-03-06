@@ -25,11 +25,16 @@ _PACKS_ROOT = Path(__file__).resolve().parent.parent / "packs"
 
 STARTER_PACK_NAMES = ("python-dev", "security-baseline")
 
+# Example packs ship with Anteroom but are NOT auto-installed.
+# Users discover them via ``list_example_packs()`` / ``aroom pack list --available``
+# and install manually (e.g. ``aroom pack install --built-in code-review``).
+EXAMPLE_PACK_NAMES = ("code-review", "writing-assistant", "strict-safety")
 
-def list_starter_packs() -> list[dict[str, str]]:
-    """Return metadata for all available starter packs (without installing)."""
+
+def _scan_packs(names: tuple[str, ...]) -> list[dict[str, str]]:
+    """Return metadata for built-in packs matching *names*."""
     results: list[dict[str, str]] = []
-    for pack_name in STARTER_PACK_NAMES:
+    for pack_name in names:
         pack_dir = _PACKS_ROOT / pack_name
         manifest_path = pack_dir / "pack.yaml"
         if not manifest_path.is_file():
@@ -47,6 +52,31 @@ def list_starter_packs() -> list[dict[str, str]]:
         except ValueError:
             continue
     return results
+
+
+def list_starter_packs() -> list[dict[str, str]]:
+    """Return metadata for auto-installed starter packs."""
+    return _scan_packs(STARTER_PACK_NAMES)
+
+
+def list_example_packs() -> list[dict[str, str]]:
+    """Return metadata for example packs that ship with Anteroom but require manual install."""
+    return _scan_packs(EXAMPLE_PACK_NAMES)
+
+
+def list_all_built_in_packs() -> list[dict[str, str]]:
+    """Return metadata for all packs that ship with Anteroom (starter + example)."""
+    return _scan_packs(STARTER_PACK_NAMES + EXAMPLE_PACK_NAMES)
+
+
+def get_built_in_pack_path(name: str) -> Path | None:
+    """Return the on-disk path for a built-in pack, or None if not found."""
+    pack_dir = _PACKS_ROOT / name
+    if not pack_dir.resolve().is_relative_to(_PACKS_ROOT):
+        return None
+    if (pack_dir / "pack.yaml").is_file():
+        return pack_dir
+    return None
 
 
 def install_starter_packs(

@@ -243,7 +243,48 @@ class TestToolTierSafety:
         reg.set_safety_config(SafetyConfig(denied_tools=["bash"]), working_dir="/tmp")
         result = await reg.call_tool("bash", {"command": "echo hello"})
         assert result.get("safety_blocked") is True
-        assert "blocked by configuration" in result.get("error", "")
+        assert "denied tools list" in result.get("error", "")
+
+    @pytest.mark.asyncio
+    async def test_hard_rules_enforced_when_safety_disabled(self) -> None:
+        """Hard pack rules must fire even when safety.enabled is False."""
+        from unittest.mock import MagicMock
+
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        # Safety disabled
+        reg.set_safety_config(SafetyConfig(enabled=False), working_dir="/tmp")
+
+        enforcer = MagicMock()
+        enforcer.check_tool_call.return_value = (True, "no rm -rf allowed", "@team/rule/no-rm")
+        reg.set_rule_enforcer(enforcer)
+
+        result = await reg.call_tool("bash", {"command": "rm -rf /"})
+        assert result.get("safety_blocked") is True
+        assert "Blocked by rule @team/rule/no-rm" in result.get("error", "")
+        assert "no rm -rf allowed" in result.get("error", "")
+
+    @pytest.mark.asyncio
+    async def test_hard_rule_reason_preserved_in_call_tool(self) -> None:
+        """The rule-specific reason must appear in the error, not a generic message."""
+        from unittest.mock import MagicMock
+
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
+
+        enforcer = MagicMock()
+        enforcer.check_tool_call.return_value = (True, "production writes forbidden", "@ops/rule/no-prod-write")
+        reg.set_rule_enforcer(enforcer)
+
+        result = await reg.call_tool("write_file", {"path": "/prod/data", "content": "x"})
+        assert result.get("safety_blocked") is True
+        assert result["_approval_decision"] == "hard_denied"
+        assert "Blocked by rule @ops/rule/no-prod-write: production writes forbidden" == result["error"]
 
     @pytest.mark.asyncio
     async def test_allowed_tool_skips_approval(self) -> None:
@@ -369,6 +410,80 @@ class TestToolTierSafety:
         assert verdict is not None
         assert verdict.hard_denied is True
         assert "disabled" in verdict.reason
+
+
+class TestRuleEnforcerIntegration:
+    """Test ToolRegistry.check_safety with RuleEnforcer (#773)."""
+
+    def test_hard_rule_blocks_tool(self) -> None:
+        from anteroom.config import SafetyConfig
+        from anteroom.services.artifacts import Artifact, ArtifactSource, ArtifactType
+        from anteroom.services.rule_enforcer import RuleEnforcer
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(), working_dir="/tmp")
+
+        enforcer = RuleEnforcer()
+        art = Artifact(
+            fqn="@team/rule/no-main-push",
+            type=ArtifactType.RULE,
+            namespace="team",
+            name="no-main-push",
+            content="Never push to main",
+            source=ArtifactSource.TEAM,
+            metadata={
+                "enforce": "hard",
+                "matches": [{"tool": "bash", "pattern": r"git\s+push.*main"}],
+                "reason": "Direct pushes to main are prohibited",
+            },
+        )
+        enforcer.load_rules([art])
+        reg.set_rule_enforcer(enforcer)
+
+        verdict = reg.check_safety("bash", {"command": "git push origin main"})
+        assert verdict is not None
+        assert verdict.hard_denied is True
+        assert "no-main-push" in verdict.reason
+
+    def test_non_matching_rule_allows_tool(self) -> None:
+        from anteroom.config import SafetyConfig
+        from anteroom.services.artifacts import Artifact, ArtifactSource, ArtifactType
+        from anteroom.services.rule_enforcer import RuleEnforcer
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(approval_mode="auto"), working_dir="/tmp")
+
+        enforcer = RuleEnforcer()
+        art = Artifact(
+            fqn="@team/rule/no-main-push",
+            type=ArtifactType.RULE,
+            namespace="team",
+            name="no-main-push",
+            content="Never push to main",
+            source=ArtifactSource.TEAM,
+            metadata={
+                "enforce": "hard",
+                "matches": [{"tool": "bash", "pattern": r"git\s+push.*main"}],
+                "reason": "Direct pushes to main are prohibited",
+            },
+        )
+        enforcer.load_rules([art])
+        reg.set_rule_enforcer(enforcer)
+
+        verdict = reg.check_safety("bash", {"command": "git status"})
+        assert verdict is None  # Auto mode, non-matching — no verdict
+
+    def test_no_enforcer_set_no_block(self) -> None:
+        from anteroom.config import SafetyConfig
+
+        reg = ToolRegistry()
+        register_default_tools(reg, working_dir="/tmp")
+        reg.set_safety_config(SafetyConfig(approval_mode="auto"), working_dir="/tmp")
+        # No rule enforcer set — should not block
+        verdict = reg.check_safety("bash", {"command": "git push --force main"})
+        assert verdict is None
 
 
 class TestApprovalDecisionAudit:

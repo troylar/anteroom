@@ -20,7 +20,7 @@ prompt: |
   Anteroom loads configuration from multiple layers, merged in this order (later wins):
 
   ```
-  defaults < team config < space config < personal config < env vars < CLI flags
+  defaults < team config < packs < personal config < space config < env vars < CLI flags
   ```
 
   | Layer            | Location                                    | Purpose                                  |
@@ -582,7 +582,7 @@ prompt: |
   | Type | Purpose |
   |------|---------|
   | skill | Reusable prompt template (`/skill-name`) |
-  | rule | Always-on instruction injected every turn |
+  | rule | Always-on instruction injected every turn (supports `enforce: hard` to block tool calls) |
   | instruction | Static system prompt context |
   | context | Dynamic per-turn reference material |
   | memory | Persistent cross-session knowledge |
@@ -598,13 +598,13 @@ prompt: |
 
   ### Pack Commands
   - `aroom pack list` — list installed packs
-  - `aroom pack install PATH [--project]` — install from directory
+  - `aroom pack install PATH [--project] [--attach] [--priority N]` — install from directory
   - `aroom pack show NAMESPACE/NAME` — show pack details
   - `aroom pack remove NAMESPACE/NAME` — remove pack
   - `aroom pack update PATH [--project]` — update existing pack
   - `aroom pack sources` — list configured pack sources
   - `aroom pack refresh` — manually refresh all sources
-  - `aroom pack attach NAMESPACE/NAME [--project]` — attach pack to scope
+  - `aroom pack attach NAMESPACE/NAME [--project] [--priority N]` — attach pack to scope
   - `aroom pack detach NAMESPACE/NAME [--project]` — detach pack from scope
   - `aroom pack add-source URL` — add a git pack source to config
 
@@ -632,6 +632,30 @@ prompt: |
       branch: main           # default: main
       refresh_interval: 30   # minutes; 0 = manual only; min: 5
   ```
+
+  ### Built-in Example Packs
+  Anteroom ships with example packs ready to install manually:
+  - `code-review` — commit message rules, PR description rules, review and changelog skills
+  - `writing-assistant` — proofread, rewrite, and summarize skills
+  - `strict-safety` — config overlay with strict defaults, rules blocking destructive commands
+
+  Install with:
+  ```
+  PACK_PATH=$(python -c "from anteroom.services.starter_packs import get_built_in_pack_path; print(get_built_in_pack_path('code-review'))")
+  aroom pack install "$PACK_PATH" --attach
+  ```
+
+  ### Rule Enforcement
+  Rules support two enforcement levels via `enforce` metadata:
+  - `soft` (default) — injected into system prompt as guidance; AI may deviate
+  - `hard` — checked at the tool execution layer; matching tool calls are **blocked** regardless of user override
+
+  Hard rules use `matches` patterns: tool name + regex against arguments.
+
+  ### Namespace-Aware Skill Resolution
+  Pack-sourced skills include a namespace (e.g., `acme/review`). If a skill name is unique
+  across all packs, you can invoke it without the namespace prefix (`/review`). If multiple
+  packs define the same skill name, you must qualify it (`/acme/review`).
 
   ### Health Check Categories
   config_conflict (ERROR), skill_collision (WARN), shadow (INFO),

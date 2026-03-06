@@ -23,9 +23,9 @@ def _validate_project_path(project_path: str | None) -> None:
     """Reject project paths with traversal components."""
     if project_path is None:
         return
-    from pathlib import PurePosixPath
+    from pathlib import PurePath
 
-    parts = PurePosixPath(project_path).parts
+    parts = PurePath(project_path).parts
     if ".." in parts:
         msg = "project_path must not contain '..' components"
         raise ValueError(msg)
@@ -136,9 +136,9 @@ def attach_pack(
                     )
                     raise ValueError(msg)
 
-        # 2. All other artifact type/name collisions (skill, rule, etc.)
-        # Non-config artifacts always conflict on same name — priority
-        # doesn't help because the artifact loader doesn't support shadowing.
+        # 2. Non-config artifact collisions (currently all additive — no conflicts).
+        # Skills use namespace-qualified display names on collision.
+        # This check remains as a guard for any future exclusive types.
         art_conflicts = detect_artifact_conflicts(db, pack_id, active_ids)
         if art_conflicts:
             msg = (
@@ -273,12 +273,12 @@ def list_attachments_for_pack(
 ) -> list[dict[str, Any]]:
     """List all attachments for a specific pack."""
     rows = db.execute(
-        """SELECT id, pack_id, project_path, scope, priority, created_at
+        """SELECT id, pack_id, project_path, space_id, scope, priority, created_at
            FROM pack_attachments WHERE pack_id = ?
            ORDER BY priority, scope, project_path""",
         (pack_id,),
     ).fetchall()
-    keys = ("id", "pack_id", "project_path", "scope", "priority", "created_at")
+    keys = ("id", "pack_id", "project_path", "space_id", "scope", "priority", "created_at")
     return [dict(r) if isinstance(r, sqlite3.Row) else {k: v for k, v in zip(keys, r)} for r in rows]
 
 

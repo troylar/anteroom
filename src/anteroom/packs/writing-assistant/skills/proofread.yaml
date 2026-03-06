@@ -1,0 +1,13 @@
+name: proofread
+description: Check text for grammar, spelling, and style issues
+content: |
+  Proofread the provided text. Check for:
+
+  1. **Grammar** — subject-verb agreement, tense consistency, pronoun reference
+  2. **Spelling** — typos, commonly confused words (their/there/they're)
+  3. **Punctuation** — commas, semicolons, apostrophes, quotation marks
+  4. **Style** — repeated words, awkward phrasing, inconsistent formatting
+  5. **Clarity** — ambiguous sentences, missing context
+
+  For each issue, show the original text, the correction, and a brief explanation.
+  If the text is clean, say so. Don't invent issues.

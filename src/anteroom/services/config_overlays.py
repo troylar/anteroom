@@ -34,14 +34,12 @@ Artifact conflict model
 
 Non-config artifacts are categorized by merge behavior:
 
-- **Exclusive** (``skill``): same name from two packs is always a
-  conflict.  Only one ``/deploy`` skill can be active — the user must
-  detach one pack.  Priority does not help here.
-
-- **Additive** (``rule``, ``instruction``, ``context``, ``memory``,
-  ``mcp_server``): same name from multiple packs is fine — they all
-  apply.  Rules add guidance, instructions add context, MCP server
-  configs merge settings.
+- **Additive** (``skill``, ``rule``, ``instruction``, ``context``,
+  ``memory``, ``mcp_server``): same name from multiple packs is fine.
+  Skills with colliding names are resolved via namespace-qualified
+  display names (e.g. ``/team-a/deploy`` vs ``/team-b/deploy``).
+  Rules add guidance, instructions add context, MCP server configs
+  merge settings.
 
 - **Config overlay**: uses the priority-based merge model above.
 
@@ -362,7 +360,7 @@ def detect_overlay_conflicts(
         if not overlap:
             continue
 
-        if use_priorities:
+        if use_priorities and existing_priorities is not None:
             existing_pri = existing_priorities.get(existing_label, 50)
             if existing_pri != new_priority:
                 # Different priorities — lower number wins at merge time.
@@ -513,12 +511,7 @@ def collect_pack_artifact_names(
 # artifacts with the same type/name and they all apply.  Rules add guidance,
 # instructions add context, MCP server configs merge settings, etc.
 # No conflict detection needed for these types.
-_ADDITIVE_ARTIFACT_TYPES = frozenset({"rule", "instruction", "context", "memory", "mcp_server"})
-
-# Artifact types where same name = real collision (two /deploy skills).
-# Only one can be active — the user must detach one pack to resolve.
-# config_overlay is handled separately by detect_overlay_conflicts.
-_EXCLUSIVE_ARTIFACT_TYPES = frozenset({"skill"})
+_ADDITIVE_ARTIFACT_TYPES = frozenset({"skill", "rule", "instruction", "context", "memory", "mcp_server"})
 
 
 def detect_artifact_conflicts(
@@ -531,16 +524,10 @@ def detect_artifact_conflicts(
 ) -> list[str]:
     """Detect user-facing name collisions for exclusive artifact types.
 
-    Artifact types fall into two categories:
-
-    - **Exclusive** (``skill``): two packs providing the same name is a
-      real conflict — the user can only invoke one ``/deploy`` skill.
-      Same-name collisions are always errors regardless of priority.
-
-    - **Additive** (``rule``, ``instruction``, ``context``, ``memory``,
-      ``mcp_server``): multiple packs providing same-named artifacts is
-      fine — they all apply.  Rules add guidance, MCP servers merge
-      configs, etc.  No conflict detection.
+    All non-config artifact types (``skill``, ``rule``, ``instruction``,
+    ``context``, ``memory``, ``mcp_server``) are additive — same-name
+    artifacts from multiple packs coexist.  Skills use namespace-qualified
+    display names on collision (``/team-a/deploy`` vs ``/team-b/deploy``).
 
     ``config_overlay`` artifacts are excluded — they have their own
     dot-path-level conflict detection in :func:`detect_overlay_conflicts`

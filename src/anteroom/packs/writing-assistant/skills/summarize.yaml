@@ -1,0 +1,11 @@
+name: summarize
+description: Summarize a document or text into key points
+content: |
+  Summarize the provided text. Produce:
+
+  1. **One-line summary** — the core point in a single sentence
+  2. **Key points** — 3-5 bullet points covering the main ideas
+  3. **Action items** — any tasks, decisions, or follow-ups mentioned
+
+  Be concise. Preserve the original meaning without adding interpretation.
+  If the text is technical, keep technical terms but explain jargon.

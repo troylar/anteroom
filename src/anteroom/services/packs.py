@@ -229,12 +229,23 @@ def install_pack(
 ) -> dict[str, Any]:
     """Install a pack from a local directory.
 
+    If a pack with the same namespace/name already exists, it is updated
+    atomically (remove old + reinstall).  Otherwise a fresh row is created.
+
     Upserts all artifacts, creates the pack DB row, and links them via
     ``pack_artifacts``. If *project_dir* is given, copies the pack
     directory into ``.anteroom/packs/<namespace>/<name>/``.
 
     Returns a dict with pack info and installed artifact count.
+    The ``"action"`` key is ``"installed"`` or ``"updated"``.
     """
+    # If the pack already exists, delegate to update_pack for atomic replace
+    existing = _get_pack_row(db, manifest.namespace, manifest.name)
+    if existing:
+        result = update_pack(db, manifest, pack_dir, project_dir=project_dir)
+        result["action"] = "updated"
+        return result
+
     now = datetime.now(timezone.utc).isoformat()
     pack_id = uuid.uuid4().hex
 
@@ -305,6 +316,7 @@ def install_pack(
         "version": manifest.version,
         "artifact_count": len(artifact_ids),
         "skipped_artifacts": skipped,
+        "action": "installed",
     }
 
 
@@ -319,20 +331,21 @@ def remove_pack(db: ThreadSafeConnection, namespace: str, name: str) -> bool:
 
     pack_id = pack_row["id"]
 
-    # Find artifacts that belong ONLY to this pack (not shared with others)
-    orphan_rows = db.execute(
-        """SELECT pa.artifact_id FROM pack_artifacts pa
-           WHERE pa.pack_id = ?
-           AND pa.artifact_id NOT IN (
-               SELECT artifact_id FROM pack_artifacts WHERE pack_id != ?
-           )""",
-        (pack_id, pack_id),
-    ).fetchall()
-
-    orphan_ids = [r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in orphan_rows]
-
-    # Remove inside a single transaction
+    # Remove inside a single transaction (orphan detection must be inside
+    # the transaction to avoid TOCTOU race with concurrent pack installs)
     with db.transaction():
+        # Find artifacts that belong ONLY to this pack (not shared with others)
+        orphan_rows = db.execute(
+            """SELECT pa.artifact_id FROM pack_artifacts pa
+               WHERE pa.pack_id = ?
+               AND pa.artifact_id NOT IN (
+                   SELECT artifact_id FROM pack_artifacts WHERE pack_id != ?
+               )""",
+            (pack_id, pack_id),
+        ).fetchall()
+        orphan_ids = [r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in orphan_rows]
+
+        db.execute("DELETE FROM pack_attachments WHERE pack_id = ?", (pack_id,))
         db.execute("DELETE FROM packs WHERE id = ?", (pack_id,))
         for art_id in orphan_ids:
             delete_artifact(db, art_id, commit=False)
@@ -364,17 +377,6 @@ def update_pack(
 
     old_pack_id = existing[0] if isinstance(existing, (tuple, list)) else existing["id"]
 
-    # Find artifacts that belong ONLY to the old pack (not shared with others)
-    orphan_rows = db.execute(
-        """SELECT pa.artifact_id FROM pack_artifacts pa
-           WHERE pa.pack_id = ?
-           AND pa.artifact_id NOT IN (
-               SELECT artifact_id FROM pack_artifacts WHERE pack_id != ?
-           )""",
-        (old_pack_id, old_pack_id),
-    ).fetchall()
-    orphan_ids = [r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in orphan_rows]
-
     # Read all new artifact content (I/O outside the transaction)
     now = datetime.now(timezone.utc).isoformat()
     new_pack_id = uuid.uuid4().hex
@@ -393,6 +395,25 @@ def update_pack(
     # Atomic remove-and-reinstall in a single transaction
     artifact_ids: list[str] = []
     with db.transaction():
+        # Find artifacts that belong ONLY to the old pack (not shared with others).
+        # Must be inside the transaction to avoid TOCTOU race with concurrent installs.
+        orphan_rows = db.execute(
+            """SELECT pa.artifact_id FROM pack_artifacts pa
+               WHERE pa.pack_id = ?
+               AND pa.artifact_id NOT IN (
+                   SELECT artifact_id FROM pack_artifacts WHERE pack_id != ?
+               )""",
+            (old_pack_id, old_pack_id),
+        ).fetchall()
+        orphan_ids = [r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in orphan_rows]
+
+        # Save existing attachments before removing old pack
+        # (DELETE FROM packs CASCADE-deletes pack_attachments)
+        attachment_rows = db.execute(
+            "SELECT project_path, space_id, scope, priority FROM pack_attachments WHERE pack_id = ?",
+            (old_pack_id,),
+        ).fetchall()
+
         # Remove old pack
         db.execute("DELETE FROM packs WHERE id = ?", (old_pack_id,))
         for art_id in orphan_ids:
@@ -439,6 +460,24 @@ def update_pack(
                 (new_pack_id, art_id),
             )
 
+        # Restore attachments from the old pack
+        for att in attachment_rows:
+            if isinstance(att, (tuple, list)):
+                project_path, space_id, scope, priority = att[0], att[1], att[2], att[3]
+            else:
+                project_path = att["project_path"]
+                space_id = att["space_id"]
+                scope = att["scope"]
+                priority = att["priority"]
+            att_id = uuid.uuid4().hex
+            att_now = datetime.now(timezone.utc).isoformat()
+            db.execute(
+                """INSERT INTO pack_attachments
+                   (id, pack_id, project_path, space_id, scope, priority, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (att_id, new_pack_id, project_path, space_id, scope, priority, att_now),
+            )
+
     # Copy to project if requested (outside transaction — file I/O)
     if project_dir is not None:
         _copy_to_project(pack_dir, manifest, project_dir)
@@ -458,6 +497,7 @@ def update_pack(
         "version": manifest.version,
         "artifact_count": len(artifact_ids),
         "skipped_artifacts": skipped,
+        "action": "updated",
     }
 
 
@@ -576,15 +616,6 @@ def _get_pack_row(db: ThreadSafeConnection, namespace: str, name: str) -> Any:
     ).fetchone()
 
 
-def _get_pack_rows(db: ThreadSafeConnection, namespace: str, name: str) -> list[Any]:
-    """Fetch all pack rows matching namespace and name."""
-    return db.execute(
-        "SELECT id, name, namespace, version, description, source_path, installed_at, updated_at"
-        " FROM packs WHERE namespace = ? AND name = ?",
-        (namespace, name),
-    ).fetchall()
-
-
 def get_pack_by_source_path(db: ThreadSafeConnection, source_path: str) -> dict[str, Any] | None:
     """Get a pack by its source_path. Returns None if not found."""
     row = db.execute(
@@ -625,14 +656,12 @@ def resolve_pack(
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """Resolve a pack by namespace/name.
 
-    Returns ``(match, [])`` on unique match, or ``(None, candidates)`` when
-    ambiguous. An empty candidates list with ``None`` match means not found.
+    Returns ``(match, [])`` on unique match, or ``(None, [])`` when not found.
+    With the UNIQUE(namespace, name) constraint, ambiguity is impossible.
     """
-    rows = _get_pack_rows(db, namespace, name)
-    if len(rows) == 1:
-        return _pack_row_to_dict(rows[0]), []
-    if len(rows) > 1:
-        return None, [_pack_row_to_dict(r) for r in rows]
+    row = _get_pack_row(db, namespace, name)
+    if row:
+        return _pack_row_to_dict(row), []
     return None, []
 
 
@@ -643,22 +672,32 @@ def remove_pack_by_id(db: ThreadSafeConnection, pack_id: str) -> bool:
         return False
 
     with db.transaction():
+        # Collect artifact IDs BEFORE deleting the junction rows
         art_rows = db.execute(
             "SELECT artifact_id FROM pack_artifacts WHERE pack_id = ?",
             (pack_id,),
         ).fetchall()
         artifact_ids = [r[0] if isinstance(r, (tuple, list)) else r["artifact_id"] for r in art_rows]
 
+        # Find orphans: artifacts owned ONLY by this pack (not shared with others)
+        orphan_ids: list[str] = []
+        for aid in artifact_ids:
+            ref = db.execute(
+                "SELECT COUNT(*) FROM pack_artifacts WHERE artifact_id = ? AND pack_id != ?",
+                (aid, pack_id),
+            ).fetchone()
+            count = ref[0] if isinstance(ref, (tuple, list)) else ref["COUNT(*)"]
+            if count == 0:
+                orphan_ids.append(aid)
+
+        # Now safe to delete junction rows and pack
         db.execute("DELETE FROM pack_artifacts WHERE pack_id = ?", (pack_id,))
         db.execute("DELETE FROM pack_attachments WHERE pack_id = ?", (pack_id,))
         db.execute("DELETE FROM packs WHERE id = ?", (pack_id,))
 
-        for aid in artifact_ids:
-            ref = db.execute("SELECT COUNT(*) FROM pack_artifacts WHERE artifact_id = ?", (aid,)).fetchone()
-            count = ref[0] if isinstance(ref, (tuple, list)) else ref["COUNT(*)"]
-            if count == 0:
-                db.execute("DELETE FROM artifact_versions WHERE artifact_id = ?", (aid,))
-                db.execute("DELETE FROM artifacts WHERE id = ?", (aid,))
+        # Delete only truly orphaned artifacts
+        for aid in orphan_ids:
+            delete_artifact(db, aid, commit=False)
 
     return True
 

@@ -6,6 +6,7 @@ import logging
 from typing import Any, Callable, Coroutine
 
 from ..config import SafetyConfig
+from ..services.rule_enforcer import RuleEnforcer
 from ..services.tool_rate_limit import ToolRateLimiter
 from .safety import SafetyVerdict, check_bash_command, check_write_path
 from .security import check_hard_block
@@ -43,6 +44,7 @@ class ToolRegistry:
         self._working_dir: str | None = None
         self._session_allowed: set[str] = set()
         self._rate_limiter: ToolRateLimiter | None = None
+        self._rule_enforcer: RuleEnforcer | None = None
 
     def set_confirm_callback(self, callback: ConfirmCallback | None) -> None:
         self._confirm_callback = callback
@@ -64,6 +66,9 @@ class ToolRegistry:
 
     def set_rate_limiter(self, limiter: ToolRateLimiter | None) -> None:
         self._rate_limiter = limiter
+
+    def set_rule_enforcer(self, enforcer: RuleEnforcer | None) -> None:
+        self._rule_enforcer = enforcer
 
     def register(self, name: str, handler: ToolHandler, definition: dict[str, Any]) -> None:
         self._handlers[name] = handler
@@ -92,6 +97,18 @@ class ToolRegistry:
         A verdict with hard_denied=True means the tool is blocked by config (denied_tools
         or per-tool enabled=false) and must be blocked without prompting.
         """
+        # Hard rule enforcement runs unconditionally — even when safety is
+        # disabled — so that ``enforce: hard`` pack rules cannot be bypassed.
+        if self._rule_enforcer is not None:
+            blocked, reason, rule_fqn = self._rule_enforcer.check_tool_call(tool_name, arguments)
+            if blocked:
+                return SafetyVerdict(
+                    needs_approval=True,
+                    reason=f"Blocked by rule {rule_fqn}: {reason}",
+                    tool_name=tool_name,
+                    hard_denied=True,
+                )
+
         config = self._safety_config
         if not config or not config.enabled:
             return None
@@ -216,9 +233,9 @@ class ToolRegistry:
         user_approved_hard_block = False
         if verdict and verdict.needs_approval:
             if verdict.hard_denied:
-                logger.warning("Tool hard-denied by config: %s", name)
+                logger.warning("Tool hard-denied by config: %s — %s", name, verdict.reason)
                 return {
-                    "error": f"Tool '{name}' is blocked by configuration",
+                    "error": verdict.reason,
                     "safety_blocked": True,
                     "_approval_decision": "hard_denied",
                 }

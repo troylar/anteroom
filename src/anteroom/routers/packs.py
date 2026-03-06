@@ -13,8 +13,23 @@ from ..services.pack_sources import list_cached_sources
 
 router = APIRouter(tags=["packs"])
 
-_SAFE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 _SAFE_ID_RE = re.compile(r"^[a-f0-9-]{32,36}$")
+
+
+def _reload_registries(request: Request, db: Any) -> None:
+    """Reload artifact registry, rule enforcer, and skill registry after pack changes."""
+    registry = getattr(request.app.state, "artifact_registry", None)
+    if registry is not None:
+        registry.load_from_db(db)
+    rule_enforcer = getattr(request.app.state, "rule_enforcer", None)
+    if rule_enforcer is not None and registry is not None:
+        from ..services.artifacts import ArtifactType
+
+        rule_enforcer.load_rules(registry.list_all(artifact_type=ArtifactType.RULE))
+    skill_registry = getattr(request.app.state, "skill_registry", None)
+    if skill_registry is not None and registry is not None:
+        skill_registry.load_from_artifacts(registry)
 
 
 def _validate_pack_path_params(namespace: str, name: str) -> None:
@@ -91,6 +106,8 @@ async def refresh_sources(request: Request) -> list[dict[str, Any]]:
 
     worker = PackRefreshWorker(db=db, data_dir=data_dir, sources=sources)
     results = worker.refresh_all()
+    if any(r.changed for r in results):
+        _reload_registries(request, db)
     return [
         {
             "url": r.url,
@@ -108,82 +125,9 @@ class AttachRequest(BaseModel):
     project_path: str | None = None
 
 
-@router.post("/packs/{namespace}/{name}/attach")
-async def attach_pack(request: Request, namespace: str, name: str, body: AttachRequest) -> dict[str, Any]:
-    """Attach a pack to global or project scope."""
-    _validate_pack_path_params(namespace, name)
-    from ..services.pack_attachments import attach_pack as do_attach
-
-    db = request.app.state.db
-    pack = _resolve_or_409(db, namespace, name)
-
-    try:
-        result = do_attach(db, pack["id"], project_path=body.project_path)
-    except ValueError:
-        raise HTTPException(status_code=409, detail="Pack is already attached at this scope")
-    return result
-
-
-@router.delete("/packs/{namespace}/{name}/attach")
-async def detach_pack(
-    request: Request,
-    namespace: str,
-    name: str,
-    project_path: str | None = Query(default=None),
-) -> dict[str, str]:
-    """Detach a pack from global or project scope."""
-    _validate_pack_path_params(namespace, name)
-    from ..services.pack_attachments import detach_pack as do_detach
-
-    db = request.app.state.db
-    pack = _resolve_or_409(db, namespace, name)
-
-    removed = do_detach(db, pack["id"], project_path=project_path)
-    if not removed:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-    return {"status": "detached"}
-
-
-@router.get("/packs/{namespace}/{name}/attachments")
-async def list_pack_attachments(request: Request, namespace: str, name: str) -> list[dict[str, Any]]:
-    """List attachments for a specific pack."""
-    _validate_pack_path_params(namespace, name)
-    from ..services.pack_attachments import list_attachments_for_pack
-
-    db = request.app.state.db
-    pack = _resolve_or_409(db, namespace, name)
-
-    return list_attachments_for_pack(db, pack["id"])
-
-
-@router.delete("/packs/{namespace}/{name}")
-async def remove_pack(request: Request, namespace: str, name: str) -> dict[str, str]:
-    """Remove an installed pack."""
-    _validate_pack_path_params(namespace, name)
-    db = request.app.state.db
-    pack = _resolve_or_409(db, namespace, name)
-    removed = packs.remove_pack_by_id(db, pack["id"])
-    if not removed:
-        raise HTTPException(status_code=404, detail="Pack not found")
-    registry = getattr(request.app.state, "artifact_registry", None)
-    if registry is not None:
-        registry.load_from_db(db)
-    return {"status": "removed"}
-
-
-@router.get("/packs/{namespace}/{name}")
-async def get_pack(request: Request, namespace: str, name: str) -> dict[str, Any]:
-    """Get a pack with its full artifact list."""
-    _validate_pack_path_params(namespace, name)
-    db = request.app.state.db
-    resolved = _resolve_or_409(db, namespace, name)
-    pack = packs.get_pack_by_id(db, resolved["id"])
-    if not pack:
-        raise HTTPException(status_code=404, detail="Pack not found")
-    pack.pop("source_path", None)
-    for art in pack.get("artifacts", []):
-        art.pop("content", None)
-    return pack
+# --- by-id routes MUST come before {namespace}/{name} wildcard routes ---
+# FastAPI uses first-match routing; if the wildcard routes are first,
+# "by-id" is captured as the namespace parameter.
 
 
 @router.get("/packs/by-id/{pack_id}")
@@ -210,7 +154,86 @@ async def remove_pack_by_id(request: Request, pack_id: str) -> dict[str, str]:
     removed = packs.remove_pack_by_id(db, pack_id)
     if not removed:
         raise HTTPException(status_code=404, detail="Pack not found")
-    registry = getattr(request.app.state, "artifact_registry", None)
-    if registry is not None:
-        registry.load_from_db(db)
+    _reload_registries(request, db)
     return {"status": "removed"}
+
+
+# --- {namespace}/{name} wildcard routes ---
+
+
+@router.post("/packs/{namespace}/{name}/attach")
+async def attach_pack(request: Request, namespace: str, name: str, body: AttachRequest) -> dict[str, Any]:
+    """Attach a pack to global or project scope."""
+    _validate_pack_path_params(namespace, name)
+    from ..services.pack_attachments import attach_pack as do_attach
+
+    db = request.app.state.db
+    pack = _resolve_or_409(db, namespace, name)
+
+    try:
+        result = do_attach(db, pack["id"], project_path=body.project_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    _reload_registries(request, db)
+    return result
+
+
+@router.delete("/packs/{namespace}/{name}/attach")
+async def detach_pack(
+    request: Request,
+    namespace: str,
+    name: str,
+    project_path: str | None = Query(default=None),
+) -> dict[str, str]:
+    """Detach a pack from global or project scope."""
+    _validate_pack_path_params(namespace, name)
+    from ..services.pack_attachments import detach_pack as do_detach
+
+    db = request.app.state.db
+    pack = _resolve_or_409(db, namespace, name)
+
+    removed = do_detach(db, pack["id"], project_path=project_path)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    _reload_registries(request, db)
+    return {"status": "detached"}
+
+
+@router.get("/packs/{namespace}/{name}/attachments")
+async def list_pack_attachments(request: Request, namespace: str, name: str) -> list[dict[str, Any]]:
+    """List attachments for a specific pack."""
+    _validate_pack_path_params(namespace, name)
+    from ..services.pack_attachments import list_attachments_for_pack
+
+    db = request.app.state.db
+    pack = _resolve_or_409(db, namespace, name)
+
+    return list_attachments_for_pack(db, pack["id"])
+
+
+@router.delete("/packs/{namespace}/{name}")
+async def remove_pack(request: Request, namespace: str, name: str) -> dict[str, str]:
+    """Remove an installed pack."""
+    _validate_pack_path_params(namespace, name)
+    db = request.app.state.db
+    pack = _resolve_or_409(db, namespace, name)
+    removed = packs.remove_pack_by_id(db, pack["id"])
+    if not removed:
+        raise HTTPException(status_code=404, detail="Pack not found")
+    _reload_registries(request, db)
+    return {"status": "removed"}
+
+
+@router.get("/packs/{namespace}/{name}")
+async def get_pack(request: Request, namespace: str, name: str) -> dict[str, Any]:
+    """Get a pack with its full artifact list."""
+    _validate_pack_path_params(namespace, name)
+    db = request.app.state.db
+    resolved = _resolve_or_409(db, namespace, name)
+    pack = packs.get_pack_by_id(db, resolved["id"])
+    if not pack:
+        raise HTTPException(status_code=404, detail="Pack not found")
+    pack.pop("source_path", None)
+    for art in pack.get("artifacts", []):
+        art.pop("content", None)
+    return pack
