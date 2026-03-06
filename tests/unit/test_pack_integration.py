@@ -991,3 +991,182 @@ class TestEdgeCases:
         art = registry.get("@acme/skill/lint")
         assert art is not None
         assert art.content == "TAMPERED"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Skill registry integration with packs
+# ---------------------------------------------------------------------------
+
+
+class TestSkillRegistryFromPacks:
+    """Verify that skills installed via packs are visible in the SkillRegistry
+    through the artifact bridge (load_from_artifacts)."""
+
+    def test_pack_skills_appear_in_list(
+        self, tmp_path: Path, db: ThreadSafeConnection, registry: ArtifactRegistry
+    ) -> None:
+        from anteroom.cli.skills import SkillRegistry
+
+        _install(db, _python_pack(tmp_path))
+        registry.load_from_db(db)
+
+        skill_reg = SkillRegistry()
+        added = skill_reg.load_from_artifacts(registry)
+        assert added >= 2  # lint and test skills
+
+        names = [s.name for s in skill_reg.list_skills()]
+        assert "lint" in names
+        assert "test" in names
+
+    def test_has_skill_returns_true_for_pack_skills(
+        self, tmp_path: Path, db: ThreadSafeConnection, registry: ArtifactRegistry
+    ) -> None:
+        from anteroom.cli.skills import SkillRegistry
+
+        _install(db, _python_pack(tmp_path))
+        registry.load_from_db(db)
+
+        skill_reg = SkillRegistry()
+        skill_reg.load_from_artifacts(registry)
+
+        assert skill_reg.has_skill("lint") is True
+        assert skill_reg.has_skill("test") is True
+        assert skill_reg.has_skill("nonexistent") is False
+
+    def test_resolve_input_expands_pack_skill(
+        self, tmp_path: Path, db: ThreadSafeConnection, registry: ArtifactRegistry
+    ) -> None:
+        from anteroom.cli.skills import SkillRegistry
+
+        _install(db, _python_pack(tmp_path))
+        registry.load_from_db(db)
+
+        skill_reg = SkillRegistry()
+        skill_reg.load_from_artifacts(registry)
+
+        is_skill, prompt = skill_reg.resolve_input("/lint")
+        assert is_skill is True
+        assert "ruff" in prompt.lower() or len(prompt) > 0
+
+    def test_resolve_input_with_args(
+        self, tmp_path: Path, db: ThreadSafeConnection, registry: ArtifactRegistry
+    ) -> None:
+        from anteroom.cli.skills import SkillRegistry
+
+        # Create a pack with a skill that has {args} placeholder
+        pack_dir = _write_pack(
+            tmp_path,
+            name="args-pack",
+            namespace="test",
+            skill_files={"greet": "Say hello to {args}"},
+        )
+        _install(db, pack_dir)
+        registry.load_from_db(db)
+
+        skill_reg = SkillRegistry()
+        skill_reg.load_from_artifacts(registry)
+
+        is_skill, prompt = skill_reg.resolve_input("/greet world")
+        assert is_skill is True
+        assert "world" in prompt
+
+    def test_get_skill_descriptions_includes_pack_skills(
+        self, tmp_path: Path, db: ThreadSafeConnection, registry: ArtifactRegistry
+    ) -> None:
+        from anteroom.cli.skills import SkillRegistry
+
+        _install(db, _python_pack(tmp_path))
+        registry.load_from_db(db)
+
+        skill_reg = SkillRegistry()
+        skill_reg.load_from_artifacts(registry)
+
+        descriptions = skill_reg.get_skill_descriptions()
+        desc_names = [name for name, _ in descriptions]
+        assert "lint" in desc_names
+        assert "test" in desc_names
+
+    def test_filesystem_skills_take_precedence(
+        self, tmp_path: Path, db: ThreadSafeConnection, registry: ArtifactRegistry
+    ) -> None:
+        """If a filesystem skill and a pack skill share the same name,
+        the filesystem skill takes precedence."""
+        from anteroom.cli.skills import Skill, SkillRegistry
+
+        _install(db, _python_pack(tmp_path))
+        registry.load_from_db(db)
+
+        skill_reg = SkillRegistry()
+        # Pre-load a filesystem skill with the same name
+        skill_reg._skills["lint"] = Skill(
+            name="lint",
+            description="Filesystem lint",
+            prompt="Run filesystem lint check.",
+            source="project",
+        )
+
+        skill_reg.load_from_artifacts(registry)
+        # "lint" should NOT be overwritten; "test" should be added
+        skill = skill_reg.get("lint")
+        assert skill is not None
+        assert skill.source == "project"  # filesystem version retained
+        assert skill_reg.has_skill("test") is True
+
+    def test_invoke_skill_definition_includes_pack_skills(
+        self, tmp_path: Path, db: ThreadSafeConnection, registry: ArtifactRegistry
+    ) -> None:
+        from anteroom.cli.skills import SkillRegistry
+
+        _install(db, _python_pack(tmp_path))
+        registry.load_from_db(db)
+
+        skill_reg = SkillRegistry()
+        skill_reg.load_from_artifacts(registry)
+
+        defn = skill_reg.get_invoke_skill_definition()
+        assert defn is not None
+        enum_values = defn["function"]["parameters"]["properties"]["skill_name"]["enum"]
+        assert "lint" in enum_values
+        assert "test" in enum_values
+
+    def test_multiple_packs_skills_combined(
+        self, tmp_path: Path, db: ThreadSafeConnection, registry: ArtifactRegistry
+    ) -> None:
+        """Skills from multiple packs are all visible in the registry."""
+        from anteroom.cli.skills import SkillRegistry
+
+        _install(db, _security_pack(tmp_path))
+        _install(db, _python_pack(tmp_path))
+        registry.load_from_db(db)
+
+        skill_reg = SkillRegistry()
+        added = skill_reg.load_from_artifacts(registry)
+        assert added >= 3  # security-check + lint + test
+
+        names = [s.name for s in skill_reg.list_skills()]
+        assert "security-check" in names
+        assert "lint" in names
+        assert "test" in names
+
+    def test_skills_cleared_after_pack_removal(
+        self, tmp_path: Path, db: ThreadSafeConnection, registry: ArtifactRegistry
+    ) -> None:
+        """After removing a pack and reloading, its skills disappear."""
+        from anteroom.cli.skills import SkillRegistry
+
+        result = _install(db, _python_pack(tmp_path))
+        registry.load_from_db(db)
+
+        skill_reg = SkillRegistry()
+        skill_reg.load_from_artifacts(registry)
+        assert skill_reg.has_skill("lint") is True
+
+        # Remove pack and reload
+        remove_pack_by_id(db, result["id"])
+        registry.load_from_db(db)
+
+        # Fresh skill registry — pack skills should be gone
+        skill_reg2 = SkillRegistry()
+        skill_reg2.load_from_artifacts(registry)
+        assert skill_reg2.has_skill("lint") is False
+        assert skill_reg2.has_skill("test") is False
