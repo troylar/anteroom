@@ -1724,7 +1724,7 @@ async def _run_one_shot(
                     await asyncio.sleep(0)
                 elif event.kind == "tool_batch_start":
                     if thinking:
-                        await renderer.stop_thinking()
+                        await renderer.stop_thinking(clear=True)
                         thinking = False
                     renderer.render_tool_batch_start(event.data["call_count"])
                 elif event.kind == "tool_call_start":
@@ -4901,7 +4901,7 @@ async def _run_repl(
                             await asyncio.sleep(0)
                         elif event.kind == "tool_batch_start":
                             if thinking:
-                                total_elapsed += await renderer.stop_thinking()
+                                total_elapsed += await renderer.stop_thinking(clear=True)
                                 thinking = False
                             renderer.render_tool_batch_start(event.data["call_count"])
                         elif event.kind == "tool_call_start":
