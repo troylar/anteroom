@@ -2668,6 +2668,16 @@ async def _run_repl(
             if enforcer is not None:
                 enforcer.load_rules(artifact_registry.list_all(artifact_type=ArtifactType.RULE))
 
+        def _refresh_skill_tools() -> None:
+            """Rebuild invoke_skill tool schema and tab-completion after skill changes."""
+            if not skill_registry:
+                return
+            if config.cli.skills.auto_invoke and tools_openai is not None:
+                tools_openai[:] = [t for t in tools_openai if t.get("function", {}).get("name") != "invoke_skill"]
+                invoke_def = skill_registry.get_invoke_skill_definition()
+                if invoke_def:
+                    tools_openai.append(invoke_def)
+
         # Inject initial space instructions if space is active
         if _active_space[0] and space_instructions:
             _inject_space_instructions(_active_space[0], space_instructions)
@@ -3039,7 +3049,10 @@ async def _run_repl(
                     continue
                 elif cmd in ("/skills", "/reload-skills"):
                     if skill_registry:
-                        skills = skill_registry.reload(working_dir)
+                        skill_registry.reload(working_dir)
+                        if artifact_registry is not None:
+                            skill_registry.load_from_artifacts(artifact_registry)
+                        skills = skill_registry.list_skills()
                         if skills:
                             renderer.console.print("\n[bold]Available skills:[/bold]")
                             for s in skills:
@@ -3063,14 +3076,7 @@ async def _run_repl(
                                 status = f"{sd.skill_count} skill(s)" if sd.exists else "not found"
                                 renderer.console.print(f"  [{CHROME}]{sd.path} ({sd.source}) — {status}[/{CHROME}]")
                         renderer.console.print()
-                        # Rebuild invoke_skill tool schema so LLM sees updated skill list
-                        if config.cli.skills.auto_invoke and tools_openai is not None:
-                            tools_openai[:] = [
-                                t for t in tools_openai if t.get("function", {}).get("name") != "invoke_skill"
-                            ]
-                            invoke_def = skill_registry.get_invoke_skill_definition()
-                            if invoke_def:
-                                tools_openai.append(invoke_def)
+                        _refresh_skill_tools()
                         # Refresh tab-completion skill names and descriptions
                         descs = skill_registry.get_skill_descriptions()
                         completer.update_skill_names(
@@ -3563,6 +3569,7 @@ async def _run_repl(
                                 if skill_registry is not None:
                                     skill_registry.load_from_artifacts(artifact_registry)
                                 _refresh_artifact_prompt()
+                                _refresh_skill_tools()
                         except ValueError as exc:
                             renderer.console.print(f"[red]{exc}[/red]")
                         renderer.console.print()
@@ -3587,6 +3594,7 @@ async def _run_repl(
                                 if skill_registry is not None:
                                     skill_registry.load_from_artifacts(artifact_registry)
                                 _refresh_artifact_prompt()
+                                _refresh_skill_tools()
                         else:
                             renderer.console.print(f"[{CHROME}]Pack @{ns}/{name} not found.[/{CHROME}]\n")
 
@@ -3703,6 +3711,7 @@ async def _run_repl(
                             if skill_registry is not None:
                                 skill_registry.load_from_artifacts(artifact_registry)
                             _refresh_artifact_prompt()
+                            _refresh_skill_tools()
 
                     elif sub == "detach":
                         _detach_rest = parts[2].strip() if len(parts) >= 3 else ""
@@ -3739,6 +3748,7 @@ async def _run_repl(
                                 if skill_registry is not None:
                                     skill_registry.load_from_artifacts(artifact_registry)
                                 _refresh_artifact_prompt()
+                                _refresh_skill_tools()
                         else:
                             renderer.console.print(
                                 f"[yellow]Not attached:[/yellow] @{rich_escape(ns)}/{rich_escape(name)}\n"
