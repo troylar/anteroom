@@ -36,7 +36,7 @@ See [Artifact Types](../packs/artifact-types.md) for the full list of additive t
 
 `aroom exec` was missing pack support entirely — no artifact injection, no rule enforcement. Now exec mode loads the full artifact registry and rule enforcer, injects instruction/rule/context artifacts into the system prompt, and enforces hard rules on every tool call. Scripts and CI pipelines get the same safety guarantees as interactive sessions. (#777)
 
-See [CLI — Exec Mode](../cli/exec-mode.md) for usage details.
+See [CLI — Exec Mode](../cli/index.md) for usage details.
 
 #### Example Packs
 
