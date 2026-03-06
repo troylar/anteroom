@@ -7,20 +7,49 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 6, 2026
 
-### v1.100.0
+### v1.100.0 — Packs That Enforce
 
-**New:**
+This release is all about packs. The pack system graduates from "bundle of artifacts" to a real policy enforcement layer — packs can now define rules that the AI **cannot** bypass, skills resolve cleanly when multiple packs collide, and exec mode finally gets the same pack-powered experience as the interactive REPL.
 
-- Hard rule enforcement for packs — `enforce: hard` rules block tool calls unconditionally (#773)
-- Exec mode now loads pack artifacts and enforces rules, matching REPL behavior (#777)
-- Namespace-aware skill resolution for colliding pack skill names (#770)
-- Three example packs: code-review, writing-assistant, strict-safety (#770)
+#### Hard Rule Enforcement
 
-**Fixed:**
+Packs can now include rules with `enforce: hard` metadata. Hard rules are checked on every tool call — before the safety config is even consulted. If safety is disabled, hard rules still fire. This means a team pack like `ops-guardrails` can block production database writes or destructive shell commands regardless of what the user configures locally. (#773)
 
-- Skills from packs now appear in `/skills` immediately after install (#770)
-- NameError crash after `/pack install` resolved (#771)
-- Pack reinstall no longer creates duplicates (#772)
+```yaml
+# In a pack rule artifact
+name: no-prod-writes
+enforce: hard
+match_tools: [bash]
+pattern: "psql.*production"
+reason: "Production database writes require a change ticket"
+```
+
+#### Additive Skills with Namespace Resolution
+
+Previously, if two packs defined a skill with the same name, attach failed with an error. Now all non-config artifact types — skills, rules, instructions, context, memory, MCP servers — are **additive** across packs. When skill names collide, they're displayed with namespace-qualified names (e.g., `ops/deploy` vs `dev/deploy`) so you can tell them apart. No more conflicts, no more "first pack wins." (#770)
+
+#### Exec Mode Parity
+
+`aroom exec` was missing pack support entirely — no artifact injection, no rule enforcement. Now exec mode loads the full artifact registry and rule enforcer, injects instruction/rule/context artifacts into the system prompt, and enforces hard rules on every tool call. Scripts and CI pipelines get the same safety guarantees as interactive sessions. (#777)
+
+#### Example Packs
+
+Three new example packs ship with Anteroom to help you get started:
+
+- **code-review** — skills and rules for structured code review workflows
+- **writing-assistant** — instructions and context for document drafting
+- **strict-safety** — hard rules that lock down destructive operations
+
+Install with `aroom pack install --name code-review`. (#770)
+
+#### Bug Fixes
+
+- Skills from packs now appear in `/skills` immediately after install — no restart needed (#770)
+- Fixed `NameError: '_artifact_registry'` crash after running `/pack install` in the REPL (#771)
+- Pack reinstall no longer creates duplicate database entries — existing packs are updated in place (#772)
+- Pack attachments are preserved during pack updates (#770)
+- Orphan artifact detection runs inside a DB transaction to prevent TOCTOU races (#770)
+- Router regex for pack namespace/name validation aligned with manifest parser (#770)
 
 [GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.100.0)
 
