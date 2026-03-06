@@ -675,6 +675,71 @@ class TestDuplicatePrevention:
 # ---------------------------------------------------------------------------
 
 
+class TestAPIErrorMessages:
+    """Verify that the API surfaces detailed error messages, not generic ones."""
+
+    def test_conflict_error_includes_details(
+        self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
+    ) -> None:
+        """Config overlay conflict errors should include the conflicting keys,
+        not a generic 'already attached' message (#770)."""
+        _install_pack(db, _config_pack(tmp_path))
+        # Create a conflicting config pack
+        conflict_dir = _write_pack(
+            tmp_path,
+            name="config-conflict",
+            namespace="acme",
+            config_overlay_files={
+                "overrides": {"ai": {"temperature": 0.9}, "safety": {"approval_mode": "auto"}},
+            },
+        )
+        _install_pack(db, conflict_dir)
+
+        # Attach first pack
+        resp1 = client.post("/api/packs/acme/config-overlay/attach", json={})
+        assert resp1.status_code == 200
+
+        # Attach conflicting pack at same priority — should get detailed error
+        resp2 = client.post("/api/packs/acme/config-conflict/attach", json={})
+        assert resp2.status_code == 409
+        detail = resp2.json()["detail"]
+        assert "Config overlay conflict" in detail
+        assert "temperature" in detail or "approval_mode" in detail
+
+    def test_already_attached_error_includes_scope(
+        self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
+    ) -> None:
+        """Duplicate attach should say 'already attached at X scope'."""
+        _install_pack(db, _security_pack(tmp_path))
+        client.post("/api/packs/acme/security-baseline/attach", json={})
+
+        resp = client.post("/api/packs/acme/security-baseline/attach", json={})
+        assert resp.status_code == 409
+        assert "already attached" in resp.json()["detail"]
+
+    def test_artifact_conflict_error_includes_artifact_info(
+        self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient
+    ) -> None:
+        """Skill name collision should include the conflicting skill name."""
+        _install_pack(db, _write_pack(
+            tmp_path, name="pack-a", namespace="acme-a",
+            skill_files={"deploy": "Deploy staging."},
+        ))
+        _install_pack(db, _write_pack(
+            tmp_path, name="pack-b", namespace="acme-b",
+            skill_files={"deploy": "Deploy production."},
+        ))
+
+        resp1 = client.post("/api/packs/acme-a/pack-a/attach", json={})
+        assert resp1.status_code == 200
+
+        resp2 = client.post("/api/packs/acme-b/pack-b/attach", json={})
+        assert resp2.status_code == 409
+        detail = resp2.json()["detail"]
+        assert "Artifact conflict" in detail
+        assert "skill/deploy" in detail
+
+
 class TestAPISecurityBehavior:
     def test_source_path_never_in_list_response(
         self, tmp_path: Path, db: ThreadSafeConnection, client: TestClient

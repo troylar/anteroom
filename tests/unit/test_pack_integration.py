@@ -22,9 +22,13 @@ from anteroom.services.artifact_registry import ArtifactRegistry
 from anteroom.services.artifact_storage import get_artifact_by_fqn, list_artifacts
 from anteroom.services.artifacts import ArtifactType
 from anteroom.services.config_overlays import (
+    check_enforced_field_violations,
     collect_pack_overlays,
+    detect_artifact_conflicts,
     detect_overlay_conflicts,
+    flatten_to_dot_paths,
     merge_pack_overlays,
+    track_config_sources,
 )
 from anteroom.services.pack_attachments import (
     attach_pack,
@@ -1170,3 +1174,659 @@ class TestSkillRegistryFromPacks:
         skill_reg2.load_from_artifacts(registry)
         assert skill_reg2.has_skill("lint") is False
         assert skill_reg2.has_skill("test") is False
+
+
+# ---------------------------------------------------------------------------
+# Tests: Space-scoped pack attachments
+# ---------------------------------------------------------------------------
+
+
+class TestSpaceScopedAttachments:
+    """Tests for attach_pack_to_space(), detach_pack_from_space(),
+    and get_active_pack_ids_for_space() — zero coverage before this."""
+
+    @staticmethod
+    def _create_space(db: ThreadSafeConnection, name: str = "test-space") -> str:
+        """Insert a minimal space row and return its ID."""
+        import uuid
+        from datetime import datetime, timezone
+
+        space_id = uuid.uuid4().hex
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            "INSERT INTO spaces (id, name, instructions, created_at, updated_at) VALUES (?, ?, '', ?, ?)",
+            (space_id, name, now, now),
+        )
+        db.commit()
+        return space_id
+
+    def test_attach_to_space(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_attachments import attach_pack_to_space
+
+        result = _install(db, _security_pack(tmp_path))
+        space_id = self._create_space(db)
+
+        att = attach_pack_to_space(db, result["id"], space_id)
+        assert att["scope"] == "space"
+        assert att["space_id"] == space_id
+        assert att["priority"] == 50
+
+    def test_attach_to_space_with_priority(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_attachments import attach_pack_to_space
+
+        result = _install(db, _security_pack(tmp_path))
+        space_id = self._create_space(db)
+
+        att = attach_pack_to_space(db, result["id"], space_id, priority=10)
+        assert att["priority"] == 10
+
+    def test_detach_from_space(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_attachments import (
+            attach_pack_to_space,
+            detach_pack_from_space,
+        )
+
+        result = _install(db, _security_pack(tmp_path))
+        space_id = self._create_space(db)
+        attach_pack_to_space(db, result["id"], space_id)
+
+        assert detach_pack_from_space(db, result["id"], space_id) is True
+        # Detaching again returns False
+        assert detach_pack_from_space(db, result["id"], space_id) is False
+
+    def test_active_pack_ids_for_space_includes_global(
+        self, tmp_path: Path, db: ThreadSafeConnection
+    ) -> None:
+        """Space context includes both global and space-scoped packs."""
+        from anteroom.services.pack_attachments import (
+            attach_pack_to_space,
+            get_active_pack_ids_for_space,
+        )
+
+        r1 = _install(db, _security_pack(tmp_path))
+        r2 = _install(db, _python_pack(tmp_path))
+        space_id = self._create_space(db)
+
+        # r1 attached globally, r2 attached to space
+        attach_pack(db, r1["id"])
+        attach_pack_to_space(db, r2["id"], space_id)
+
+        ids = get_active_pack_ids_for_space(db, space_id)
+        assert set(ids) == {r1["id"], r2["id"]}
+
+    def test_active_pack_ids_for_space_excludes_other_spaces(
+        self, tmp_path: Path, db: ThreadSafeConnection
+    ) -> None:
+        from anteroom.services.pack_attachments import (
+            attach_pack_to_space,
+            get_active_pack_ids_for_space,
+        )
+
+        result = _install(db, _security_pack(tmp_path))
+        space_a = self._create_space(db, "space-a")
+        space_b = self._create_space(db, "space-b")
+
+        attach_pack_to_space(db, result["id"], space_a)
+
+        ids_b = get_active_pack_ids_for_space(db, space_b)
+        assert result["id"] not in ids_b
+
+    def test_active_pack_ids_three_scope_union(
+        self, tmp_path: Path, db: ThreadSafeConnection
+    ) -> None:
+        """Three-scope union: global + space + project all included."""
+        from anteroom.services.pack_attachments import (
+            attach_pack_to_space,
+            get_active_pack_ids_for_space,
+        )
+
+        r1 = _install(db, _security_pack(tmp_path))
+        r2 = _install(db, _python_pack(tmp_path))
+        r3 = _install(db, _write_pack(tmp_path, name="proj-pack", namespace="test", skill_files={"x": "y"}))
+        space_id = self._create_space(db)
+
+        attach_pack(db, r1["id"])  # global
+        attach_pack_to_space(db, r2["id"], space_id)  # space
+        attach_pack(db, r3["id"], project_path="/proj")  # project
+
+        ids = get_active_pack_ids_for_space(db, space_id, project_path="/proj")
+        assert set(ids) == {r1["id"], r2["id"], r3["id"]}
+
+    def test_duplicate_space_attach_raises(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_attachments import attach_pack_to_space
+
+        result = _install(db, _security_pack(tmp_path))
+        space_id = self._create_space(db)
+
+        attach_pack_to_space(db, result["id"], space_id)
+        with pytest.raises(ValueError, match="already attached"):
+            attach_pack_to_space(db, result["id"], space_id)
+
+    def test_attach_to_nonexistent_space_raises(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_attachments import attach_pack_to_space
+
+        result = _install(db, _security_pack(tmp_path))
+        with pytest.raises(ValueError, match="Space not found"):
+            attach_pack_to_space(db, result["id"], "nonexistent-space-id")
+
+    def test_space_attach_conflict_detection(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """Two packs with conflicting config overlays at same priority are blocked at space scope."""
+        from anteroom.services.pack_attachments import attach_pack_to_space
+
+        r1 = _install(db, _config_pack(tmp_path))
+        r2 = _install(db, _conflicting_config_pack(tmp_path))
+        space_id = self._create_space(db)
+
+        attach_pack_to_space(db, r1["id"], space_id, priority=50)
+        with pytest.raises(ValueError, match="Config overlay conflict"):
+            attach_pack_to_space(db, r2["id"], space_id, priority=50)
+
+    def test_space_attach_different_priority_allowed(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_attachments import attach_pack_to_space
+
+        r1 = _install(db, _config_pack(tmp_path))
+        r2 = _install(db, _conflicting_config_pack(tmp_path))
+        space_id = self._create_space(db)
+
+        attach_pack_to_space(db, r1["id"], space_id, priority=10)
+        attach_pack_to_space(db, r2["id"], space_id, priority=50)
+
+        from anteroom.services.pack_attachments import get_active_pack_ids_for_space
+
+        ids = get_active_pack_ids_for_space(db, space_id)
+        assert set(ids) == {r1["id"], r2["id"]}
+
+
+# ---------------------------------------------------------------------------
+# Tests: Pack update preserves attachment metadata
+# ---------------------------------------------------------------------------
+
+
+class TestAttachmentMetadataPreservation:
+    """Verify that update_pack() restores attachment fields correctly."""
+
+    @staticmethod
+    def _create_space(db: ThreadSafeConnection) -> str:
+        import uuid
+        from datetime import datetime, timezone
+
+        space_id = uuid.uuid4().hex
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            "INSERT INTO spaces (id, name, instructions, created_at, updated_at) VALUES (?, ?, '', ?, ?)",
+            (space_id, "test-space", now, now),
+        )
+        db.commit()
+        return space_id
+
+    def test_global_attachment_priority_preserved(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        pack_dir = _security_pack(tmp_path)
+        r1 = _install(db, pack_dir)
+        attach_pack(db, r1["id"], priority=15)
+
+        r2 = _install(db, pack_dir)  # update
+        atts = list_attachments(db)
+        assert len(atts) == 1
+        assert atts[0]["pack_id"] == r2["id"]
+        assert atts[0]["priority"] == 15
+        assert atts[0]["scope"] == "global"
+
+    def test_project_attachment_scope_preserved(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        pack_dir = _security_pack(tmp_path)
+        r1 = _install(db, pack_dir)
+        attach_pack(db, r1["id"], project_path="/my/project", priority=30)
+
+        r2 = _install(db, pack_dir)
+        atts = list_attachments(db, project_path="/my/project")
+        project_atts = [a for a in atts if a["scope"] == "project"]
+        assert len(project_atts) == 1
+        assert project_atts[0]["pack_id"] == r2["id"]
+        assert project_atts[0]["priority"] == 30
+        assert project_atts[0]["project_path"] == "/my/project"
+
+    def test_space_attachment_preserved_on_update(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_attachments import (
+            attach_pack_to_space,
+            list_attachments_for_pack,
+        )
+
+        pack_dir = _security_pack(tmp_path)
+        r1 = _install(db, pack_dir)
+        space_id = self._create_space(db)
+        attach_pack_to_space(db, r1["id"], space_id, priority=25)
+
+        r2 = _install(db, pack_dir)  # update
+        atts = list_attachments_for_pack(db, r2["id"])
+        assert len(atts) == 1
+        assert atts[0]["scope"] == "space"
+        assert atts[0]["priority"] == 25
+        assert atts[0]["space_id"] == space_id
+
+    def test_multiple_attachments_all_preserved(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """A pack attached at both global and space scopes keeps both."""
+        from anteroom.services.pack_attachments import (
+            attach_pack_to_space,
+            list_attachments_for_pack,
+        )
+
+        pack_dir = _write_pack(
+            tmp_path, name="multi-attach", namespace="test",
+            rule_files={"info": {"content": "Be nice.", "metadata": {"enforce": "soft"}}},
+        )
+        r1 = _install(db, pack_dir)
+        space_id = self._create_space(db)
+        attach_pack(db, r1["id"], priority=10)
+        attach_pack_to_space(db, r1["id"], space_id, priority=20)
+
+        r2 = _install(db, pack_dir)
+        atts = list_attachments_for_pack(db, r2["id"])
+        assert len(atts) == 2
+        scopes = {a["scope"] for a in atts}
+        assert scopes == {"global", "space"}
+        priorities = {a["priority"] for a in atts}
+        assert priorities == {10, 20}
+
+
+# ---------------------------------------------------------------------------
+# Tests: Additive artifact coexistence
+# ---------------------------------------------------------------------------
+
+
+class TestAdditiveArtifacts:
+    """Rules, instructions, and other additive artifact types from multiple
+    packs with the same name should NOT conflict."""
+
+    def test_same_rule_name_from_two_packs_no_conflict(
+        self, tmp_path: Path, db: ThreadSafeConnection
+    ) -> None:
+        """Two packs providing rule/deploy should both be attachable."""
+        p1 = _write_pack(
+            tmp_path, name="team-a", namespace="team-a",
+            rule_files={"deploy": {
+                "content": "Always run tests before deploying.",
+                "metadata": {
+                    "enforce": "hard", "reason": "Tests first",
+                    "matches": [{"tool": "bash", "pattern": "deploy"}],
+                },
+            }},
+        )
+        p2 = _write_pack(
+            tmp_path, name="team-b", namespace="team-b",
+            rule_files={"deploy": {
+                "content": "Notify the channel before deploying.",
+                "metadata": {
+                    "enforce": "hard", "reason": "Notify team",
+                    "matches": [{"tool": "bash", "pattern": "deploy"}],
+                },
+            }},
+        )
+        r1 = _install(db, p1)
+        r2 = _install(db, p2)
+
+        # Both should attach without conflict
+        attach_pack(db, r1["id"])
+        attach_pack(db, r2["id"])
+
+        ids = get_active_pack_ids(db)
+        assert set(ids) == {r1["id"], r2["id"]}
+
+    def test_same_rule_name_both_enforced(
+        self,
+        tmp_path: Path,
+        db: ThreadSafeConnection,
+        registry: ArtifactRegistry,
+        enforcer: RuleEnforcer,
+    ) -> None:
+        """Both same-named rules from different packs should be loaded and enforced."""
+        p1 = _write_pack(
+            tmp_path, name="team-a", namespace="team-a",
+            rule_files={"guardrails": {
+                "content": "Block force push.",
+                "metadata": {
+                    "enforce": "hard", "reason": "No force push",
+                    "matches": [{"tool": "bash", "pattern": r"git\s+push\s+--force"}],
+                },
+            }},
+        )
+        p2 = _write_pack(
+            tmp_path, name="team-b", namespace="team-b",
+            rule_files={"guardrails": {
+                "content": "Block rm -rf.",
+                "metadata": {
+                    "enforce": "hard", "reason": "No rm -rf",
+                    "matches": [{"tool": "bash", "pattern": r"rm\s+-rf"}],
+                },
+            }},
+        )
+        _install(db, p1)
+        _install(db, p2)
+        _load_registries(db, registry, enforcer)
+
+        # Both rules should be loaded (additive)
+        assert enforcer.rule_count == 2
+
+        blocked_push, _, _ = enforcer.check_tool_call("bash", {"command": "git push --force"})
+        assert blocked_push is True
+        blocked_rm, _, _ = enforcer.check_tool_call("bash", {"command": "rm -rf /"})
+        assert blocked_rm is True
+
+    def test_same_instruction_name_from_two_packs_no_conflict(
+        self, tmp_path: Path, db: ThreadSafeConnection
+    ) -> None:
+        """Instructions are additive — same name from two packs is fine."""
+        p1 = _write_pack(
+            tmp_path, name="style-a", namespace="org-a",
+            instruction_files={"coding-style": "Use 4-space indentation."},
+        )
+        p2 = _write_pack(
+            tmp_path, name="style-b", namespace="org-b",
+            instruction_files={"coding-style": "Use type hints everywhere."},
+        )
+        r1 = _install(db, p1)
+        r2 = _install(db, p2)
+
+        attach_pack(db, r1["id"])
+        attach_pack(db, r2["id"])
+
+        ids = get_active_pack_ids(db)
+        assert set(ids) == {r1["id"], r2["id"]}
+
+    def test_skill_same_name_from_two_packs_is_conflict(
+        self, tmp_path: Path, db: ThreadSafeConnection
+    ) -> None:
+        """Skills are exclusive — same name from two packs MUST conflict."""
+        p1 = _write_pack(
+            tmp_path, name="team-a", namespace="team-a",
+            skill_files={"deploy": "Deploy to staging."},
+        )
+        p2 = _write_pack(
+            tmp_path, name="team-b", namespace="team-b",
+            skill_files={"deploy": "Deploy to production."},
+        )
+        r1 = _install(db, p1)
+        r2 = _install(db, p2)
+
+        attach_pack(db, r1["id"])
+        with pytest.raises(ValueError, match="Artifact conflict"):
+            attach_pack(db, r2["id"])
+
+    def test_detect_artifact_conflicts_skips_additive_types(
+        self, tmp_path: Path, db: ThreadSafeConnection
+    ) -> None:
+        """detect_artifact_conflicts() returns empty for additive types."""
+        p1 = _write_pack(
+            tmp_path, name="rules-a", namespace="org-a",
+            rule_files={"shared-rule": {"content": "Rule A.", "metadata": {"enforce": "soft"}}},
+        )
+        p2 = _write_pack(
+            tmp_path, name="rules-b", namespace="org-b",
+            rule_files={"shared-rule": {"content": "Rule B.", "metadata": {"enforce": "soft"}}},
+        )
+        r1 = _install(db, p1)
+        r2 = _install(db, p2)
+        attach_pack(db, r1["id"], check_overlay_conflicts=False)
+
+        conflicts = detect_artifact_conflicts(db, r2["id"], [r1["id"]])
+        assert conflicts == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: Config overlay utilities (track_config_sources, check_enforced_field_violations, flatten)
+# ---------------------------------------------------------------------------
+
+
+class TestConfigOverlayUtilities:
+    def test_flatten_to_dot_paths_nested(self) -> None:
+        d = {"ai": {"model": "gpt-4", "temperature": 0.7}, "safety": {"approval_mode": "ask"}}
+        flat = flatten_to_dot_paths(d)
+        assert flat == {
+            "ai.model": "gpt-4",
+            "ai.temperature": 0.7,
+            "safety.approval_mode": "ask",
+        }
+
+    def test_flatten_to_dot_paths_list_values_are_leaves(self) -> None:
+        d = {"mcp_servers": [{"name": "a"}, {"name": "b"}]}
+        flat = flatten_to_dot_paths(d)
+        assert flat == {"mcp_servers": [{"name": "a"}, {"name": "b"}]}
+
+    def test_flatten_empty_dict(self) -> None:
+        assert flatten_to_dot_paths({}) == {}
+
+    def test_track_config_sources_last_layer_wins(self) -> None:
+        layers = [
+            ("team", {"ai": {"temperature": 0.5}}),
+            ("pack:security", {"ai": {"temperature": 0.7}}),
+            ("personal", {"safety": {"approval_mode": "auto"}}),
+        ]
+        sources = track_config_sources(layers)
+        assert sources["ai.temperature"] == "pack:security"
+        assert sources["safety.approval_mode"] == "personal"
+
+    def test_track_config_sources_empty(self) -> None:
+        assert track_config_sources([]) == {}
+
+    def test_check_enforced_field_violations_found(self) -> None:
+        overlay = {"ai": {"temperature": 0.7, "model": "gpt-4"}, "safety": {"approval_mode": "auto"}}
+        enforced = ["ai.temperature", "safety.approval_mode"]
+        violations = check_enforced_field_violations(overlay, enforced)
+        assert violations == ["ai.temperature", "safety.approval_mode"]
+
+    def test_check_enforced_field_violations_none(self) -> None:
+        overlay = {"ai": {"model": "gpt-4"}}
+        enforced = ["safety.approval_mode"]
+        violations = check_enforced_field_violations(overlay, enforced)
+        assert violations == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: Pack lock file generation and validation
+# ---------------------------------------------------------------------------
+
+
+class TestPackLockFile:
+    def test_generate_lock_empty_db(self, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_lock import generate_lock
+
+        lock = generate_lock(db)
+        assert lock["version"] == 1
+        assert lock["packs"] == []
+
+    def test_generate_lock_with_packs(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_lock import generate_lock
+
+        _install(db, _security_pack(tmp_path))
+        lock = generate_lock(db)
+        assert len(lock["packs"]) == 1
+        pack_entry = lock["packs"][0]
+        assert pack_entry["namespace"] == "acme"
+        assert pack_entry["name"] == "security-baseline"
+        assert len(pack_entry["artifacts"]) == 3  # 2 rules + 1 skill
+
+    def test_write_and_read_lock(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_lock import generate_lock, read_lock, write_lock
+
+        _install(db, _security_pack(tmp_path))
+        lock_data = generate_lock(db)
+
+        lock_path = write_lock(tmp_path, lock_data)
+        assert lock_path.is_file()
+
+        read_back = read_lock(tmp_path)
+        assert read_back is not None
+        assert read_back["version"] == 1
+        assert len(read_back["packs"]) == 1
+
+    def test_read_lock_missing_file(self, tmp_path: Path) -> None:
+        from anteroom.services.pack_lock import read_lock
+
+        assert read_lock(tmp_path) is None
+
+    def test_validate_lock_clean(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_lock import generate_lock, validate_lock, write_lock
+
+        _install(db, _security_pack(tmp_path))
+        write_lock(tmp_path, generate_lock(db))
+
+        warnings = validate_lock(db, tmp_path)
+        assert warnings == []
+
+    def test_validate_lock_missing_file(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_lock import validate_lock
+
+        warnings = validate_lock(db, tmp_path)
+        assert warnings == ["Lock file not found"]
+
+    def test_validate_lock_pack_in_lock_not_installed(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_lock import generate_lock, validate_lock, write_lock
+
+        _install(db, _security_pack(tmp_path))
+        write_lock(tmp_path, generate_lock(db))
+
+        # Remove the pack from DB but keep the lock file
+        remove_pack(db, "acme", "security-baseline")
+
+        warnings = validate_lock(db, tmp_path)
+        assert any("not installed" in w for w in warnings)
+
+    def test_validate_lock_pack_installed_not_in_lock(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_lock import validate_lock, write_lock
+
+        # Write empty lock
+        write_lock(tmp_path, {"version": 1, "packs": []})
+
+        # Install a pack
+        _install(db, _security_pack(tmp_path))
+
+        warnings = validate_lock(db, tmp_path)
+        assert any("not in lock file" in w for w in warnings)
+
+    def test_validate_lock_content_hash_mismatch(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_lock import generate_lock, validate_lock, write_lock
+
+        _install(db, _security_pack(tmp_path))
+        write_lock(tmp_path, generate_lock(db))
+
+        # Tamper with artifact content in DB
+        db.execute(
+            "UPDATE artifacts SET content = 'TAMPERED', content_hash = 'badhash'"
+            " WHERE fqn = '@acme/rule/no-force-push'"
+        )
+        db.commit()
+
+        warnings = validate_lock(db, tmp_path)
+        assert any("hash mismatch" in w for w in warnings)
+
+    def test_validate_lock_invalid_format(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        from anteroom.services.pack_lock import validate_lock
+
+        lock_dir = tmp_path / ".anteroom"
+        lock_dir.mkdir()
+        (lock_dir / "anteroom.lock.yaml").write_text("packs: not-a-list", encoding="utf-8")
+
+        warnings = validate_lock(db, tmp_path)
+        assert any("not a list" in w for w in warnings)
+
+    def test_read_lock_invalid_yaml_mapping(self, tmp_path: Path) -> None:
+        from anteroom.services.pack_lock import read_lock
+
+        lock_dir = tmp_path / ".anteroom"
+        lock_dir.mkdir()
+        (lock_dir / "anteroom.lock.yaml").write_text("just a string", encoding="utf-8")
+
+        assert read_lock(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: Artifact YAML edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactYAMLEdgeCases:
+    def test_yaml_parse_error_falls_back_to_raw(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """If a YAML artifact file has invalid YAML, raw content is used."""
+        from anteroom.services.artifact_storage import get_artifact_by_fqn
+
+        pack_dir = tmp_path / "test-bad-yaml"
+        pack_dir.mkdir()
+        skills_dir = pack_dir / "skills"
+        skills_dir.mkdir()
+        # Write invalid YAML
+        (skills_dir / "broken.yaml").write_text("content: [invalid yaml {", encoding="utf-8")
+
+        manifest = {
+            "name": "bad-yaml",
+            "namespace": "test",
+            "version": "1.0.0",
+            "artifacts": [{"type": "skill", "name": "broken"}],
+        }
+        (pack_dir / "pack.yaml").write_text(yaml.dump(manifest), encoding="utf-8")
+        _install(db, pack_dir)
+
+        art = get_artifact_by_fqn(db, "@test/skill/broken")
+        assert art is not None
+        # Content should be the raw file content (fallback)
+        assert "invalid yaml" in art["content"]
+
+    def test_non_dict_metadata_coerced_to_empty(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """If metadata is a non-dict value, it should be coerced to {}."""
+        from anteroom.services.artifact_storage import get_artifact_by_fqn
+
+        pack_dir = tmp_path / "test-bad-meta"
+        pack_dir.mkdir()
+        skills_dir = pack_dir / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "odd.yaml").write_text(
+            yaml.dump({"content": "Hello", "metadata": "not-a-dict"}),
+            encoding="utf-8",
+        )
+        manifest = {
+            "name": "bad-meta",
+            "namespace": "test",
+            "version": "1.0.0",
+            "artifacts": [{"type": "skill", "name": "odd"}],
+        }
+        (pack_dir / "pack.yaml").write_text(yaml.dump(manifest), encoding="utf-8")
+        _install(db, pack_dir)
+
+        art = get_artifact_by_fqn(db, "@test/skill/odd")
+        assert art is not None
+        assert art["metadata"] == {}
+
+    def test_markdown_artifact_content(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """Non-YAML artifact files (e.g. .md) use raw content."""
+        from anteroom.services.artifact_storage import get_artifact_by_fqn
+
+        pack_dir = tmp_path / "test-md"
+        pack_dir.mkdir()
+        inst_dir = pack_dir / "instructions"
+        inst_dir.mkdir()
+        (inst_dir / "guide.md").write_text("# Style Guide\nUse type hints.", encoding="utf-8")
+        manifest = {
+            "name": "md-pack",
+            "namespace": "test",
+            "version": "1.0.0",
+            "artifacts": [{"type": "instruction", "name": "guide"}],
+        }
+        (pack_dir / "pack.yaml").write_text(yaml.dump(manifest), encoding="utf-8")
+        _install(db, pack_dir)
+
+        art = get_artifact_by_fqn(db, "@test/instruction/guide")
+        assert art is not None
+        assert "Style Guide" in art["content"]
+
+    def test_missing_artifact_file_skipped(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """Manifest references an artifact whose file doesn't exist — skipped, not crash."""
+        pack_dir = tmp_path / "test-missing"
+        pack_dir.mkdir()
+        manifest = {
+            "name": "missing-file",
+            "namespace": "test",
+            "version": "1.0.0",
+            "artifacts": [{"type": "skill", "name": "ghost"}],
+        }
+        (pack_dir / "pack.yaml").write_text(yaml.dump(manifest), encoding="utf-8")
+        result = _install(db, pack_dir)
+
+        assert result["artifact_count"] == 0
+        assert "skill/ghost" in result["skipped_artifacts"]
