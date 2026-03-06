@@ -5,6 +5,20 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## March 6, 2026
+
+### v1.99.1
+
+**Fixed:**
+
+- Stall detection now catches slow-trickle streams via rolling throughput window (#774)
+- Thinking ticker no longer freezes during slow API responses (#775)
+- Stream timeout warnings display cleanly instead of raw log lines (#776)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.99.1)
+
+---
+
 ## March 5, 2026
 
 ### v1.99.0
