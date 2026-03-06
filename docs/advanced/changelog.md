@@ -7,6 +7,23 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 6, 2026
 
+### v1.100.0
+
+**New:**
+
+- Hard rule enforcement for packs — `enforce: hard` rules block tool calls unconditionally (#773)
+- Exec mode now loads pack artifacts and enforces rules, matching REPL behavior (#777)
+- Namespace-aware skill resolution for colliding pack skill names (#770)
+- Three example packs: code-review, writing-assistant, strict-safety (#770)
+
+**Fixed:**
+
+- Skills from packs now appear in `/skills` immediately after install (#770)
+- NameError crash after `/pack install` resolved (#771)
+- Pack reinstall no longer creates duplicates (#772)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.100.0)
+
 ### v1.99.2
 
 **Fixed:**
