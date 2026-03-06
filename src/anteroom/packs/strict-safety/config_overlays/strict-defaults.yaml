@@ -1,0 +1,6 @@
+content: |
+  safety:
+    approval_mode: ask_for_writes
+  cli:
+    max_consecutive_text_only: 2
+metadata: {}

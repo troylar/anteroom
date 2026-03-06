@@ -1,0 +1,14 @@
+name: rewrite
+description: Rewrite text to improve clarity and tone
+content: |
+  Rewrite the provided text to improve clarity, flow, and readability.
+
+  Guidelines:
+  - Use active voice over passive voice
+  - Prefer shorter sentences over long compound ones
+  - Remove filler words and redundancies
+  - Keep the original meaning and intent intact
+  - Match the tone of the original (formal stays formal, casual stays casual)
+  - Preserve any technical terms or proper nouns
+
+  Show the rewritten version, then briefly note what changed and why.

@@ -1,0 +1,11 @@
+name: writing-assistant
+namespace: anteroom
+version: 1.0.0
+description: Writing skills — summarize, rewrite, and proofread documents
+artifacts:
+  - type: skill
+    name: summarize
+  - type: skill
+    name: rewrite
+  - type: skill
+    name: proofread

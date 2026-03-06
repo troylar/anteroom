@@ -1,0 +1,13 @@
+name: code-review
+namespace: anteroom
+version: 1.0.0
+description: Code review standards — commit messages, PR descriptions, and review checklists
+artifacts:
+  - type: rule
+    name: commit-messages
+  - type: rule
+    name: pr-descriptions
+  - type: skill
+    name: review
+  - type: skill
+    name: changelog

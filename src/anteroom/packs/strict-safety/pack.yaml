@@ -1,0 +1,11 @@
+name: strict-safety
+namespace: anteroom
+version: 1.0.0
+description: Strict safety rules and config — ask before every write, block destructive commands
+artifacts:
+  - type: rule
+    name: no-destructive-commands
+  - type: rule
+    name: confirm-before-deploy
+  - type: config_overlay
+    name: strict-defaults
