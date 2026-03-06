@@ -7,6 +7,14 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 6, 2026
 
+### v1.99.2
+
+**Fixed:**
+
+- API errors returning HTML pages (502 gateway errors, misconfigured base URLs) now show clean, actionable messages instead of raw HTML (#784)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.99.2)
+
 ### v1.99.1
 
 **Fixed:**
