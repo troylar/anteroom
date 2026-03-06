@@ -8,7 +8,10 @@ import pytest
 
 from anteroom.db import _SCHEMA, ThreadSafeConnection
 from anteroom.services.starter_packs import (
+    get_built_in_pack_path,
     install_starter_packs,
+    list_all_built_in_packs,
+    list_example_packs,
     list_starter_packs,
 )
 
@@ -37,6 +40,46 @@ class TestListStarterPacks:
             assert pack["namespace"] == "anteroom"
             assert pack["version"]
             assert pack["description"]
+
+
+class TestListExamplePacks:
+    def test_returns_all_example_packs(self) -> None:
+        result = list_example_packs()
+        assert len(result) == 3
+        names = {p["name"] for p in result}
+        assert names == {"code-review", "writing-assistant", "strict-safety"}
+
+    def test_each_has_required_fields(self) -> None:
+        for pack in list_example_packs():
+            assert pack["name"]
+            assert pack["namespace"]
+            assert pack["version"]
+            assert pack["description"]
+
+
+class TestListAllBuiltInPacks:
+    def test_returns_starter_plus_example(self) -> None:
+        result = list_all_built_in_packs()
+        assert len(result) == 5  # 2 starter + 3 example
+        names = {p["name"] for p in result}
+        assert "python-dev" in names
+        assert "code-review" in names
+
+
+class TestGetBuiltInPackPath:
+    def test_returns_path_for_valid_pack(self) -> None:
+        path = get_built_in_pack_path("python-dev")
+        assert path is not None
+        assert (path / "pack.yaml").is_file()
+
+    def test_returns_none_for_nonexistent(self) -> None:
+        assert get_built_in_pack_path("nonexistent") is None
+
+    def test_blocks_path_traversal(self) -> None:
+        assert get_built_in_pack_path("../../etc") is None
+
+    def test_blocks_absolute_traversal(self) -> None:
+        assert get_built_in_pack_path("../../../tmp") is None
 
 
 class TestInstallStarterPacks:

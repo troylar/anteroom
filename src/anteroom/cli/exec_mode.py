@@ -253,7 +253,7 @@ async def run_exec_mode(
         _rule_enforcer.load_rules(_artifact_registry.list_all(artifact_type=_ArtType.RULE))
         tool_registry.set_rule_enforcer(_rule_enforcer)
     except Exception:
-        logger.debug("Artifact registry unavailable in exec mode", exc_info=True)
+        logger.warning("Artifact registry unavailable in exec mode", exc_info=True)
 
     # Sub-agent support
     sa_config = config.safety.subagent

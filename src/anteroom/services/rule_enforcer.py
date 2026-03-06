@@ -28,6 +28,8 @@ from ..services.artifacts import Artifact, ArtifactType
 
 logger = logging.getLogger(__name__)
 
+MAX_PATTERN_LENGTH = 500  # Guard against ReDoS from overly complex patterns
+
 
 @dataclass(frozen=True)
 class RuleMatch:
@@ -78,6 +80,15 @@ def parse_rule(artifact: Artifact) -> ParsedRule | None:
         tool = str(entry.get("tool", "*"))
         pattern_str = entry.get("pattern", "")
         if not pattern_str:
+            skipped += 1
+            continue
+        if len(pattern_str) > MAX_PATTERN_LENGTH:
+            logger.warning(
+                "Pattern too long in rule %s: %d chars (max %d)",
+                artifact.fqn,
+                len(pattern_str),
+                MAX_PATTERN_LENGTH,
+            )
             skipped += 1
             continue
         try:

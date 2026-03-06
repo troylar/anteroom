@@ -381,6 +381,15 @@ class SkillRegistry:
         skill_name = parts[0][1:].lower()  # Remove leading /, normalize case
         skill = self.get(skill_name)
         if not skill:
+            # Check if the name is ambiguous (multiple namespaces)
+            candidates = self._name_index.get(skill_name, [])
+            if len(candidates) > 1:
+                options = ", ".join(f"/{c}" for c in candidates)
+                logger.warning(
+                    "Ambiguous skill '%s' — qualify with namespace: %s",
+                    skill_name,
+                    options,
+                )
             return False, user_input
         args = parts[1] if len(parts) > 1 else ""
         prompt = skill.prompt

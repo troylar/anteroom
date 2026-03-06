@@ -269,6 +269,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _rule_enforcer = RuleEnforcer()
     _rule_enforcer.load_rules(artifact_registry.list_all(artifact_type=_ArtType.RULE))
     tool_registry.set_rule_enforcer(_rule_enforcer)
+    app.state.rule_enforcer = _rule_enforcer
     if _rule_enforcer.rule_count:
         logger.info("Rule enforcer loaded: %d hard rules", _rule_enforcer.rule_count)
 

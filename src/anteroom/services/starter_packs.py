@@ -72,6 +72,8 @@ def list_all_built_in_packs() -> list[dict[str, str]]:
 def get_built_in_pack_path(name: str) -> Path | None:
     """Return the on-disk path for a built-in pack, or None if not found."""
     pack_dir = _PACKS_ROOT / name
+    if not pack_dir.resolve().is_relative_to(_PACKS_ROOT):
+        return None
     if (pack_dir / "pack.yaml").is_file():
         return pack_dir
     return None

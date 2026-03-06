@@ -258,6 +258,18 @@ class TestRuleEnforcerEdgeCases:
         art = _make_rule_artifact(matches=[{"tool": "bash", "pattern": "[bad"}])
         assert parse_rule(art) is None
 
+    def test_pattern_too_long_skipped(self) -> None:
+        long_pattern = "a" * 501
+        art = _make_rule_artifact(
+            matches=[
+                {"tool": "bash", "pattern": long_pattern},
+                {"tool": "bash", "pattern": "danger"},
+            ]
+        )
+        result = parse_rule(art)
+        assert result is not None
+        assert len(result.matches) == 1  # long one skipped
+
     def test_match_entry_not_dict_skipped(self) -> None:
         art = _make_rule_artifact(
             matches=[
