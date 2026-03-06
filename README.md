@@ -191,14 +191,14 @@ The AI reads files, edits code, runs commands, searches your codebase, generates
 
 ### Packs: shareable AI capabilities
 
-Packs are versioned, git-distributed bundles with **7 artifact types**: skills, tools, prompts, templates, hooks, configs, and docs. Build a "compliance pack" with regulatory prompts, a "marketing pack" with brand guidelines, a "DevOps pack" with deployment skills &mdash; and share them across teams.
+Packs are versioned, git-distributed bundles with **7 artifact types**: skills, rules, instructions, context, memory, MCP servers, and config overlays. Build a "compliance pack" with regulatory rules, a "marketing pack" with brand guidelines, a "DevOps pack" with deployment skills &mdash; and share them across teams.
 
 ```bash
 aroom pack install https://github.com/example/compliance-pack
 aroom pack list
 ```
 
-Packs use a 6-layer precedence system (built-in &rarr; global &rarr; team &rarr; space &rarr; conversation &rarr; runtime) so departments can customize without weakening security controls.
+Packs use a 6-layer precedence system (built-in &rarr; global &rarr; team &rarr; project &rarr; local &rarr; inline) so departments can customize without weakening security controls.
 
 ---
 

@@ -20,7 +20,7 @@ prompt: |
   Anteroom loads configuration from multiple layers, merged in this order (later wins):
 
   ```
-  defaults < team config < space config < personal config < env vars < CLI flags
+  defaults < team config < packs < personal config < space config < env vars < CLI flags
   ```
 
   | Layer            | Location                                    | Purpose                                  |
