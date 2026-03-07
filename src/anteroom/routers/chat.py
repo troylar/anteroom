@@ -1939,9 +1939,10 @@ async def chat(conversation_id: str, request: Request) -> Any:
     # Build per-request registries scoped to the active space
     req_art_reg, req_skill_reg, req_rule_enf = _get_request_registries(request, db, space_id)
 
-    # SECURITY-REVIEW: Apply space-scoped rule enforcer to the shared tool
-    # registry. Safe for single-user app (requests serialize via SSE streaming).
-    # Revisit if multi-user support is added.
+    # Save the global rule enforcer so we can restore it after this request.
+    # Space-scoped requests temporarily override the shared tool_registry's
+    # enforcer to include space-attached hard rules.
+    _saved_rule_enforcer = getattr(tool_registry, "_rule_enforcer", None)
     if req_rule_enf is not None and space_id:
         tool_registry.set_rule_enforcer(req_rule_enf)
 
@@ -2078,7 +2079,16 @@ async def chat(conversation_id: str, request: Request) -> Any:
         user_msg=user_msg,
     )
 
-    return EventSourceResponse(_stream_chat_events(stream_ctx))
+    async def _stream_with_enforcer_restore() -> Any:
+        """Wrap streaming to restore the global rule enforcer on completion."""
+        try:
+            async for event in _stream_chat_events(stream_ctx):
+                yield event
+        finally:
+            if _saved_rule_enforcer is not tool_registry._rule_enforcer:
+                tool_registry.set_rule_enforcer(_saved_rule_enforcer)
+
+    return EventSourceResponse(_stream_with_enforcer_restore())
 
 
 @router.post("/conversations/{conversation_id}/stop")

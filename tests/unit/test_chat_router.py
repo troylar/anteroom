@@ -426,3 +426,19 @@ class TestGetRequestRegistries:
             mock_art_reg.load_from_db.assert_called_once_with(db, space_id="space-123")
             assert skill is not global_skill
             assert rules is not global_rules
+
+    def test_globals_returned_without_space(self) -> None:
+        """Without a space, the global registries are returned as-is (no copy)."""
+        from anteroom.routers.chat import _get_request_registries
+
+        request = MagicMock()
+        global_art = MagicMock()
+        global_skill = MagicMock()
+        global_rules = MagicMock()
+        request.app.state.artifact_registry = global_art
+        request.app.state.skill_registry = global_skill
+        request.app.state.rule_enforcer = global_rules
+        art, skill, rules = _get_request_registries(request, MagicMock(), space_id=None)
+        assert art is global_art
+        assert skill is global_skill
+        assert rules is global_rules
