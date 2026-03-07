@@ -7,6 +7,31 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 7, 2026
 
+### v1.101.0 — First Steps That Work
+
+New users used to land on a blank chat screen with no guidance. Now both the web UI and CLI greet them with clear, actionable next steps.
+
+#### Task-Based Web Onboarding
+
+The web UI's empty state has been replaced with three action cards that directly do what they describe. "Start chatting" focuses the message input. "Configure your model" opens the settings modal. "Create a space" triggers the workspace creation flow. Keyboard shortcuts are shown inline so new users discover them immediately. (#795)
+
+See [Web UI documentation](../web-ui/index.md) for the full interface guide.
+
+#### CLI First-Run Guidance
+
+The CLI REPL now detects first-run sessions and displays a structured getting-started block with three key commands: just type to chat, `/space init` for workspace setup, and `/help` for the full command reference. Returning users see a compact one-line hint instead. (#798)
+
+```
+Getting started:
+  Just type a message to start chatting
+  /space init   — set up a workspace with custom instructions
+  /help         — see all commands
+```
+
+See [CLI documentation](../cli/index.md) for REPL usage details.
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.101.0)
+
 ### v1.100.2 — Clearer First Steps
 
 This release overhauls Anteroom's onboarding documentation so new users understand what the tool does for them before encountering advanced concepts like packs, artifacts, and precedence layers.
