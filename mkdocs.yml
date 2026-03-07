@@ -63,6 +63,10 @@ plugins:
   - search
   - minify:
       minify_html: true
+  - redirects:
+      redirect_maps:
+        'web-ui/projects.md': 'web-ui/spaces.md'
+        'api/projects.md': 'api/spaces.md'
 
 extra:
   social:
