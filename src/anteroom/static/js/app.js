@@ -4,7 +4,7 @@ const App = (() => {
     const state = {
         currentConversationId: null,
         currentConversationType: 'chat',
-        currentSpaceId: null,
+        currentSpaceId: sessionStorage.getItem('anteroom_space_id') || null,
         currentDatabase: null,
         isStreaming: false,
         isPlanMode: false,
@@ -916,7 +916,12 @@ const App = (() => {
                 select.appendChild(opt);
             });
             if (state.currentSpaceId) {
-                select.value = state.currentSpaceId;
+                if (spaces.some(s => s.id === state.currentSpaceId)) {
+                    select.value = state.currentSpaceId;
+                } else {
+                    state.currentSpaceId = null;
+                    sessionStorage.removeItem('anteroom_space_id');
+                }
             }
         } catch {
             // ignore — spaces feature may not be available
@@ -931,6 +936,7 @@ const App = (() => {
             if (clearBtn) {
                 clearBtn.addEventListener('click', async () => {
                     state.currentSpaceId = null;
+                    sessionStorage.removeItem('anteroom_space_id');
                     select.value = '';
                     state.currentConversationId = null;
                     Chat.loadMessages([]);
@@ -963,6 +969,7 @@ const App = (() => {
         allItem.innerHTML = '<span>All Spaces</span>';
         allItem.addEventListener('click', async () => {
             state.currentSpaceId = null;
+            sessionStorage.removeItem('anteroom_space_id');
             document.getElementById('space-select').value = '';
             state.currentConversationId = null;
             Chat.loadMessages([]);
@@ -1031,6 +1038,7 @@ const App = (() => {
                     }
                     if (state.currentSpaceId === s.id) {
                         state.currentSpaceId = null;
+                        sessionStorage.removeItem('anteroom_space_id');
                     }
                     await loadSpaces();
                     await Sidebar.refresh();
@@ -1043,6 +1051,7 @@ const App = (() => {
             item.appendChild(actions);
             item.addEventListener('click', async () => {
                 state.currentSpaceId = s.id;
+                sessionStorage.setItem('anteroom_space_id', s.id);
                 document.getElementById('space-select').value = s.id;
                 state.currentConversationId = null;
                 Chat.loadMessages([]);
