@@ -3154,7 +3154,7 @@ class TestRenderWelcome:
             assert "skills" not in output
             assert "packs" not in output
             assert "Packs:" not in output
-            assert "New here?" not in output
+            assert "Getting started:" not in output
             assert "Type /help for commands" in output
 
     def test_shows_skill_count(self) -> None:
@@ -3187,8 +3187,10 @@ class TestRenderWelcome:
         with patch("anteroom.cli.renderer.console") as mc:
             self._render(is_first_run=True)
             output = self._printed(mc)
-            assert "New here? Type /help for commands, or ask me anything." in output
-            assert output.count("Type /help") == 1
+            assert "Getting started:" in output
+            assert "Just type a message to start chatting" in output
+            assert "/space init" in output
+            assert "/help" in output
 
     def test_returning_user_hint(self) -> None:
         with patch("anteroom.cli.renderer.console") as mc:
