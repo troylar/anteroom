@@ -78,7 +78,7 @@ rag:
 | `include_conversations` | bool | `true` | Whether to search past conversation messages |
 | `exclude_current` | bool | `true` | Whether to exclude the current conversation from message search results |
 
-**Environment variables:** `AI_CHAT_RAG_ENABLED`, `AI_CHAT_RAG_MAX_CHUNKS`, `AI_CHAT_RAG_MAX_TOKENS`, `AI_CHAT_RAG_SIMILARITY_THRESHOLD`, `AI_CHAT_RAG_INCLUDE_SOURCES`, `AI_CHAT_RAG_INCLUDE_CONVERSATIONS`, `AI_CHAT_RAG_EXCLUDE_CURRENT`
+**Environment variables:** `AI_CHAT_RAG_ENABLED`, `AI_CHAT_RAG_MAX_CHUNKS`, `AI_CHAT_RAG_MAX_TOKENS`, `AI_CHAT_RAG_SIMILARITY_THRESHOLD`
 
 ### Tuning the Threshold
 
