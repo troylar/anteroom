@@ -184,7 +184,7 @@ When two artifacts have the same FQN (`@namespace/type/name`), the higher-layer 
 | **RuleEnforcer** | `rule` artifacts with `enforce: hard` → tool call blocking | Yes — passed as `rule_enforcer_override` (no shared state mutation) |
 | **System prompt** | `rule`, `instruction`, `context` artifacts → injected text | Yes |
 | **Config loader** | `config_overlay` artifacts → merged into config chain | Yes — attached-only, excluded from registry load |
-| **MCP manager** | `mcp_server` artifacts → server connections | Yes |
+| **MCP manager** | `mcp_server` artifacts (reserved type, not yet loaded at runtime — MCP servers are configured via `config.mcp_servers`) | N/A |
 
 ---
 
