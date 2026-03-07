@@ -821,6 +821,8 @@ def update_message_content(
     conversation_id: str,
     message_id: str,
     new_content: str,
+    *,
+    vec_index: Any | None = None,
 ) -> dict[str, Any] | None:
     row = db.execute_fetchone(
         "SELECT * FROM messages WHERE id = ? AND conversation_id = ?",
@@ -833,7 +835,7 @@ def update_message_content(
     db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
     db.commit()
     # Invalidate stale embedding so the worker will re-embed with new content
-    delete_embedding_for_message(db, message_id)
+    delete_embedding_for_message(db, message_id, vec_index=vec_index)
     updated = db.execute_fetchone("SELECT * FROM messages WHERE id = ?", (message_id,))
     return dict(updated) if updated else None
 
@@ -842,6 +844,8 @@ def delete_message(
     db: ThreadSafeConnection,
     conversation_id: str,
     message_id: str,
+    *,
+    vec_index: Any | None = None,
 ) -> bool:
     """Delete a single message by ID, validating it belongs to the given conversation."""
     row = db.execute_fetchone(
@@ -850,6 +854,9 @@ def delete_message(
     )
     if not row:
         return False
+    # Remove from usearch before deleting metadata (CASCADE will remove embedding row)
+    if vec_index is not None:
+        vec_index.remove(message_id)
     db.execute("DELETE FROM messages WHERE id = ? AND conversation_id = ?", (message_id, conversation_id))
     now = _now()
     db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
@@ -1700,6 +1707,8 @@ def update_source(
     title: str | None = None,
     content: str | None = None,
     url: str | None = None,
+    *,
+    vec_index: Any | None = None,
 ) -> dict[str, Any] | None:
     source = db.execute_fetchone("SELECT * FROM sources WHERE id = ?", (source_id,))
     if not source:
@@ -1721,6 +1730,14 @@ def update_source(
 
     # Re-chunk if content changed
     if content is not None:
+        # Remove old chunk vectors from usearch before deleting metadata
+        if vec_index is not None:
+            chunk_rows = db.execute_fetchall(
+                "SELECT chunk_id FROM source_chunk_embeddings WHERE source_id = ?",
+                (source_id,),
+            )
+            for row in chunk_rows:
+                vec_index.remove(row["chunk_id"])
         db.execute("DELETE FROM source_chunks WHERE source_id = ?", (source_id,))
         db.commit()
         chunks = chunk_text(content)
@@ -1730,11 +1747,26 @@ def update_source(
     return get_source(db, source_id)
 
 
-def delete_source(db: ThreadSafeConnection, source_id: str, data_dir: Path | None = None) -> bool:
+def delete_source(
+    db: ThreadSafeConnection,
+    source_id: str,
+    data_dir: Path | None = None,
+    *,
+    vec_index: Any | None = None,
+) -> bool:
     source_row = db.execute_fetchone("SELECT * FROM sources WHERE id = ?", (source_id,))
     if not source_row:
         return False
     source = dict(source_row)
+
+    # Remove source chunk vectors from usearch before CASCADE deletes metadata
+    if vec_index is not None:
+        chunk_rows = db.execute_fetchall(
+            "SELECT chunk_id FROM source_chunk_embeddings WHERE source_id = ?",
+            (source_id,),
+        )
+        for row in chunk_rows:
+            vec_index.remove(row["chunk_id"])
 
     # Remove file from disk if it exists
     if data_dir and source.get("storage_path"):

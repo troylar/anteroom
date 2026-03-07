@@ -320,7 +320,14 @@ async def update_message(conversation_id: str, message_id: str, body: MessageEdi
     conv = storage.get_conversation(db, conversation_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    updated = storage.update_message_content(db, conversation_id, message_id, body.content)
+    _vm = getattr(request.app.state, "vec_manager", None)
+    updated = storage.update_message_content(
+        db,
+        conversation_id,
+        message_id,
+        body.content,
+        vec_index=_vm.messages if _vm else None,
+    )
     if not updated:
         raise HTTPException(status_code=404, detail="Message not found")
     return updated
@@ -338,7 +345,8 @@ async def delete_message(conversation_id: str, message_id: str, request: Request
         raise HTTPException(
             status_code=400, detail="Individual message deletion is only supported for note and document conversations"
         )
-    deleted = storage.delete_message(db, conversation_id, message_id)
+    _vm = getattr(request.app.state, "vec_manager", None)
+    deleted = storage.delete_message(db, conversation_id, message_id, vec_index=_vm.messages if _vm else None)
     if not deleted:
         raise HTTPException(status_code=404, detail="Message not found")
     return None
