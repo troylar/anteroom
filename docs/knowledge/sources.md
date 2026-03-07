@@ -7,8 +7,11 @@ Sources are documents, URLs, or text notes you add to Anteroom's knowledge base.
 | Type | Description | Example |
 |------|-------------|---------|
 | **text** | Plain text content | Meeting notes, code snippets, reference material |
-| **url** | A URL reference | API documentation, wiki pages |
+| **url** | A URL reference with optional content | API documentation links, wiki page references |
 | **file** | An uploaded file | PDFs, code files, markdown docs |
+
+!!! note "URL sources are metadata by default"
+    URL sources store the URL as a reference. They are only chunked and embedded if you also provide `content` in the request body. Anteroom does not automatically fetch URL content.
 
 ## Creating Sources
 
@@ -38,7 +41,7 @@ Sources are documents, URLs, or text notes you add to Anteroom's knowledge base.
 
 ## How Sources Are Processed
 
-When a source is created with text content:
+When a source is created with text content (applies to `text` and `file` types, and `url` type only if `content` is provided):
 
 1. **Chunk**: Content is split into ~1000-character segments at sentence boundaries (`.` `!` `?`) with 200-character overlap between chunks
 2. **Embed**: Each chunk is sent to the embedding provider (local fastembed or API)
@@ -120,7 +123,7 @@ Anteroom:
 2. Re-chunks the new content
 3. Re-embeds all new chunks
 
-The content hash on each chunk ensures that unchanged chunks aren't re-embedded unnecessarily.
+All old chunks are deleted and the content is re-chunked and re-embedded from scratch.
 
 ## Deleting Sources
 

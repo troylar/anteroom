@@ -29,7 +29,7 @@ embeddings:
 | `api_key` | string | `""` | API key (uses main `ai.api_key` if empty) |
 | `api_key_command` | string | `""` | Shell command to fetch API key dynamically (runs on each request) |
 
-**Environment variables:** `AI_EMBEDDINGS_ENABLED`, `AI_EMBEDDINGS_PROVIDER`, `AI_EMBEDDINGS_MODEL`, `AI_EMBEDDINGS_DIMENSIONS`, `AI_EMBEDDINGS_BASE_URL`, `AI_EMBEDDINGS_API_KEY`
+**Environment variables:** `AI_CHAT_EMBEDDINGS_ENABLED`, `AI_CHAT_EMBEDDINGS_PROVIDER`, `AI_CHAT_EMBEDDINGS_MODEL`, `AI_CHAT_EMBEDDINGS_DIMENSIONS`, `AI_CHAT_EMBEDDINGS_LOCAL_MODEL`, `AI_CHAT_EMBEDDINGS_BASE_URL`, `AI_CHAT_EMBEDDINGS_API_KEY`, `AI_CHAT_EMBEDDINGS_API_KEY_COMMAND`
 
 ### Auto-detection
 
@@ -77,6 +77,8 @@ rag:
 | `include_sources` | bool | `true` | Whether to search knowledge source chunks |
 | `include_conversations` | bool | `true` | Whether to search past conversation messages |
 | `exclude_current` | bool | `true` | Whether to exclude the current conversation from message search results |
+
+**Environment variables:** `AI_CHAT_RAG_ENABLED`, `AI_CHAT_RAG_MAX_CHUNKS`, `AI_CHAT_RAG_MAX_TOKENS`, `AI_CHAT_RAG_SIMILARITY_THRESHOLD`, `AI_CHAT_RAG_INCLUDE_SOURCES`, `AI_CHAT_RAG_INCLUDE_CONVERSATIONS`, `AI_CHAT_RAG_EXCLUDE_CURRENT`
 
 ### Tuning the Threshold
 

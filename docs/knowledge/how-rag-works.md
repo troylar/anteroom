@@ -29,7 +29,7 @@ Every user and assistant message longer than 10 characters is embedded by the ba
 
 ### Knowledge Sources
 
-Sources are documents you explicitly add to the knowledge base --- text, URLs, or file uploads. When a source is created, its content is split into chunks and each chunk is embedded.
+Sources are documents you explicitly add to the knowledge base --- text notes or file uploads. When a source is created with text content, the content is split into chunks and each chunk is embedded. URL sources store a reference and are only chunked/embedded if content is explicitly provided.
 
 - **When**: Immediately on source creation (inline), with background worker as fallback
 - **Chunking**: Split at sentence boundaries (`.` `!` `?`), ~1000 characters per chunk, 200-character overlap between chunks
@@ -322,13 +322,8 @@ Possible `rag_status` values:
 | `no_results` | Search ran but nothing matched the threshold |
 | `disabled` | RAG is disabled in config |
 | `failed` | Embedding or search failed (logged, non-fatal) |
-
-### Embedding Stats
-
-Check embedding coverage via the API:
-
-```bash
-curl http://localhost:8080/api/usage
-```
-
-The response includes embedding statistics: total messages, embedded count, pending count, and failure count.
+| `no_config` | No embedding service or config available |
+| `skipped_plan_mode` | RAG skipped because planning mode is active |
+| `no_vec_support` | Vector search library (usearch) not installed |
+| `no_embedding_service` | Embedding service not initialized |
+| `skipped` | RAG skipped for another reason (e.g., no query text) |

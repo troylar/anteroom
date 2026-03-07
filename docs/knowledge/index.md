@@ -2,7 +2,7 @@
 
 ## Why Knowledge?
 
-Anteroom can remember things across conversations. When you add knowledge sources --- documents, URLs, text notes --- or simply chat, Anteroom embeds that content into a vector index. On every new message, it searches for semantically relevant context and injects it into the AI's prompt automatically.
+Anteroom can remember things across conversations. When you add knowledge sources --- documents, text notes, or file uploads --- or simply chat, Anteroom embeds that content into a vector index. On every new message, it searches for semantically relevant context and injects it into the AI's prompt automatically.
 
 This is **Retrieval-Augmented Generation (RAG)**: the AI doesn't just respond from its training data, it draws on *your* data --- project docs, past conversations, uploaded files --- to give more relevant answers.
 
@@ -17,7 +17,7 @@ This is **Retrieval-Augmented Generation (RAG)**: the AI doesn't just respond fr
 
 | Concept | What It Is |
 |---------|-----------|
-| **Source** | A knowledge document (text, URL, or file) added to the knowledge base |
+| **Source** | A knowledge document (text, file upload, or URL reference) added to the knowledge base |
 | **Source chunk** | A segment of a source, split at sentence boundaries for embedding |
 | **Embedding** | A vector representation of text, used for similarity search |
 | **Vector index** | The search index (usearch) that enables fast nearest-neighbor lookup |

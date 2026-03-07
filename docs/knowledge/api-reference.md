@@ -198,63 +198,110 @@ DELETE /api/source-groups/{group_id}/sources/{source_id}
 
 ---
 
-## Semantic Search
+## Search
 
-### Search Messages
+### Semantic Search
 
 ```
-GET /api/search/messages
+GET /api/search/semantic
 ```
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `q` | string | | Search query (required) |
-| `limit` | integer | `20` | Maximum results |
+| `limit` | integer | `20` | Maximum results (1--100) |
 | `conversation_id` | string | | Filter to a specific conversation |
-| `space_id` | string | | Filter to a specific space |
 
-Requires embeddings to be enabled. Returns semantically similar messages sorted by relevance.
+Requires embeddings and usearch to be available. Searches both messages and source chunks in a single request.
 
 **Response:**
 ```json
 {
+  "results": [
+    {
+      "conversation_id": "uuid",
+      "title": "Conversation title",
+      "type": "chat",
+      "messages": [
+        {
+          "id": "uuid",
+          "content": "...",
+          "role": "assistant",
+          "distance": 0.23
+        }
+      ]
+    }
+  ],
+  "source_results": [
+    {
+      "source_id": "uuid",
+      "title": "Source title",
+      "chunks": [
+        {
+          "chunk_id": "uuid",
+          "content": "...",
+          "chunk_index": 0,
+          "distance": 0.31
+        }
+      ]
+    }
+  ]
+}
+```
+
+Returns `503` if embeddings or usearch are not available.
+
+### Unified Search
+
+```
+GET /api/search
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `q` | string | | Search query (required) |
+| `mode` | string | `"auto"` | Search mode: `auto`, `keyword`, or `semantic` |
+| `limit` | integer | `20` | Maximum results (1--100) |
+| `type` | string | | Filter by conversation type: `chat`, `note`, or `document` |
+
+In `auto` mode, uses semantic search if available, falls back to keyword. In `semantic` mode, returns `503` if unavailable.
+
+**Semantic mode response:**
+```json
+{
+  "mode": "semantic",
   "results": [
     {
       "message_id": "uuid",
       "conversation_id": "uuid",
       "content": "...",
       "role": "assistant",
-      "distance": 0.23
+      "distance": 0.23,
+      "conversation_type": "chat"
     }
-  ]
-}
-```
-
-Returns `400` if embeddings/usearch are not available.
-
-### Search Source Chunks
-
-```
-GET /api/search/sources
-```
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `q` | string | | Search query (required) |
-| `limit` | integer | `20` | Maximum results |
-| `source_id` | string | | Filter to a specific source |
-| `space_id` | string | | Filter to a specific space |
-
-**Response:**
-```json
-{
-  "results": [
+  ],
+  "source_results": [
     {
       "chunk_id": "uuid",
       "source_id": "uuid",
       "content": "...",
       "chunk_index": 0,
       "distance": 0.31
+    }
+  ]
+}
+```
+
+**Keyword mode response:**
+```json
+{
+  "mode": "keyword",
+  "results": [
+    {
+      "conversation_id": "uuid",
+      "title": "Conversation title",
+      "type": "chat",
+      "message_count": 5
     }
   ]
 }
