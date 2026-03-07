@@ -803,6 +803,7 @@ class ToolExecutorContext:
     request_config: Any
     rate_limiter: Any = None
     skill_registry: Any = None
+    rule_enforcer: Any = None
     subagent_counter: list[int] = field(default_factory=lambda: [0])
     max_subagent_events: int = 500
 
@@ -890,12 +891,14 @@ async def _execute_web_tool(ctx: ToolExecutorContext, tool_name: str, arguments:
         }
 
     if ctx.tool_registry.has_tool(tool_name):
-        result = await ctx.tool_registry.call_tool(tool_name, arguments, confirm_callback=_confirm)
+        result = await ctx.tool_registry.call_tool(
+            tool_name, arguments, confirm_callback=_confirm, rule_enforcer_override=ctx.rule_enforcer
+        )
         if result.get("_approval_decision") == "allowed_once":
             result["_approval_decision"] = _scope_to_decision(ctx.confirm_ctx)
         return dict(result)
     if ctx.mcp_manager:
-        verdict = ctx.tool_registry.check_safety(tool_name, arguments)
+        verdict = ctx.tool_registry.check_safety(tool_name, arguments, rule_enforcer_override=ctx.rule_enforcer)
         if verdict and verdict.needs_approval:
             if verdict.hard_denied:
                 return {
@@ -1939,13 +1942,6 @@ async def chat(conversation_id: str, request: Request) -> Any:
     # Build per-request registries scoped to the active space
     req_art_reg, req_skill_reg, req_rule_enf = _get_request_registries(request, db, space_id)
 
-    # Save the global rule enforcer so we can restore it after this request.
-    # Space-scoped requests temporarily override the shared tool_registry's
-    # enforcer to include space-attached hard rules.
-    _saved_rule_enforcer = getattr(tool_registry, "_rule_enforcer", None)
-    if req_rule_enf is not None and space_id:
-        tool_registry.set_rule_enforcer(req_rule_enf)
-
     tools_openai, plan_path, plan_prompt = _build_tool_list(
         tool_registry=tool_registry,
         mcp_manager=mcp_manager,
@@ -2043,6 +2039,7 @@ async def chat(conversation_id: str, request: Request) -> Any:
         request_config=request.app.state.config,
         rate_limiter=_rate_limiter,
         skill_registry=req_skill_reg,
+        rule_enforcer=req_rule_enf,
     )
 
     async def _tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -2079,16 +2076,7 @@ async def chat(conversation_id: str, request: Request) -> Any:
         user_msg=user_msg,
     )
 
-    async def _stream_with_enforcer_restore() -> Any:
-        """Wrap streaming to restore the global rule enforcer on completion."""
-        try:
-            async for event in _stream_chat_events(stream_ctx):
-                yield event
-        finally:
-            if _saved_rule_enforcer is not tool_registry._rule_enforcer:
-                tool_registry.set_rule_enforcer(_saved_rule_enforcer)
-
-    return EventSourceResponse(_stream_with_enforcer_restore())
+    return EventSourceResponse(_stream_chat_events(stream_ctx))
 
 
 @router.post("/conversations/{conversation_id}/stop")

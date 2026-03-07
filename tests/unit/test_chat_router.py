@@ -442,3 +442,77 @@ class TestGetRequestRegistries:
         assert art is global_art
         assert skill is global_skill
         assert rules is global_rules
+
+
+class TestRuleEnforcerOverride:
+    """rule_enforcer_override avoids mutating shared tool_registry state."""
+
+    def test_check_safety_uses_override_enforcer(self) -> None:
+        """check_safety should use the override enforcer, not the instance field."""
+        from anteroom.tools import ToolRegistry
+
+        reg = ToolRegistry()
+        # No instance-level enforcer set
+        assert reg._rule_enforcer is None
+
+        # Override enforcer that blocks everything
+        override = MagicMock()
+        override.check_tool_call.return_value = (True, "blocked by space rule", "space:rule1")
+
+        verdict = reg.check_safety("bash", {"command": "ls"}, rule_enforcer_override=override)
+        assert verdict is not None
+        assert verdict.hard_denied is True
+        assert "space:rule1" in verdict.reason
+        override.check_tool_call.assert_called_once_with("bash", {"command": "ls"})
+
+    def test_check_safety_falls_back_to_instance_enforcer(self) -> None:
+        """Without override, check_safety uses the instance-level enforcer."""
+        from anteroom.tools import ToolRegistry
+
+        reg = ToolRegistry()
+        instance_enforcer = MagicMock()
+        instance_enforcer.check_tool_call.return_value = (False, "", "")
+        reg.set_rule_enforcer(instance_enforcer)
+
+        verdict = reg.check_safety("bash", {"command": "ls"})
+        instance_enforcer.check_tool_call.assert_called_once()
+        # Not blocked, so verdict depends on safety config (None = no config)
+        assert verdict is None
+
+    def test_check_safety_override_takes_precedence(self) -> None:
+        """Override enforcer takes precedence over instance enforcer."""
+        from anteroom.tools import ToolRegistry
+
+        reg = ToolRegistry()
+        instance_enforcer = MagicMock()
+        instance_enforcer.check_tool_call.return_value = (False, "", "")
+        reg.set_rule_enforcer(instance_enforcer)
+
+        override = MagicMock()
+        override.check_tool_call.return_value = (True, "space blocks this", "space:rule2")
+
+        verdict = reg.check_safety("bash", {"command": "rm -rf /"}, rule_enforcer_override=override)
+        assert verdict is not None
+        assert verdict.hard_denied is True
+        # Override was used, not instance
+        override.check_tool_call.assert_called_once()
+        instance_enforcer.check_tool_call.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_call_tool_passes_override_to_check_safety(self) -> None:
+        """call_tool threads rule_enforcer_override through to check_safety."""
+        from anteroom.tools import ToolRegistry
+
+        reg = ToolRegistry()
+
+        async def mock_handler(**kwargs: object) -> dict:
+            return {"output": "ok"}
+
+        reg.register("read_file", mock_handler, {"name": "read_file", "parameters": {}})
+
+        override = MagicMock()
+        override.check_tool_call.return_value = (True, "blocked", "rule:x")
+
+        result = await reg.call_tool("read_file", {"path": "/tmp/x"}, rule_enforcer_override=override)
+        assert result.get("safety_blocked") is True
+        override.check_tool_call.assert_called_once()
