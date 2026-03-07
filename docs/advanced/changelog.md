@@ -7,6 +7,33 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 7, 2026
 
+### v1.100.2 — Clearer First Steps
+
+This release overhauls Anteroom's onboarding documentation so new users understand what the tool does for them before encountering advanced concepts like packs, artifacts, and precedence layers.
+
+#### README Restructured Around Outcomes
+
+The README now leads with three concrete user jobs — secure chat, real work with agentic tools, and shared team conventions — before diving into enterprise governance. Packs and spaces are introduced as optional power features rather than required concepts. (#793)
+
+#### Start Here Guide
+
+A new top-level "Start Here" page routes first-time users into one of three guided paths: chat securely, use an AI coding assistant, or share team conventions. Each path links to no more than three follow-up pages. (#794)
+
+See [Start Here](../start-here.md) in the docs.
+
+#### Packs and Spaces Docs Reframed
+
+Both packs and spaces documentation now answer "why would I use this?" before explaining YAML schemas and architecture. The packs quickstart leads with installing an existing pack before teaching how to create one. (#797, #796)
+
+See [Packs](../packs/index.md) and [Spaces](../spaces/index.md) for the reframed docs.
+
+#### Bug Fixes
+
+- Fixed ASVS compliance level incorrectly stated as L1 in three doc pages (#792)
+- Renamed `projects.md` to `spaces.md` in web-ui and API docs, added URL redirects (#792)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.100.2)
+
 ### v1.100.1 — Spaces Get Smarter
 
 This patch release strengthens how Anteroom manages pack artifacts and space selections — two areas where subtle bugs could cause unexpected behavior in multi-space workflows.
