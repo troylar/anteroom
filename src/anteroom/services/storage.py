@@ -1445,13 +1445,14 @@ def search_similar_messages(
 
 
 def get_unembedded_messages(db: ThreadSafeConnection, limit: int = 100) -> list[dict[str, Any]]:
-    """Get messages that don't have embeddings yet."""
+    """Get messages that don't have embeddings yet, or that need re-embedding."""
     rows = db.execute_fetchall(
         """
         SELECT m.id, m.conversation_id, m.content, m.role
         FROM messages m
         LEFT JOIN message_embeddings me ON me.message_id = m.id
-        WHERE me.message_id IS NULL AND m.role IN ('user', 'assistant')
+        WHERE (me.message_id IS NULL OR me.status = 'pending')
+              AND m.role IN ('user', 'assistant')
         ORDER BY m.created_at
         LIMIT ?
         """,
@@ -1521,7 +1522,7 @@ def get_embedding_stats(db: ThreadSafeConnection) -> dict[str, Any]:
     total_row = db.execute_fetchone("SELECT COUNT(*) FROM messages WHERE role IN ('user', 'assistant')")
     total_messages = total_row[0] if total_row else 0
 
-    embedded_row = db.execute_fetchone("SELECT COUNT(*) FROM message_embeddings")
+    embedded_row = db.execute_fetchone("SELECT COUNT(*) FROM message_embeddings WHERE status = ?", ("embedded",))
     embedded_messages = embedded_row[0] if embedded_row else 0
 
     return {
@@ -1942,13 +1943,13 @@ def list_source_chunks(db: ThreadSafeConnection, source_id: str) -> list[dict[st
 
 
 def get_unembedded_source_chunks(db: ThreadSafeConnection, limit: int = 100) -> list[dict[str, Any]]:
-    """Get source chunks that don't have embeddings yet."""
+    """Get source chunks that don't have embeddings yet, or that need re-embedding."""
     rows = db.execute_fetchall(
         """
         SELECT sc.id, sc.source_id, sc.content, sc.content_hash
         FROM source_chunks sc
         LEFT JOIN source_chunk_embeddings sce ON sce.chunk_id = sc.id
-        WHERE sce.chunk_id IS NULL
+        WHERE sce.chunk_id IS NULL OR sce.status = 'pending'
         ORDER BY sc.created_at
         LIMIT ?
         """,
