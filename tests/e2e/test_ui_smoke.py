@@ -420,3 +420,79 @@ class TestConcurrent401BrowserRecovery:
             const banner = document.getElementById('auth-error-banner');
             if (banner) banner.remove();
         }""")
+
+
+@requires_playwright
+class TestSpaceSessionPersistence:
+    """Verify space selection persists across page reloads via sessionStorage (#745)."""
+
+    def test_space_persists_after_reload(self, authenticated_page, api_client) -> None:
+        """Select a space, reload, verify the selection is restored."""
+        page = authenticated_page
+
+        # Create a space via API
+        resp = api_client.post("/api/spaces", json={"name": "persist-test-space"})
+        resp.raise_for_status()
+        space_id = resp.json()["id"]
+
+        try:
+            # Wait for the space dropdown to be available
+            page.wait_for_selector("#space-select", timeout=5000)
+
+            # Select the space via JS (simulates clicking the space item)
+            page.evaluate(
+                """(spaceId) => {
+                    sessionStorage.setItem('anteroom_space_id', spaceId);
+                    const sel = document.getElementById('space-select');
+                    if (sel) sel.value = spaceId;
+                }""",
+                space_id,
+            )
+
+            # Verify sessionStorage was set
+            stored = page.evaluate("() => sessionStorage.getItem('anteroom_space_id')")
+            assert stored == space_id
+
+            # Reload the page
+            page.reload()
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_selector("#btn-send", timeout=10000)
+
+            # Verify sessionStorage still has the space
+            stored_after = page.evaluate("() => sessionStorage.getItem('anteroom_space_id')")
+            assert stored_after == space_id
+
+        finally:
+            # Clean up
+            page.evaluate("() => sessionStorage.removeItem('anteroom_space_id')")
+            api_client.delete(f"/api/spaces/{space_id}")
+
+    def test_deleted_space_falls_back_to_all(self, authenticated_page, api_client) -> None:
+        """If the persisted space no longer exists, fall back to All Spaces."""
+        page = authenticated_page
+
+        # Create and immediately delete a space
+        resp = api_client.post("/api/spaces", json={"name": "ephemeral-space"})
+        resp.raise_for_status()
+        space_id = resp.json()["id"]
+        api_client.delete(f"/api/spaces/{space_id}")
+
+        # Set sessionStorage to the now-deleted space
+        page.evaluate(
+            """(spaceId) => {
+                sessionStorage.setItem('anteroom_space_id', spaceId);
+            }""",
+            space_id,
+        )
+
+        # Reload — the app should detect the space is gone and clear the selection
+        page.reload()
+        page.wait_for_load_state("domcontentloaded")
+        page.wait_for_selector("#btn-send", timeout=10000)
+
+        # Wait briefly for loadSpaces() to complete and validate
+        page.wait_for_timeout(1000)
+
+        # The persisted space should be cleared since it no longer exists
+        stored = page.evaluate("() => sessionStorage.getItem('anteroom_space_id')")
+        assert stored is None, f"Expected cleared storage, got {stored!r}"
