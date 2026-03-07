@@ -608,15 +608,14 @@ class TestScopedSearchWidening:
 
 
 @pytest.mark.skipif(not USEARCH_AVAILABLE, reason="usearch not available")
-class TestRebuildPartialIndexLoss:
-    """Test that rebuild_from_db detects partial index loss."""
+class TestRebuildIndexRecovery:
+    """Test that rebuild_from_db detects index/metadata divergence."""
 
-    def test_partial_loss_resets_to_pending(self) -> None:
+    def test_partial_loss_resets_missing_to_pending(self) -> None:
         db = _init_db()
         tmp = tempfile.mkdtemp()
         mgr = VectorIndexManager(Path(tmp), dimensions=DIMS)
 
-        # Create a real conversation and messages for FK constraints
         conv_id = "conv-partial"
         msgs = _seed_messages(db, conv_id, count=5)
         for i, msg in enumerate(msgs):
@@ -636,11 +635,78 @@ class TestRebuildPartialIndexLoss:
 
         assert mgr.messages.count() == 2
 
-        # Rebuild should detect the mismatch and reset
         mgr.rebuild_from_db(db)
 
-        rows = db.execute_fetchall(
-            "SELECT status FROM message_embeddings WHERE status = 'pending'"
+        # Only the 3 missing keys should be reset to pending
+        pending = db.execute_fetchall(
+            "SELECT message_id FROM message_embeddings WHERE status = 'pending'"
         )
-        assert len(rows) == 5  # All reset to pending
-        assert mgr.messages.count() == 0  # Index cleared
+        embedded = db.execute_fetchall(
+            "SELECT message_id FROM message_embeddings WHERE status = 'embedded'"
+        )
+        assert len(pending) == 3
+        assert len(embedded) == 2
+
+    def test_key_set_divergence_resets_missing_keys(self) -> None:
+        """Same count but different keys — the exact scenario from the review."""
+        db = _init_db()
+        tmp = tempfile.mkdtemp()
+        mgr = VectorIndexManager(Path(tmp), dimensions=DIMS)
+
+        conv_id = "conv-diverge"
+        msgs = _seed_messages(db, conv_id, count=3)
+        msg_a, msg_b, msg_c = msgs[0], msgs[1], msgs[2]
+
+        # SQLite says B and C are embedded
+        for msg in [msg_b, msg_c]:
+            db.execute(
+                "INSERT OR REPLACE INTO message_embeddings "
+                "(message_id, conversation_id, chunk_index, content_hash, created_at, status) "
+                "VALUES (?, ?, 0, 'hash', '2025-01-01', 'embedded')",
+                (msg["id"], conv_id),
+            )
+        db.commit()
+
+        # But the on-disk index contains A and B (C was never saved)
+        emb = [0.1] * DIMS
+        mgr.messages.add(msg_a["id"], emb)
+        mgr.messages.add(msg_b["id"], emb)
+        assert mgr.messages.count() == 2
+
+        mgr.rebuild_from_db(db)
+
+        # B should stay embedded (exists in index), C should be reset to pending
+        row_b = db.execute_fetchone(
+            "SELECT status FROM message_embeddings WHERE message_id = ?", (msg_b["id"],)
+        )
+        row_c = db.execute_fetchone(
+            "SELECT status FROM message_embeddings WHERE message_id = ?", (msg_c["id"],)
+        )
+        assert row_b["status"] == "embedded"
+        assert row_c["status"] == "pending"
+
+    def test_full_index_loss_resets_all(self) -> None:
+        db = _init_db()
+        tmp = tempfile.mkdtemp()
+        mgr = VectorIndexManager(Path(tmp), dimensions=DIMS)
+
+        conv_id = "conv-full-loss"
+        msgs = _seed_messages(db, conv_id, count=3)
+        for msg in msgs:
+            db.execute(
+                "INSERT OR REPLACE INTO message_embeddings "
+                "(message_id, conversation_id, chunk_index, content_hash, created_at, status) "
+                "VALUES (?, ?, 0, 'hash', '2025-01-01', 'embedded')",
+                (msg["id"], conv_id),
+            )
+        db.commit()
+
+        # Index is empty (simulating full index file loss)
+        assert mgr.messages.count() == 0
+
+        mgr.rebuild_from_db(db)
+
+        pending = db.execute_fetchall(
+            "SELECT message_id FROM message_embeddings WHERE status = 'pending'"
+        )
+        assert len(pending) == 3

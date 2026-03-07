@@ -151,6 +151,12 @@ class VectorIndex:
             matches.append({"key": string_key, "distance": float(distance)})
         return matches
 
+    def contains(self, key: str) -> bool:
+        """Check if a key exists in the index."""
+        int_key = _string_key_to_int(key)
+        with self._lock:
+            return int_key in self._index
+
     def count(self) -> int:
         """Return the number of vectors in the index."""
         return len(self._index)
@@ -231,12 +237,14 @@ class VectorIndexManager:
             self._source_chunks.save()
 
     def rebuild_from_db(self, db: Any) -> None:
-        """Rebuild key maps and detect index-file loss.
+        """Rebuild key maps and repair index/metadata divergence.
 
-        This is the crash/startup recovery path. It reads metadata rows from
-        SQLite and populates the reverse key maps. If the usearch index is
-        empty but metadata rows claim 'embedded', those rows are reset to
-        'pending' so the embedding worker will re-embed them.
+        This is the crash/startup recovery path. For each "embedded" metadata
+        row, it verifies the corresponding key actually exists in the usearch
+        index. Rows whose keys are missing from the index are reset to
+        "pending" so the embedding worker re-embeds them. This handles full
+        index loss, partial index loss, and key-set divergence (same count
+        but different keys) after an unsaved mutation sequence.
         """
         if not self._enabled:
             return
@@ -247,23 +255,38 @@ class VectorIndexManager:
                     "SELECT message_id, conversation_id FROM message_embeddings WHERE status = ?",
                     ("embedded",),
                 )
-                index_count = self._messages.count()
-                if rows and index_count < len(rows):
-                    logger.warning(
-                        "Message usearch index has %d vectors but %d rows claim 'embedded'. "
-                        "Resetting to 'pending' for re-embedding.",
-                        index_count,
-                        len(rows),
-                    )
-                    db.execute(
-                        "UPDATE message_embeddings SET status = ? WHERE status = ?",
-                        ("pending", "embedded"),
-                    )
-                    db.commit()
-                    self._messages.clear()
+                if not rows:
+                    logger.info("No embedded message rows; nothing to rebuild")
                 else:
-                    self._messages.rebuild_key_map([(r["message_id"], r["conversation_id"]) for r in rows])
-                    logger.info("Rebuilt message vector key map: %d entries", len(rows))
+                    present = []
+                    missing_ids = []
+                    for r in rows:
+                        if self._messages.contains(r["message_id"]):
+                            present.append((r["message_id"], r["conversation_id"]))
+                        else:
+                            missing_ids.append(r["message_id"])
+
+                    if missing_ids:
+                        logger.warning(
+                            "%d of %d message embeddings missing from usearch index; "
+                            "resetting to 'pending' for re-embedding.",
+                            len(missing_ids),
+                            len(rows),
+                        )
+                        placeholders = ",".join("?" * len(missing_ids))
+                        db.execute(
+                            f"UPDATE message_embeddings SET status = 'pending'"
+                            f" WHERE message_id IN ({placeholders})",
+                            tuple(missing_ids),
+                        )
+                        db.commit()
+
+                    self._messages.rebuild_key_map(present)
+                    logger.info(
+                        "Rebuilt message vector key map: %d present, %d reset",
+                        len(present),
+                        len(missing_ids),
+                    )
             except Exception:
                 logger.warning("Failed to rebuild message vector key map", exc_info=True)
 
@@ -273,22 +296,37 @@ class VectorIndexManager:
                     "SELECT chunk_id, source_id FROM source_chunk_embeddings WHERE status = ?",
                     ("embedded",),
                 )
-                index_count = self._source_chunks.count()
-                if rows and index_count < len(rows):
-                    logger.warning(
-                        "Source chunk usearch index has %d vectors but %d rows claim 'embedded'. "
-                        "Resetting to 'pending' for re-embedding.",
-                        index_count,
-                        len(rows),
-                    )
-                    db.execute(
-                        "UPDATE source_chunk_embeddings SET status = ? WHERE status = ?",
-                        ("pending", "embedded"),
-                    )
-                    db.commit()
-                    self._source_chunks.clear()
+                if not rows:
+                    logger.info("No embedded source chunk rows; nothing to rebuild")
                 else:
-                    self._source_chunks.rebuild_key_map([(r["chunk_id"], r["source_id"]) for r in rows])
-                    logger.info("Rebuilt source chunk vector key map: %d entries", len(rows))
+                    present = []
+                    missing_ids = []
+                    for r in rows:
+                        if self._source_chunks.contains(r["chunk_id"]):
+                            present.append((r["chunk_id"], r["source_id"]))
+                        else:
+                            missing_ids.append(r["chunk_id"])
+
+                    if missing_ids:
+                        logger.warning(
+                            "%d of %d source chunk embeddings missing from usearch index; "
+                            "resetting to 'pending' for re-embedding.",
+                            len(missing_ids),
+                            len(rows),
+                        )
+                        placeholders = ",".join("?" * len(missing_ids))
+                        db.execute(
+                            f"UPDATE source_chunk_embeddings SET status = 'pending'"
+                            f" WHERE chunk_id IN ({placeholders})",
+                            tuple(missing_ids),
+                        )
+                        db.commit()
+
+                    self._source_chunks.rebuild_key_map(present)
+                    logger.info(
+                        "Rebuilt source chunk vector key map: %d present, %d reset",
+                        len(present),
+                        len(missing_ids),
+                    )
             except Exception:
                 logger.warning("Failed to rebuild source chunk vector key map", exc_info=True)
