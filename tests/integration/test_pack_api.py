@@ -369,7 +369,10 @@ class TestRegistryReloadViaAPI:
         app: FastAPI,
         client: TestClient,
     ) -> None:
-        _install_pack(db, _security_pack(tmp_path))
+        from anteroom.services.pack_attachments import attach_pack
+
+        result = _install_pack(db, _security_pack(tmp_path))
+        attach_pack(db, result["id"])
 
         # Manually load registry first
         app.state.artifact_registry.load_from_db(db)
@@ -389,7 +392,10 @@ class TestRegistryReloadViaAPI:
         app: FastAPI,
         client: TestClient,
     ) -> None:
-        _install_pack(db, _security_pack(tmp_path))
+        from anteroom.services.pack_attachments import attach_pack
+
+        result = _install_pack(db, _security_pack(tmp_path))
+        attach_pack(db, result["id"])
 
         # Load registries
         registry = app.state.artifact_registry
@@ -409,17 +415,20 @@ class TestRegistryReloadViaAPI:
         app: FastAPI,
         client: TestClient,
     ) -> None:
-        """attach_pack triggers _reload_registries, which reloads from DB."""
+        """attach_pack triggers _reload_registries, which reloads from DB.
+
+        Before attach, unattached pack artifacts are invisible (attached_only=True).
+        After attach, they become visible.
+        """
         _install_pack(db, _security_pack(tmp_path))
         app.state.artifact_registry.load_from_db(db)
-        initial_count = app.state.artifact_registry.count
+        assert app.state.artifact_registry.count == 0  # not attached yet
 
         resp = client.post("/api/packs/acme/security-baseline/attach", json={})
         assert resp.status_code == 200
 
-        # Registry should still have the same artifacts (reload doesn't change count,
-        # but confirms the reload path works without error)
-        assert app.state.artifact_registry.count == initial_count
+        # After attach, the reload makes artifacts visible
+        assert app.state.artifact_registry.count == 2
 
     def test_registry_updated_after_detach(
         self,
@@ -429,14 +438,15 @@ class TestRegistryReloadViaAPI:
         client: TestClient,
     ) -> None:
         _install_pack(db, _security_pack(tmp_path))
-        app.state.artifact_registry.load_from_db(db)
 
         client.post("/api/packs/acme/security-baseline/attach", json={})
+        assert app.state.artifact_registry.count == 2  # attached → visible
+
         resp = client.delete("/api/packs/acme/security-baseline/attach")
         assert resp.status_code == 200
 
-        # Registry should still be loaded (detach doesn't remove artifacts)
-        assert app.state.artifact_registry.count == 2
+        # After detach, artifacts are no longer visible (attached_only filtering)
+        assert app.state.artifact_registry.count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1032,8 +1042,8 @@ class TestRuleEnforcementViaAPI:
         app: FastAPI,
         client: TestClient,
     ) -> None:
-        """After detaching (not removing) a pack, rules still loaded
-        (detach only removes attachment, not the pack or its artifacts)."""
+        """After detaching a pack, its artifacts become invisible
+        (attached_only filtering) and its rules are cleared."""
         _install_pack(db, _security_pack(tmp_path))
         client.post("/api/packs/acme/security-baseline/attach", json={})
 
@@ -1044,9 +1054,10 @@ class TestRuleEnforcementViaAPI:
         # Detach
         client.delete("/api/packs/acme/security-baseline/attach")
 
-        # Registry reloaded — artifacts still exist, enforcer reloaded
-        # The rule artifact is still in DB, so it's still in the registry
-        assert app.state.artifact_registry.count == 2
+        # Registry reloaded — detached pack artifacts are filtered out
+        assert app.state.artifact_registry.count == 0
+        # Rules from the detached pack are also cleared
+        assert enforcer.rule_count == 0
 
 
 # ---------------------------------------------------------------------------

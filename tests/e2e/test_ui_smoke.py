@@ -420,3 +420,92 @@ class TestConcurrent401BrowserRecovery:
             const banner = document.getElementById('auth-error-banner');
             if (banner) banner.remove();
         }""")
+
+
+@requires_playwright
+class TestSpaceSessionPersistence:
+    """Verify space selection persists across page reloads via sessionStorage (#745)."""
+
+    def test_space_persists_after_reload(self, authenticated_page, api_client) -> None:
+        """Select a space through the UI, reload, verify the dropdown and list reflect the selection."""
+        page = authenticated_page
+
+        # Create a space via API
+        resp = api_client.post("/api/spaces", json={"name": "persist-test-space"})
+        resp.raise_for_status()
+        space_id = resp.json()["id"]
+
+        try:
+            # Reload to pick up the new space in the list
+            page.reload()
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_selector("#space-select", timeout=5000)
+
+            # Click the space item in the list (real UI interaction)
+            page.locator(".space-item-name:text('persist-test-space')").click()
+
+            # Wait for the click handler to update state + re-render
+            page.wait_for_timeout(500)
+
+            # Verify the dropdown reflects the selection
+            select_value = page.evaluate("() => document.getElementById('space-select').value")
+            assert select_value == space_id, f"Expected select={space_id}, got {select_value}"
+
+            # Reload the page — this is the actual test: does the app restore from sessionStorage?
+            page.reload()
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_selector("#space-select", timeout=10000)
+
+            # Wait for loadSpaces() to fetch and restore
+            page.wait_for_timeout(1000)
+
+            # Assert the dropdown value was restored by the app (not just browser storage)
+            restored_value = page.evaluate("() => document.getElementById('space-select').value")
+            assert restored_value == space_id, f"Dropdown not restored: expected {space_id}, got {restored_value}"
+
+            # Assert the space list item has the 'active' class
+            active_item = page.locator(".space-item.active .space-item-name")
+            assert active_item.count() == 1, "Expected exactly one active space item"
+            assert active_item.text_content().startswith("persist-test-space")
+
+        finally:
+            page.evaluate("() => sessionStorage.removeItem('anteroom_space_id')")
+            api_client.delete(f"/api/spaces/{space_id}")
+
+    def test_deleted_space_falls_back_to_all(self, authenticated_page, api_client) -> None:
+        """If the persisted space no longer exists, fall back to All Spaces in the UI."""
+        page = authenticated_page
+
+        # Create and immediately delete a space
+        resp = api_client.post("/api/spaces", json={"name": "ephemeral-space"})
+        resp.raise_for_status()
+        space_id = resp.json()["id"]
+        api_client.delete(f"/api/spaces/{space_id}")
+
+        # Set sessionStorage to the now-deleted space (simulates prior session)
+        page.evaluate(
+            """(spaceId) => {
+                sessionStorage.setItem('anteroom_space_id', spaceId);
+            }""",
+            space_id,
+        )
+
+        # Reload — the app should detect the space is gone and clear the selection
+        page.reload()
+        page.wait_for_load_state("domcontentloaded")
+        page.wait_for_selector("#space-select", timeout=10000)
+
+        # Wait for loadSpaces() to fetch list and run validation
+        page.wait_for_timeout(1000)
+
+        # sessionStorage should be cleared by the app
+        stored = page.evaluate("() => sessionStorage.getItem('anteroom_space_id')")
+        assert stored is None, f"Expected cleared storage, got {stored!r}"
+
+        # Dropdown should show empty value (All Spaces)
+        select_value = page.evaluate("() => document.getElementById('space-select').value")
+        assert select_value == "", f"Dropdown should be empty, got {select_value!r}"
+
+        # The "All Spaces" item should have the 'active' class
+        all_spaces_active = page.locator(".space-item.space-all.active")
+        assert all_spaces_active.count() == 1, "All Spaces should be the active item"

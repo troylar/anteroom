@@ -40,7 +40,7 @@ What happens:
 4. Each artifact gets an `artifacts` row: `(id, fqn, type, namespace, name, content, content_hash, source, metadata, version)`
 5. A `pack_artifacts` junction row links each artifact to its pack
 
-**After install, the pack exists in the DB but is not yet active.** Config overlays only apply when the pack is attached. Skills, rules, and other artifacts are currently loaded from the DB at session start regardless of attachment state — attachment-aware filtering for non-config artifacts is planned.
+**After install, the pack exists in the DB but is not yet active.** Config overlays only apply when the pack is attached. Non-config artifacts (skills, rules, instructions, etc.) are also filtered by attachment state — `ArtifactRegistry.load_from_db()` passes `attached_only=True`, which excludes artifacts from unattached packs via a SQL JOIN on `pack_artifacts` and `pack_attachments`.
 
 ### Reinstall Behavior
 
@@ -145,17 +145,19 @@ The pack's artifacts become inactive but remain in the DB. Re-attach later witho
 
 ## Phase 3: Load (Artifact Registry)
 
-On startup (and after attach/detach/install), Anteroom loads all artifacts from the DB into the in-memory `ArtifactRegistry`.
+On startup (and after attach/detach/install), Anteroom loads artifacts from the DB into the in-memory `ArtifactRegistry`. Only artifacts from **attached** packs are included — unattached pack artifacts are excluded at query time.
 
 ```
-SQLite (artifacts table)
-       |
+SQLite (artifacts + pack_artifacts + pack_attachments)
+       |  filtered by attached_only=True
        v
-ArtifactRegistry.load_from_db()
+ArtifactRegistry.load_from_db(space_id=...)
        |
        v
 In-memory index (precedence-resolved, searchable)
 ```
+
+When a space is active, `load_from_db()` accepts a `space_id` parameter. This scopes the query to include artifacts from packs attached globally OR attached to that specific space. In the web UI, per-request registries are built via `_get_request_registries()` so each request sees the correct space-scoped artifacts.
 
 The registry resolves the 6-layer precedence stack:
 
@@ -176,13 +178,13 @@ When two artifacts have the same FQN (`@namespace/type/name`), the higher-layer 
 
 ### What the Registry Feeds
 
-| Consumer | What It Gets |
-|----------|-------------|
-| **SkillRegistry** | All `skill` artifacts → slash commands and `invoke_skill` tool |
-| **RuleEnforcer** | All `rule` artifacts with `enforce: hard` → tool call blocking |
-| **System prompt** | All `rule`, `instruction`, `context` artifacts → injected text |
-| **Config loader** | All `config_overlay` artifacts → merged into config chain |
-| **MCP manager** | All `mcp_server` artifacts → server connections |
+| Consumer | What It Gets | Space-Scoped? |
+|----------|-------------|---------------|
+| **SkillRegistry** | `skill` artifacts → slash commands and `invoke_skill` tool | Yes — per-request in web UI, per-session in CLI |
+| **RuleEnforcer** | `rule` artifacts with `enforce: hard` → tool call blocking | Yes — passed as `rule_enforcer_override` (no shared state mutation) |
+| **System prompt** | `rule`, `instruction`, `context` artifacts → injected text | Yes |
+| **Config loader** | `config_overlay` artifacts → merged into config chain | Yes — attached-only, excluded from registry load |
+| **MCP manager** | `mcp_server` artifacts (reserved type, not yet loaded at runtime — MCP servers are configured via `config.mcp_servers`) | N/A |
 
 ---
 

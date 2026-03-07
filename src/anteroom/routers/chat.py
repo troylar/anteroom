@@ -253,6 +253,48 @@ def _get_ai_service(request: Request, model_override: str | None = None) -> AISe
     return create_ai_service(config.ai)
 
 
+def _get_request_registries(request: Request, db: Any, space_id: str | None) -> tuple[Any, Any, Any]:
+    """Return (artifact_registry, skill_registry, rule_enforcer) scoped to the request.
+
+    When *space_id* is set, builds per-request registries that include
+    both global and space-scoped pack artifacts, skills, and rules.
+    Without a space, returns the app-level globals unchanged.
+    """
+    global_art = getattr(request.app.state, "artifact_registry", None)
+    global_skill = getattr(request.app.state, "skill_registry", None)
+    global_rules = getattr(request.app.state, "rule_enforcer", None)
+
+    if global_art is None or not space_id:
+        return global_art, global_skill, global_rules
+
+    from ..services.artifact_registry import ArtifactRegistry
+    from ..services.artifacts import ArtifactType
+
+    art_reg = ArtifactRegistry()
+    art_reg.load_from_db(db, space_id=space_id)
+
+    # Build per-request skill registry from space-scoped artifacts
+    skill_reg = None
+    if global_skill is not None:
+        from ..cli.skills import SkillRegistry
+
+        skill_reg = SkillRegistry()
+        # Copy global skills first, then overlay space-scoped ones
+        if hasattr(global_skill, "_skills"):
+            skill_reg._skills = dict(global_skill._skills)
+        skill_reg.load_from_artifacts(art_reg)
+
+    # Build per-request rule enforcer from space-scoped artifacts
+    rule_enf = None
+    if global_rules is not None:
+        from ..services.rule_enforcer import RuleEnforcer
+
+        rule_enf = RuleEnforcer()
+        rule_enf.load_rules(art_reg.list_all(artifact_type=ArtifactType.RULE))
+
+    return art_reg, skill_reg, rule_enf
+
+
 def _resolve_sources(
     db: Any,
     source_ids: list[str],
@@ -761,6 +803,7 @@ class ToolExecutorContext:
     request_config: Any
     rate_limiter: Any = None
     skill_registry: Any = None
+    rule_enforcer: Any = None
     subagent_counter: list[int] = field(default_factory=lambda: [0])
     max_subagent_events: int = 500
 
@@ -848,12 +891,14 @@ async def _execute_web_tool(ctx: ToolExecutorContext, tool_name: str, arguments:
         }
 
     if ctx.tool_registry.has_tool(tool_name):
-        result = await ctx.tool_registry.call_tool(tool_name, arguments, confirm_callback=_confirm)
+        result = await ctx.tool_registry.call_tool(
+            tool_name, arguments, confirm_callback=_confirm, rule_enforcer_override=ctx.rule_enforcer
+        )
         if result.get("_approval_decision") == "allowed_once":
             result["_approval_decision"] = _scope_to_decision(ctx.confirm_ctx)
         return dict(result)
     if ctx.mcp_manager:
-        verdict = ctx.tool_registry.check_safety(tool_name, arguments)
+        verdict = ctx.tool_registry.check_safety(tool_name, arguments, rule_enforcer_override=ctx.rule_enforcer)
         if verdict and verdict.needs_approval:
             if verdict.hard_denied:
                 return {
@@ -1894,6 +1939,9 @@ async def chat(conversation_id: str, request: Request) -> Any:
     tool_registry = request.app.state.tool_registry
     mcp_manager = request.app.state.mcp_manager
 
+    # Build per-request registries scoped to the active space
+    req_art_reg, req_skill_reg, req_rule_enf = _get_request_registries(request, db, space_id)
+
     tools_openai, plan_path, plan_prompt = _build_tool_list(
         tool_registry=tool_registry,
         mcp_manager=mcp_manager,
@@ -1903,7 +1951,7 @@ async def chat(conversation_id: str, request: Request) -> Any:
         max_tools=request.app.state.config.ai.max_tools,
         read_only=request.app.state.config.safety.read_only,
         tier_overrides=request.app.state.config.safety.tool_tiers,
-        skill_registry=getattr(request.app.state, "skill_registry", None),
+        skill_registry=req_skill_reg,
     )
 
     tools = tools_openai if tools_openai else None
@@ -1930,8 +1978,8 @@ async def chat(conversation_id: str, request: Request) -> Any:
         vec_enabled=getattr(request.app.state, "vec_enabled", False),
         embedding_service=getattr(request.app.state, "embedding_service", None),
         injection_detector=getattr(request.app.state, "injection_detector", None),
-        artifact_registry=getattr(request.app.state, "artifact_registry", None),
-        skill_registry=getattr(request.app.state, "skill_registry", None),
+        artifact_registry=req_art_reg,
+        skill_registry=req_skill_reg,
         space_id=space_id,
         attachment_filenames=_att_filenames,
     )
@@ -1990,7 +2038,8 @@ async def chat(conversation_id: str, request: Request) -> Any:
         sa_config=_sa_config,
         request_config=request.app.state.config,
         rate_limiter=_rate_limiter,
-        skill_registry=getattr(request.app.state, "skill_registry", None),
+        skill_registry=req_skill_reg,
+        rule_enforcer=req_rule_enf,
     )
 
     async def _tool_executor(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:

@@ -90,17 +90,27 @@ class ToolRegistry:
             for name, defn in self._definitions.items()
         ]
 
-    def check_safety(self, tool_name: str, arguments: dict[str, Any]) -> SafetyVerdict | None:
+    def check_safety(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        rule_enforcer_override: RuleEnforcer | None = None,
+    ) -> SafetyVerdict | None:
         """Check whether a tool call requires approval.
 
         Returns a SafetyVerdict if approval is needed/denied, or None if auto-allowed.
         A verdict with hard_denied=True means the tool is blocked by config (denied_tools
         or per-tool enabled=false) and must be blocked without prompting.
+
+        *rule_enforcer_override* lets callers provide a per-request enforcer
+        without mutating the shared instance field, avoiding concurrency issues.
         """
         # Hard rule enforcement runs unconditionally — even when safety is
         # disabled — so that ``enforce: hard`` pack rules cannot be bypassed.
-        if self._rule_enforcer is not None:
-            blocked, reason, rule_fqn = self._rule_enforcer.check_tool_call(tool_name, arguments)
+        enforcer = rule_enforcer_override or self._rule_enforcer
+        if enforcer is not None:
+            blocked, reason, rule_fqn = enforcer.check_tool_call(tool_name, arguments)
             if blocked:
                 return SafetyVerdict(
                     needs_approval=True,
@@ -223,12 +233,14 @@ class ToolRegistry:
         name: str,
         arguments: dict[str, Any],
         confirm_callback: ConfirmCallback | None = None,
+        *,
+        rule_enforcer_override: RuleEnforcer | None = None,
     ) -> dict[str, Any]:
         handler = self._handlers.get(name)
         if not handler:
             raise ValueError(f"Unknown built-in tool: {name}")
 
-        verdict = self.check_safety(name, arguments)
+        verdict = self.check_safety(name, arguments, rule_enforcer_override=rule_enforcer_override)
         approval_decision = "auto"
         user_approved_hard_block = False
         if verdict and verdict.needs_approval:

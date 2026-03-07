@@ -172,6 +172,19 @@ pack_sources:
 
 Space-scoped pack attachments are separate from global and project-scoped attachments. When resolving active packs, Anteroom unions all three scopes: global + space + project.
 
+## Space-Scoped Artifacts
+
+When a space is active, the artifact registry loads only artifacts from packs that are relevant to that space:
+
+- **Globally attached packs** — always included
+- **Space-scoped packs** — attached with `aroom pack attach <pack> --space`
+- **Standalone artifacts** — not linked to any pack (always included)
+- **Unattached pack artifacts** — excluded (installing a pack without attaching it does not activate its skills or rules)
+
+In the **web UI**, registries are built per-request via `_get_request_registries()`, so concurrent requests in different spaces see the correct artifacts without interfering with each other. Rule enforcement uses a `rule_enforcer_override` parameter rather than mutating shared state.
+
+In the **CLI**, registries are built at session start for the auto-detected or manually selected space.
+
 ## Database Model
 
 Spaces are stored in SQLite with the following tables:
