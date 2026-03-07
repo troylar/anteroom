@@ -253,6 +253,24 @@ def _get_ai_service(request: Request, model_override: str | None = None) -> AISe
     return create_ai_service(config.ai)
 
 
+def _get_request_artifact_registry(request: Request, db: Any, space_id: str | None) -> Any:
+    """Return an artifact registry scoped to the request's space.
+
+    When *space_id* is set, builds a fresh per-request registry that includes
+    both global and space-scoped pack artifacts.  Without a space, returns
+    the app-level global registry unchanged.
+    """
+    global_reg = getattr(request.app.state, "artifact_registry", None)
+    if global_reg is None or not space_id:
+        return global_reg
+
+    from ..services.artifact_registry import ArtifactRegistry
+
+    reg = ArtifactRegistry()
+    reg.load_from_db(db, space_id=space_id)
+    return reg
+
+
 def _resolve_sources(
     db: Any,
     source_ids: list[str],
@@ -1930,7 +1948,7 @@ async def chat(conversation_id: str, request: Request) -> Any:
         vec_enabled=getattr(request.app.state, "vec_enabled", False),
         embedding_service=getattr(request.app.state, "embedding_service", None),
         injection_detector=getattr(request.app.state, "injection_detector", None),
-        artifact_registry=getattr(request.app.state, "artifact_registry", None),
+        artifact_registry=_get_request_artifact_registry(request, db, space_id),
         skill_registry=getattr(request.app.state, "skill_registry", None),
         space_id=space_id,
         attachment_filenames=_att_filenames,

@@ -371,3 +371,42 @@ class TestExecuteWebToolInvokeSkill:
             assert not queue.empty()
         finally:
             _message_queues.pop(conv_id, None)
+
+
+class TestGetRequestArtifactRegistry:
+    """Verify per-request artifact registry with space scoping."""
+
+    def test_returns_global_when_no_space(self) -> None:
+        from anteroom.routers.chat import _get_request_artifact_registry
+
+        request = MagicMock()
+        global_reg = MagicMock()
+        request.app.state.artifact_registry = global_reg
+        result = _get_request_artifact_registry(request, MagicMock(), space_id=None)
+        assert result is global_reg
+
+    def test_returns_global_when_no_registry(self) -> None:
+        from anteroom.routers.chat import _get_request_artifact_registry
+
+        request = MagicMock(spec=[])
+        request.app = MagicMock()
+        request.app.state = MagicMock(spec=[])
+        result = _get_request_artifact_registry(request, MagicMock(), space_id="s1")
+        assert result is None
+
+    def test_returns_space_scoped_registry(self) -> None:
+        from anteroom.routers.chat import _get_request_artifact_registry
+
+        request = MagicMock()
+        global_reg = MagicMock()
+        request.app.state.artifact_registry = global_reg
+
+        mock_reg_instance = MagicMock()
+        with patch(
+            "anteroom.services.artifact_registry.ArtifactRegistry",
+            return_value=mock_reg_instance,
+        ):
+            db = MagicMock()
+            result = _get_request_artifact_registry(request, db, space_id="space-123")
+            assert result is mock_reg_instance
+            mock_reg_instance.load_from_db.assert_called_once_with(db, space_id="space-123")
