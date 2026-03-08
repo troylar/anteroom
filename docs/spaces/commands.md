@@ -271,6 +271,41 @@ Created space: my-project
 
 Same behavior as `aroom space init`.
 
+### `/space sources`
+
+List sources directly linked to the active space.
+
+```
+> /space sources
+Sources in backend-api:
+  API Spec   text · 3f8a1b2c...
+  Runbook    file · 9d4e5f6a...
+```
+
+Requires an active space (`/space switch <name>` first). Shows only direct source links, not sources present via group or tag links.
+
+### `/space link-source <query>`
+
+Link a source to the active space by title or ID.
+
+```
+> /space link-source API Spec
+Linked 'API Spec' to space 'backend-api'
+```
+
+Searches sources by exact title match first, then partial match, then exact ID. Creates a direct source link in `space_sources`.
+
+### `/space unlink-source <query>`
+
+Unlink a source from the active space.
+
+```
+> /space unlink-source API Spec
+Unlinked 'API Spec' from space 'backend-api'
+```
+
+Only removes direct source links. If the source is present via a group or tag link, it will remain in the space's resolved source set.
+
 ## Auto-Detection
 
 When you start `aroom chat` from a directory mapped to a space (either via `clone` or `map`), Anteroom auto-detects the space:
@@ -318,6 +353,9 @@ This overrides auto-detection.
 | Move repos root | `aroom space move-root <name> <path>` | — (terminal operation) |
 | Switch space | — | `/space switch <name>` |
 | Clear space | — | `/space clear` |
+| List space sources | — | `/space sources` |
+| Link source | — | `/space link-source <query>` |
+| Unlink source | — | `/space unlink-source <query>` |
 
 ## Next Steps
 

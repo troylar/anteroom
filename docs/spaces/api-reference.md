@@ -193,7 +193,13 @@ Error messages intentionally omit file system paths to prevent information discl
 
 ## `GET /api/spaces/{id}/sources`
 
-List all sources linked to a space.
+List sources linked to a space.
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `link_type` | `string \| null` | `null` | Set to `"direct"` to return only directly-linked sources (source_id links). When omitted or any other value, returns the full resolved set including group and tag links. |
 
 **Response:** `200 OK`
 

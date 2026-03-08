@@ -3541,10 +3541,10 @@ async def _run_repl(
                             )
                             continue
                         renderer.console.print(f"\n[bold]Sources in {sp['name']}:[/bold]")
-                        for src in linked:
-                            _title = src.get("title", "Untitled")
-                            _type = src.get("type", "")
-                            _sid = src["id"][:8]
+                        for _src_row in linked:
+                            _title = _src_row.get("title", "Untitled")
+                            _type = _src_row.get("type", "")
+                            _sid = str(_src_row["id"])[:8]
                             renderer.console.print(f"  {_title} [{MUTED}]{_type} · {_sid}...[/{MUTED}]")
                         renderer.console.print()
 

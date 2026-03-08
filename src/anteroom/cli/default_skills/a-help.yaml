@@ -443,6 +443,9 @@ prompt: |
   | aroom space    | clone NAME_OR_ID        | Clone repos and install packs from space       |
   | aroom space    | map NAME_OR_ID          | Show mapped directories for a space            |
   | aroom space    | move-root NAME_OR_ID    | Move space repos to a new root directory       |
+  | aroom space    | sources                 | List sources directly linked to active space   |
+  | aroom space    | link-source QUERY       | Link a source to active space by title or ID   |
+  | aroom space    | unlink-source QUERY     | Unlink a source from active space              |
   | aroom start    |                         | Start the web server in the background         |
   | aroom start    | --no-browser            | Start without opening the browser              |
   | aroom stop     |                         | Stop the background web server                 |
@@ -634,6 +637,9 @@ prompt: |
   - `aroom space clone NAME_OR_ID` — clone repos and install packs from space definition
   - `aroom space map NAME_OR_ID` — show mapped directories for a space
   - `aroom space move-root NAME_OR_ID` — move space repos to a new root directory
+  - `aroom space sources` — list sources directly linked to the active space
+  - `aroom space link-source QUERY` — link a source to the active space by title or ID
+  - `aroom space unlink-source QUERY` — unlink a source from the active space
 
   ### Artifact Commands
   - `aroom artifact list [--type TYPE] [--namespace NS] [--source SOURCE]` — list artifacts
