@@ -162,3 +162,40 @@ def test_cascade_delete_space_removes_links() -> None:
 
     rows = db.execute("SELECT * FROM space_sources WHERE space_id = 'sp1'").fetchall()
     assert len(rows) == 0
+
+
+def test_get_direct_space_source_links_returns_only_direct() -> None:
+    from anteroom.services.storage import get_direct_space_source_links, link_source_to_space
+
+    db = _make_db()
+    now = datetime.now(timezone.utc).isoformat()
+    db.execute(f"INSERT INTO source_groups VALUES ('g1', 'my-group', '', NULL, NULL, '{now}', '{now}')")
+    db.execute("INSERT INTO source_group_members VALUES ('g1', 'src2')")
+    db.commit()
+
+    link_source_to_space(db, "sp1", source_id="src1")
+    link_source_to_space(db, "sp1", group_id="g1")
+
+    direct = get_direct_space_source_links(db, "sp1")
+    assert len(direct) == 1
+    assert direct[0]["id"] == "src1"
+
+
+def test_get_direct_space_source_links_empty() -> None:
+    from anteroom.services.storage import get_direct_space_source_links
+
+    db = _make_db()
+    result = get_direct_space_source_links(db, "sp1")
+    assert result == []
+
+
+def test_get_direct_space_source_links_multiple() -> None:
+    from anteroom.services.storage import get_direct_space_source_links, link_source_to_space
+
+    db = _make_db()
+    link_source_to_space(db, "sp1", source_id="src1")
+    link_source_to_space(db, "sp1", source_id="src2")
+
+    direct = get_direct_space_source_links(db, "sp1")
+    ids = {s["id"] for s in direct}
+    assert ids == {"src1", "src2"}

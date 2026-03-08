@@ -24,6 +24,7 @@ from ..services.space_storage import (
 )
 from ..services.spaces import is_local_space
 from ..services.storage import (
+    get_direct_space_source_links,
     get_space_sources,
     link_source_to_space,
     unlink_source_from_space,
@@ -281,11 +282,13 @@ async def api_export_space(request: Request, space_id: str) -> dict[str, Any]:
 
 
 @router.get("/spaces/{space_id}/sources")
-async def api_get_space_sources(request: Request, space_id: str) -> list[dict[str, Any]]:
+async def api_get_space_sources(request: Request, space_id: str, link_type: str | None = None) -> list[dict[str, Any]]:
     db = _get_db(request)
     space = get_space(db, space_id)
     if not space:
         raise HTTPException(status_code=404, detail="Space not found")
+    if link_type == "direct":
+        return get_direct_space_source_links(db, space_id)
     return get_space_sources(db, space_id)
 
 

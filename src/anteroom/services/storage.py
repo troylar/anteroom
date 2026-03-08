@@ -2361,6 +2361,22 @@ def unlink_source_from_space(
     return True
 
 
+def get_direct_space_source_links(db: ThreadSafeConnection, space_id: str) -> list[dict[str, Any]]:
+    """Return only directly-linked sources for a space (source_id links, not group/tag)."""
+    src_cols = (
+        "s.id, s.type, s.title, s.content, s.mime_type, s.filename, s.url, "
+        "s.storage_path, s.size_bytes, s.content_hash, s.user_id, "
+        "s.user_display_name, s.created_at, s.updated_at"
+    )
+    rows = db.execute_fetchall(
+        f"SELECT {src_cols} FROM space_sources ss"
+        " JOIN sources s ON ss.source_id = s.id"
+        " WHERE ss.space_id = ? AND ss.source_id IS NOT NULL",
+        (space_id,),
+    )
+    return [dict(r) for r in rows]
+
+
 def get_space_sources(db: ThreadSafeConnection, space_id: str) -> list[dict[str, Any]]:
     """Resolve all space source links to a flat list of sources."""
     ss_cols = "space_id, source_id, group_id, tag_filter, created_at"

@@ -3526,12 +3526,102 @@ async def _run_repl(
                             _wsf(_export_path, cfg)
                             renderer.console.print(f"[green]Exported space to:[/green] {_export_path}\n")
 
+                    elif sub == "sources":
+                        sp = _active_space[0]  # type: ignore[assignment]
+                        if not sp:
+                            renderer.console.print(f"[{CHROME}]No active space[/{CHROME}]\n")
+                            continue
+                        from ..services.storage import get_direct_space_source_links
+
+                        linked = get_direct_space_source_links(db, sp["id"])
+                        if not linked:
+                            renderer.console.print(f"[{CHROME}]No sources linked to space '{sp['name']}'.[/{CHROME}]")
+                            renderer.console.print(
+                                f"[{CHROME}]  Link one with: /space link-source <title-or-id>[/{CHROME}]\n"
+                            )
+                            continue
+                        renderer.console.print(f"\n[bold]Sources in {sp['name']}:[/bold]")
+                        for src in linked:
+                            _title = src.get("title", "Untitled")
+                            _type = src.get("type", "")
+                            _sid = src["id"][:8]
+                            renderer.console.print(f"  {_title} [{MUTED}]{_type} · {_sid}...[/{MUTED}]")
+                        renderer.console.print()
+
+                    elif sub == "link-source":
+                        sp = _active_space[0]  # type: ignore[assignment]
+                        if not sp:
+                            renderer.console.print(f"[{CHROME}]No active space[/{CHROME}]\n")
+                            continue
+                        query = parts[2].strip() if len(parts) >= 3 else ""
+                        if not query:
+                            renderer.console.print(f"[{CHROME}]Usage: /space link-source <title-or-id>[/{CHROME}]\n")
+                            continue
+                        from ..services.storage import (
+                            link_source_to_space as _link_src,
+                        )
+                        from ..services.storage import (
+                            list_sources as _list_srcs,
+                        )
+
+                        all_srcs = _list_srcs(db)
+                        match = None
+                        for s in all_srcs:
+                            if s["id"] == query or s.get("title", "").lower() == query.lower():
+                                match = s
+                                break
+                        if not match:
+                            for s in all_srcs:
+                                if query.lower() in s.get("title", "").lower():
+                                    match = s
+                                    break
+                        if not match:
+                            renderer.render_error(f"Source '{query}' not found.")
+                            continue
+                        _link_src(db, sp["id"], source_id=match["id"])
+                        renderer.console.print(
+                            f"[green]Linked '{match.get('title', 'Untitled')}' to space '{sp['name']}'[/green]\n"
+                        )
+
+                    elif sub == "unlink-source":
+                        sp = _active_space[0]  # type: ignore[assignment]
+                        if not sp:
+                            renderer.console.print(f"[{CHROME}]No active space[/{CHROME}]\n")
+                            continue
+                        query = parts[2].strip() if len(parts) >= 3 else ""
+                        if not query:
+                            renderer.console.print(f"[{CHROME}]Usage: /space unlink-source <title-or-id>[/{CHROME}]\n")
+                            continue
+                        from ..services.storage import get_direct_space_source_links as _get_direct
+                        from ..services.storage import (
+                            unlink_source_from_space as _unlink_src,
+                        )
+
+                        linked = _get_direct(db, sp["id"])
+                        match = None
+                        for s in linked:
+                            if s["id"] == query or s.get("title", "").lower() == query.lower():
+                                match = s
+                                break
+                        if not match:
+                            for s in linked:
+                                if query.lower() in s.get("title", "").lower():
+                                    match = s
+                                    break
+                        if not match:
+                            renderer.render_error(f"Source '{query}' is not directly linked to space '{sp['name']}'.")
+                            continue
+                        _unlink_src(db, sp["id"], source_id=match["id"])
+                        renderer.console.print(
+                            f"[green]Unlinked '{match.get('title', 'Untitled')}' from space '{sp['name']}'[/green]\n"
+                        )
+
                     else:
                         if _active_space[0]:
                             renderer.console.print(f"[{CHROME}]Active space: {_active_space[0]['name']}[/{CHROME}]")
                         renderer.console.print(
                             f"[{CHROME}]Usage: /space [list|show|switch|create|init|load|refresh|clear|"
-                            f"clone|map|edit|export][/{CHROME}]\n"
+                            f"clone|map|edit|export|sources|link-source|unlink-source][/{CHROME}]\n"
                         )
                     continue
                 elif cmd in ("/packs", "/pack"):

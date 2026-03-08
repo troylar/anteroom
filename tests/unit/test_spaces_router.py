@@ -481,6 +481,45 @@ class TestGetSpaceSourcesEndpoint:
             client.get("/api/spaces/sp-1/sources")
         mock_sources.assert_called_once_with(app.state.db, "sp-1")
 
+    def test_get_sources_link_type_direct(self) -> None:
+        app = _make_app()
+        space = {"id": "sp-1", "name": "work"}
+        direct_sources = [{"id": "src-1", "title": "Direct Source"}]
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=space),
+            patch("anteroom.routers.spaces.get_direct_space_source_links", return_value=direct_sources) as mock_direct,
+        ):
+            client = TestClient(app)
+            resp = client.get("/api/spaces/sp-1/sources?link_type=direct")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
+        assert resp.json()[0]["id"] == "src-1"
+        mock_direct.assert_called_once_with(app.state.db, "sp-1")
+
+    def test_get_sources_link_type_default_uses_resolved(self) -> None:
+        app = _make_app()
+        space = {"id": "sp-1", "name": "work"}
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=space),
+            patch("anteroom.routers.spaces.get_space_sources", return_value=[]) as mock_resolved,
+            patch("anteroom.routers.spaces.get_direct_space_source_links") as mock_direct,
+        ):
+            client = TestClient(app)
+            client.get("/api/spaces/sp-1/sources")
+        mock_resolved.assert_called_once()
+        mock_direct.assert_not_called()
+
+    def test_get_sources_link_type_unknown_uses_resolved(self) -> None:
+        app = _make_app()
+        space = {"id": "sp-1", "name": "work"}
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value=space),
+            patch("anteroom.routers.spaces.get_space_sources", return_value=[]) as mock_resolved,
+        ):
+            client = TestClient(app)
+            client.get("/api/spaces/sp-1/sources?link_type=unknown")
+        mock_resolved.assert_called_once()
+
 
 class TestLinkSpaceSourceEndpoint:
     def test_link_source_success(self) -> None:
