@@ -294,8 +294,7 @@ class VectorIndexManager:
                         )
                         placeholders = ",".join("?" * len(missing_ids))
                         db.execute(
-                            f"UPDATE message_embeddings SET status = 'pending'"
-                            f" WHERE message_id IN ({placeholders})",
+                            f"UPDATE message_embeddings SET status = 'pending' WHERE message_id IN ({placeholders})",
                             tuple(missing_ids),
                         )
                         db.commit()
@@ -335,8 +334,7 @@ class VectorIndexManager:
                         )
                         placeholders = ",".join("?" * len(missing_ids))
                         db.execute(
-                            f"UPDATE source_chunk_embeddings SET status = 'pending'"
-                            f" WHERE chunk_id IN ({placeholders})",
+                            f"UPDATE source_chunk_embeddings SET status = 'pending' WHERE chunk_id IN ({placeholders})",
                             tuple(missing_ids),
                         )
                         db.commit()

@@ -537,9 +537,7 @@ class TestStoreEmbeddingRollback:
         emb = [0.1] * DIMS
         store_embedding(db, msg_id, conv_id, emb, "hash1", vec_index=_FailingIndex())
 
-        row = db.execute_fetchone(
-            "SELECT status FROM message_embeddings WHERE message_id = ?", (msg_id,)
-        )
+        row = db.execute_fetchone("SELECT status FROM message_embeddings WHERE message_id = ?", (msg_id,))
         assert row is not None
         assert row["status"] == "pending"
 
@@ -553,9 +551,7 @@ class TestStoreEmbeddingRollback:
         emb = [0.1] * DIMS
         store_embedding(db, msg_id, conv_id, emb, "hash1", vec_index=idx)
 
-        row = db.execute_fetchone(
-            "SELECT status FROM message_embeddings WHERE message_id = ?", (msg_id,)
-        )
+        row = db.execute_fetchone("SELECT status FROM message_embeddings WHERE message_id = ?", (msg_id,))
         assert row is not None
         # Default status is 'embedded' (the column default)
         assert row["status"] in (None, "embedded")
@@ -585,9 +581,7 @@ class TestStoreSourceChunkEmbeddingRollback:
         emb = [0.1] * DIMS
         store_source_chunk_embedding(db, chunk_id, source["id"], emb, "hash1", vec_index=_FailingIndex())
 
-        row = db.execute_fetchone(
-            "SELECT status FROM source_chunk_embeddings WHERE chunk_id = ?", (chunk_id,)
-        )
+        row = db.execute_fetchone("SELECT status FROM source_chunk_embeddings WHERE chunk_id = ?", (chunk_id,))
         assert row is not None
         assert row["status"] == "pending"
 
@@ -638,9 +632,7 @@ class TestScopedSearchWidening:
         # globally but should still be found via widening.
         query = [0.0] * DIMS
         query[0] = 1.0
-        results = search_similar_messages(
-            db, query, limit=5, conversation_id=target_conv, vec_index=idx
-        )
+        results = search_similar_messages(db, query, limit=5, conversation_id=target_conv, vec_index=idx)
 
         # Should find the target message despite it being ranked below 20 others
         target_ids = [r["message_id"] for r in results]
@@ -695,12 +687,8 @@ class TestRebuildIndexRecovery:
         mgr.rebuild_from_db(db)
 
         # Only the 3 missing keys should be reset to pending
-        pending = db.execute_fetchall(
-            "SELECT message_id FROM message_embeddings WHERE status = 'pending'"
-        )
-        embedded = db.execute_fetchall(
-            "SELECT message_id FROM message_embeddings WHERE status = 'embedded'"
-        )
+        pending = db.execute_fetchall("SELECT message_id FROM message_embeddings WHERE status = 'pending'")
+        embedded = db.execute_fetchall("SELECT message_id FROM message_embeddings WHERE status = 'embedded'")
         assert len(pending) == 3
         assert len(embedded) == 2
 
@@ -733,12 +721,8 @@ class TestRebuildIndexRecovery:
         mgr.rebuild_from_db(db)
 
         # B should stay embedded (exists in index), C should be reset to pending
-        row_b = db.execute_fetchone(
-            "SELECT status FROM message_embeddings WHERE message_id = ?", (msg_b["id"],)
-        )
-        row_c = db.execute_fetchone(
-            "SELECT status FROM message_embeddings WHERE message_id = ?", (msg_c["id"],)
-        )
+        row_b = db.execute_fetchone("SELECT status FROM message_embeddings WHERE message_id = ?", (msg_b["id"],))
+        row_c = db.execute_fetchone("SELECT status FROM message_embeddings WHERE message_id = ?", (msg_c["id"],))
         assert row_b["status"] == "embedded"
         assert row_c["status"] == "pending"
 
@@ -763,7 +747,5 @@ class TestRebuildIndexRecovery:
 
         mgr.rebuild_from_db(db)
 
-        pending = db.execute_fetchall(
-            "SELECT message_id FROM message_embeddings WHERE status = 'pending'"
-        )
+        pending = db.execute_fetchall("SELECT message_id FROM message_embeddings WHERE status = 'pending'")
         assert len(pending) == 3
