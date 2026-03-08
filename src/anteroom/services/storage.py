@@ -433,26 +433,33 @@ def search_keyword_source_chunks(
 
     safe_query = _sanitize_fts_query(query)
 
-    # Pre-resolve space sources if scoped
-    space_source_ids: set[str] | None = None
-    if space_id:
-        space_source_ids = {s["id"] for s in get_space_sources(db, space_id)}
-
     try:
-        rows = db.execute_fetchall(
-            "SELECT f.chunk_id, f.source_id, f.content, rank AS fts_rank"
-            " FROM source_chunks_fts f"
-            " WHERE source_chunks_fts MATCH ?"
-            " ORDER BY rank LIMIT ?",
-            (safe_query, limit),
-        )
+        if space_id:
+            # SQL-level space scoping via JOIN to avoid limit starvation
+            space_source_ids = [s["id"] for s in get_space_sources(db, space_id)]
+            if not space_source_ids:
+                return []
+            placeholders = ",".join("?" for _ in space_source_ids)
+            rows = db.execute_fetchall(
+                "SELECT f.chunk_id, f.source_id, f.content, rank AS fts_rank"
+                " FROM source_chunks_fts f"
+                f" WHERE source_chunks_fts MATCH ? AND f.source_id IN ({placeholders})"
+                " ORDER BY rank LIMIT ?",
+                (safe_query, *space_source_ids, limit),
+            )
+        else:
+            rows = db.execute_fetchall(
+                "SELECT f.chunk_id, f.source_id, f.content, rank AS fts_rank"
+                " FROM source_chunks_fts f"
+                " WHERE source_chunks_fts MATCH ?"
+                " ORDER BY rank LIMIT ?",
+                (safe_query, limit),
+            )
     except Exception:
         return []
 
     results: list[dict[str, Any]] = []
     for row in rows:
-        if space_source_ids is not None and row["source_id"] not in space_source_ids:
-            continue
         results.append(
             {
                 "chunk_id": row["chunk_id"],

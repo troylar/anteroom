@@ -234,6 +234,32 @@ class TestSearchKeywordSourceChunks:
         results = search_keyword_source_chunks(db, "x")
         assert results == []
 
+    def test_space_scoped_no_limit_starvation(self) -> None:
+        """SQL-level space filtering must not starve results when out-of-space chunks fill the limit."""
+        db = _init_db()
+        now = "2025-01-01T00:00:00Z"
+        db.execute(
+            "INSERT INTO spaces (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("sp1", "backend", now, now),
+        )
+        db.commit()
+
+        # Create one in-space source with a matching chunk
+        _seed_source(db, "s-in")
+        _seed_chunk(db, "ch-in", "s-in", "deployment orchestration kubernetes")
+        _seed_space_source(db, "sp1", "s-in")
+
+        # Create many out-of-space sources that also match the query
+        for i in range(15):
+            sid = f"s-out-{i}"
+            _seed_source(db, sid)
+            _seed_chunk(db, f"ch-out-{i}", sid, f"deployment orchestration kubernetes variant {i}")
+
+        # With limit=10, post-filter approach would miss the in-space chunk
+        results = search_keyword_source_chunks(db, "deployment", limit=10, space_id="sp1")
+        ids = [r["chunk_id"] for r in results]
+        assert "ch-in" in ids
+
 
 class TestFtsUpdateTrigger:
     def test_message_update_reflected_in_fts(self) -> None:
