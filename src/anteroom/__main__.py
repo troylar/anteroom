@@ -326,10 +326,10 @@ def _check_knowledge_deps() -> None:
     """Check availability of optional knowledge pipeline dependencies."""
     deps = [
         ("fastembed", "Local embeddings (default)", "pip install fastembed"),
-        ("pypdf", "PDF text extraction", "pip install anteroom[docs]"),
-        ("docx", "DOCX text extraction", "pip install anteroom[docs]"),
-        ("pptx", "PPTX text extraction", "pip install anteroom[docs]"),
-        ("openpyxl", "XLSX text extraction", "pip install anteroom[docs]"),
+        ("pypdf", "PDF text extraction", "pip install anteroom[office]"),
+        ("docx", "DOCX text extraction", "pip install anteroom[office]"),
+        ("pptx", "PPTX text extraction", "pip install anteroom[office]"),
+        ("openpyxl", "XLSX text extraction", "pip install anteroom[office]"),
         ("usearch", "Vector similarity search", "pip install usearch"),
     ]
     all_ok = True
@@ -344,7 +344,7 @@ def _check_knowledge_deps() -> None:
         print("   All knowledge pipeline dependencies available.")
     else:
         print("   Some optional dependencies are missing (knowledge features will degrade gracefully).")
-    print("\nAll checks passed.")
+    print("\nAll connection checks passed.")
 
 
 async def _test_connection(config: AppConfig) -> None:
