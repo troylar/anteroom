@@ -31,7 +31,33 @@ Deploy the current branch to PyPI after merging, CI verification, and version bu
    ```
    Every commit message MUST contain a `(#NNN)` issue reference. If any commit is missing one, warn the user and ask them to fix it before proceeding.
 
-### Step 1b: PR Queue Context
+### Step 1b: Senior Review Gate (hard block)
+
+Check if the PR has been approved by a senior reviewer:
+
+```bash
+gh pr view <PR> --json labels --jq '.labels[].name'
+```
+
+**If `senior-approved` label is present:** continue to Step 1c.
+
+**If `senior-approved` label is NOT present:**
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ❌ Blocked: Senior Review Required
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  PR #<N> has not been approved by a senior reviewer.
+  A senior reviewer must sign off before deploy.
+
+────────────────────────────────────────────
+  👉 Next: run /senior-review PR <N> to get sign-off,
+           then re-run /deploy
+────────────────────────────────────────────
+```
+**Stop. Do not proceed.**
+
+### Step 1c: PR Queue Context
 
 Show the user all other open PRs so they understand the deploy queue:
 

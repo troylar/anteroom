@@ -56,7 +56,54 @@ Check if the issue is already being worked on:
    gh issue edit <N> --add-assignee @me --add-label "in-progress"
    ```
 
-### Step 1d: Vision Alignment Check
+### Step 1d: Senior Review Gate (hard block)
+
+Check if the issue has been planned and approved by a senior reviewer:
+
+```bash
+gh issue view <N> --json labels --jq '.labels[].name'
+```
+
+**If `senior-approved` label is present:** continue to Step 2.
+
+**If `needs-senior-review` label is present (planned but not reviewed):**
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ❌ Blocked: Senior Review Required
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Issue #<N> has been planned but not yet approved.
+  A senior reviewer must sign off before work can begin.
+
+────────────────────────────────────────────
+  👉 Next: run /senior-review <N> to get sign-off
+────────────────────────────────────────────
+```
+**Stop. Do not proceed.**
+
+**If neither label is present (no plan exists):**
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  📋 No plan found — running /plan-work first
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+Auto-run `/plan-work <N>`. After `/plan-work` completes, display:
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ❌ Blocked: Senior Review Required
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Plan created and issue updated. A senior reviewer
+  must approve before work can begin.
+
+────────────────────────────────────────────
+  👉 Next: run /senior-review <N> to get sign-off,
+           then re-run /start-work <N>
+────────────────────────────────────────────
+```
+**Stop. Do not proceed.**
+
+### Step 1e: Vision Alignment Check
 
 Read `VISION.md` and evaluate the issue against the product vision.
 
