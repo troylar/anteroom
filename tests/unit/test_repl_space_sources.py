@@ -216,3 +216,34 @@ def test_partial_match_multiple_candidates() -> None:
     assert len(candidates) == 3
     titles = {c["title"] for c in candidates}
     assert titles == {"Report Beta", "Q1 Report", "Q2 Report"}
+
+
+def test_exact_title_duplicate_disambiguation() -> None:
+    """When multiple sources share the exact same title, disambiguation is required."""
+    from anteroom.services.storage import list_sources
+
+    db = _make_db()
+    now = datetime.now(timezone.utc).isoformat()
+    # Two sources with identical titles
+    db.execute(
+        f"INSERT INTO sources VALUES ('src5', 'text', 'Quarterly Report', 'v1', 'text/plain', "
+        f"NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{now}', '{now}')"
+    )
+    db.execute(
+        f"INSERT INTO sources VALUES ('src6', 'text', 'Quarterly Report', 'v2', 'text/plain', "
+        f"NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{now}', '{now}')"
+    )
+    db.commit()
+
+    all_srcs = list_sources(db, limit=0)
+    query = "quarterly report"
+    # Exact title match should find both
+    exact = [s for s in all_srcs if s.get("title", "").lower() == query.lower()]
+    assert len(exact) == 2
+    ids = {s["id"] for s in exact}
+    assert ids == {"src5", "src6"}
+
+    # ID match is always unambiguous
+    id_match = [s for s in all_srcs if s["id"] == "src5"]
+    assert len(id_match) == 1
+    assert id_match[0]["content"] == "v1"

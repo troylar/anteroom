@@ -3558,6 +3558,9 @@ async def _run_repl(
                             renderer.console.print(f"[{CHROME}]Usage: /space link-source <title-or-id>[/{CHROME}]\n")
                             continue
                         from ..services.storage import (
+                            get_direct_space_source_links,
+                        )
+                        from ..services.storage import (
                             link_source_to_space as _link_src,
                         )
                         from ..services.storage import (
@@ -3566,11 +3569,24 @@ async def _run_repl(
 
                         all_srcs = _list_srcs(db, limit=0)
                         match = None
-                        # Exact match by ID or title
+                        # Exact match by ID (unique, no ambiguity)
                         for s in all_srcs:
-                            if s["id"] == query or s.get("title", "").lower() == query.lower():
+                            if s["id"] == query:
                                 match = s
                                 break
+                        # Exact title match with disambiguation
+                        if not match:
+                            exact = [s for s in all_srcs if s.get("title", "").lower() == query.lower()]
+                            if len(exact) == 1:
+                                match = exact[0]
+                            elif len(exact) > 1:
+                                renderer.console.print(f"[{CHROME}]Multiple sources named '{query}':[/{CHROME}]")
+                                for c in exact[:10]:
+                                    _ct = c.get("title", "Untitled")
+                                    _ci = str(c["id"])[:8]
+                                    renderer.console.print(f"  {_ct} [{MUTED}]{_ci}...[/{MUTED}]")
+                                renderer.console.print(f"[{CHROME}]Use the source ID to disambiguate.[/{CHROME}]\n")
+                                continue
                         # Partial title match with disambiguation
                         if not match:
                             candidates = [s for s in all_srcs if query.lower() in s.get("title", "").lower()]
@@ -3613,11 +3629,24 @@ async def _run_repl(
 
                         linked = _get_direct(db, sp["id"])
                         match = None
-                        # Exact match by ID or title
+                        # Exact match by ID (unique, no ambiguity)
                         for s in linked:
-                            if s["id"] == query or s.get("title", "").lower() == query.lower():
+                            if s["id"] == query:
                                 match = s
                                 break
+                        # Exact title match with disambiguation
+                        if not match:
+                            exact = [s for s in linked if s.get("title", "").lower() == query.lower()]
+                            if len(exact) == 1:
+                                match = exact[0]
+                            elif len(exact) > 1:
+                                renderer.console.print(f"[{CHROME}]Multiple sources named '{query}':[/{CHROME}]")
+                                for c in exact[:10]:
+                                    _ct = c.get("title", "Untitled")
+                                    _ci = str(c["id"])[:8]
+                                    renderer.console.print(f"  {_ct} [{MUTED}]{_ci}...[/{MUTED}]")
+                                renderer.console.print(f"[{CHROME}]Use the source ID to disambiguate.[/{CHROME}]\n")
+                                continue
                         # Partial title match with disambiguation
                         if not match:
                             candidates = [s for s in linked if query.lower() in s.get("title", "").lower()]
