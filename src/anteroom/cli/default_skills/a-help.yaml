@@ -265,6 +265,17 @@ prompt: |
   | include_conversations| bool  | true    | —                               |
   | retrieval_mode       | str   | dense   | AI_CHAT_RAG_RETRIEVAL_MODE      |
 
+  #### Reranker (reranker section)
+
+  | Field                | Type  | Default                                  | Env Override                         |
+  |----------------------|-------|------------------------------------------|--------------------------------------|
+  | enabled              | bool  | None (auto-detect)                       | AI_CHAT_RERANKER_ENABLED             |
+  | provider             | str   | local                                    | AI_CHAT_RERANKER_PROVIDER            |
+  | model                | str   | cross-encoder/ms-marco-MiniLM-L-6-v2    | AI_CHAT_RERANKER_MODEL               |
+  | top_k                | int   | 5                                        | AI_CHAT_RERANKER_TOP_K               |
+  | score_threshold      | float | 0.0                                      | AI_CHAT_RERANKER_SCORE_THRESHOLD     |
+  | candidate_multiplier | int   | 3                                        | AI_CHAT_RERANKER_CANDIDATE_MULTIPLIER|
+
   #### Codebase Index (codebase_index section)
 
   | Field        | Type | Default                  | Description                    |

@@ -1570,6 +1570,105 @@ class TestRagConfig:
 
 
 # ---------------------------------------------------------------------------
+# Reranker config
+# ---------------------------------------------------------------------------
+
+
+class TestRerankerConfig:
+    def test_reranker_auto_detect_by_default(self, tmp_path: Path) -> None:
+        cfg = _minimal(tmp_path)
+        config, _ = load_config(cfg)
+        assert config.reranker.enabled is None
+
+    def test_reranker_enabled_yaml(self, tmp_path: Path) -> None:
+        cfg = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://t", "api_key": "k"},
+                "reranker": {"enabled": True, "model": "custom/model", "top_k": 10},
+            },
+        )
+        config, _ = load_config(cfg)
+        assert config.reranker.enabled is True
+        assert config.reranker.model == "custom/model"
+        assert config.reranker.top_k == 10
+
+    def test_reranker_disabled_yaml(self, tmp_path: Path) -> None:
+        cfg = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://t", "api_key": "k"},
+                "reranker": {"enabled": False},
+            },
+        )
+        config, _ = load_config(cfg)
+        assert config.reranker.enabled is False
+
+    def test_reranker_env_var_enabled(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AI_CHAT_RERANKER_ENABLED", "true")
+        cfg = _minimal(tmp_path)
+        config, _ = load_config(cfg)
+        assert config.reranker.enabled is True
+
+    def test_reranker_top_k_clamped(self, tmp_path: Path) -> None:
+        cfg = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://t", "api_key": "k"},
+                "reranker": {"top_k": 100},
+            },
+        )
+        config, _ = load_config(cfg)
+        assert config.reranker.top_k == 50  # clamped to max
+
+    def test_reranker_score_threshold_not_clamped(self, tmp_path: Path) -> None:
+        """Cross-encoder scores are unbounded logits; threshold must not be clamped."""
+        cfg = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://t", "api_key": "k"},
+                "reranker": {"score_threshold": 5.0},
+            },
+        )
+        config, _ = load_config(cfg)
+        assert config.reranker.score_threshold == 5.0
+
+    def test_reranker_negative_score_threshold(self, tmp_path: Path) -> None:
+        """Negative thresholds are valid for cross-encoder logits."""
+        cfg = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://t", "api_key": "k"},
+                "reranker": {"score_threshold": -2.5},
+            },
+        )
+        config, _ = load_config(cfg)
+        assert config.reranker.score_threshold == -2.5
+
+    def test_reranker_invalid_provider_defaults(self, tmp_path: Path) -> None:
+        cfg = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://t", "api_key": "k"},
+                "reranker": {"provider": "bogus"},
+            },
+        )
+        config, _ = load_config(cfg)
+        assert config.reranker.provider == "local"
+
+    def test_reranker_candidate_multiplier_clamped(self, tmp_path: Path) -> None:
+        cfg = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://t", "api_key": "k"},
+                "reranker": {"candidate_multiplier": 50},
+            },
+        )
+        config, _ = load_config(cfg)
+        assert config.reranker.candidate_multiplier == 10
+
+
+# ---------------------------------------------------------------------------
 # Proxy config (lines 1672-1694)
 # ---------------------------------------------------------------------------
 
