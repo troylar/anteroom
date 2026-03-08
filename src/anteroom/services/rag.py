@@ -205,7 +205,17 @@ async def retrieve_context(
 
     # Cross-encoder reranking (optional second stage)
     if reranker_service and reranker_config and reranker_config.enabled is not False and chunks:
-        chunks = await _rerank_chunks(query, chunks, reranker_service, reranker_config)
+        # Cap reranker top_k to max_chunks so reranking never returns more than the RAG limit
+        effective_top_k = min(reranker_config.top_k, config.max_chunks)
+        capped_config = RerankerConfig(
+            enabled=reranker_config.enabled,
+            provider=reranker_config.provider,
+            model=reranker_config.model,
+            top_k=effective_top_k,
+            score_threshold=reranker_config.score_threshold,
+            candidate_multiplier=reranker_config.candidate_multiplier,
+        )
+        chunks = await _rerank_chunks(query, chunks, reranker_service, capped_config)
 
     # Trim to token budget (chars/4 estimate)
     max_chars = config.max_tokens * 4

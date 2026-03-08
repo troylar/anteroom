@@ -255,3 +255,35 @@ class TestRetrieveContextWithReranker:
             # Should search with limit=15 (5 * 3)
             call_kwargs = mock_storage.search_similar_messages.call_args
             assert call_kwargs.kwargs.get("limit", call_kwargs[1].get("limit")) == 15
+
+    @pytest.mark.asyncio
+    async def test_reranker_top_k_capped_to_max_chunks(self) -> None:
+        """Reranker top_k is capped to rag.max_chunks so it never returns more chunks than the RAG limit."""
+        config = RagConfig(enabled=True, max_chunks=3)
+        # top_k=10 exceeds max_chunks=3; should be capped
+        reranker_config = RerankerConfig(enabled=True, top_k=10, score_threshold=0.0)
+        embedding_svc = AsyncMock()
+        embedding_svc.embed.return_value = [0.1] * 384
+        reranker_svc = AsyncMock()
+        # Return 5 results — more than max_chunks
+        reranker_svc.rerank.return_value = [(i, 0.9 - i * 0.1) for i in range(5)]
+
+        with patch("anteroom.services.rag.storage") as mock_storage:
+            mock_storage.search_similar_messages.return_value = [
+                {"message_id": f"m{i}", "conversation_id": f"c{i}", "content": f"msg {i}", "distance": 0.1 * i}
+                for i in range(5)
+            ]
+            mock_storage.search_similar_source_chunks.return_value = []
+            mock_storage.get_conversation.return_value = {"title": "Test Conv"}
+
+            db = MagicMock()
+            result = await retrieve_context(
+                "test query text",
+                db,
+                embedding_svc,
+                config,
+                reranker_service=reranker_svc,
+                reranker_config=reranker_config,
+            )
+            # Reranker should have been called with top_k=3 (capped to max_chunks)
+            assert reranker_svc.rerank.call_args.kwargs["top_k"] == 3

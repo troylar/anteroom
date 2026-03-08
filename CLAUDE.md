@@ -196,7 +196,7 @@ Key config sections (see `config.py` dataclasses for all fields and defaults):
 - **`SubagentConfig`** — Limits: concurrency (5), total (10), depth (3), iterations (15), timeout (120s)
 - **`EmbeddingsConfig`** — Dual provider (local fastembed default or API). Tri-state `enabled`: None=auto-detect, True=force, False=disable
 - **`RagConfig`** — RAG pipeline: `max_chunks` (10), `max_tokens` (2000), `similarity_threshold` (0.5), `retrieval_mode` (dense/keyword/hybrid, default dense)
-- **`RerankerConfig`** — Cross-encoder reranker: `enabled` (None=auto-detect), `provider` (local/api), `model`, `top_k` (5), `score_threshold` (0.0), `candidate_multiplier` (3)
+- **`RerankerConfig`** — Cross-encoder reranker: `enabled` (None=auto-detect), `provider` (local only), `model`, `top_k` (5), `score_threshold` (0.0), `candidate_multiplier` (3)
 - **`CodebaseIndexConfig`** — Tree-sitter index: `map_tokens` (1000), auto-detect languages. Optional dependency
 - **`ProxyConfig`** — OpenAI-compatible proxy (opt-in), CORS allowlist
 - **`McpServerConfig`** — Per-server `tools_include`/`tools_exclude` (fnmatch), `trust_level` (default `"untrusted"`; controls defensive prompt envelope wrapping for tool outputs)

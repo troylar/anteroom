@@ -275,8 +275,6 @@ prompt: |
   | top_k                | int   | 5                                        | AI_CHAT_RERANKER_TOP_K               |
   | score_threshold      | float | 0.0                                      | AI_CHAT_RERANKER_SCORE_THRESHOLD     |
   | candidate_multiplier | int   | 3                                        | AI_CHAT_RERANKER_CANDIDATE_MULTIPLIER|
-  | base_url             | str   | ""                                       | AI_CHAT_RERANKER_BASE_URL            |
-  | api_key              | str   | ""                                       | AI_CHAT_RERANKER_API_KEY             |
 
   #### Codebase Index (codebase_index section)
 

@@ -613,13 +613,11 @@ class RerankerConfig:
     """Cross-encoder reranker settings."""
 
     enabled: bool | None = None  # None = auto-detect (use if fastembed available)
-    provider: str = "local"  # "local" (fastembed TextCrossEncoder) or "api"
+    provider: str = "local"  # "local" (fastembed TextCrossEncoder); only local is supported
     model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    top_k: int = 5  # keep top-K after reranking
+    top_k: int = 5  # keep top-K after reranking (capped to rag.max_chunks at runtime)
     score_threshold: float = 0.0  # minimum relevance score (cross-encoder logit); 0 = no threshold
     candidate_multiplier: int = 3  # fetch top_k * multiplier candidates before reranking
-    base_url: str = ""  # API base URL (api provider only)
-    api_key: str = ""  # API key (api provider only)
 
 
 @dataclass
@@ -1788,7 +1786,7 @@ def load_config(
     _raw_reranker_provider = str(
         reranker_raw.get("provider", os.environ.get("AI_CHAT_RERANKER_PROVIDER", "local"))
     ).lower()
-    reranker_provider = _raw_reranker_provider if _raw_reranker_provider in ("local", "api") else "local"
+    reranker_provider = _raw_reranker_provider if _raw_reranker_provider in ("local",) else "local"
     reranker_model = str(
         reranker_raw.get("model", os.environ.get("AI_CHAT_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"))
     )
@@ -1822,8 +1820,6 @@ def load_config(
         top_k=reranker_top_k,
         score_threshold=reranker_score_threshold,
         candidate_multiplier=reranker_candidate_multiplier,
-        base_url=str(reranker_raw.get("base_url", os.environ.get("AI_CHAT_RERANKER_BASE_URL", ""))),
-        api_key=str(reranker_raw.get("api_key", os.environ.get("AI_CHAT_RERANKER_API_KEY", ""))),
     )
 
     # Proxy config
