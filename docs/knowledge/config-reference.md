@@ -131,7 +131,7 @@ reranker:
 
 ### Auto-detection
 
-When `enabled` is `null` (the default), Anteroom creates the reranker service but probes it on first use. If the cross-encoder model loads successfully, reranking is enabled. If it fails (e.g., fastembed not installed), reranking is silently disabled and retrieval results are returned in their original order.
+When `enabled` is `null` (the default), Anteroom creates the reranker service and probes it during startup. If the cross-encoder model loads successfully, reranking is enabled. If the probe fails (e.g., fastembed not installed), reranking is silently disabled and retrieval results are returned in their original order.
 
 ### How It Interacts with RAG
 

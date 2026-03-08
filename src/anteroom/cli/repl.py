@@ -4306,7 +4306,9 @@ async def _run_repl(
                     extra_system_prompt = strip_rag_context(extra_system_prompt)
 
                     _rag_emb = await _get_rag_embedding_service()
-                    if _rag_emb:
+                    _rag_mode = getattr(config.rag, "retrieval_mode", "dense")
+                    _rag_uses_keyword = _rag_mode in ("keyword", "hybrid")
+                    if _rag_emb or _rag_uses_keyword:
                         _rag_reranker = await _get_rag_reranker_service()
                         _rag_chunks = await retrieve_context(
                             query=expanded,

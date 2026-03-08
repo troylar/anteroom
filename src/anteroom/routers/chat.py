@@ -559,12 +559,15 @@ async def _build_chat_system_prompt(
 
     # RAG context (skip in plan mode)
     rag_config = getattr(config, "rag", None)
+    _rag_mode = getattr(rag_config, "retrieval_mode", "dense") if rag_config else "dense"
+    _rag_uses_keyword = _rag_mode in ("keyword", "hybrid")
+    # Keyword and hybrid modes can run without embeddings; dense requires both.
+    _rag_has_backend = (vec_enabled and embedding_service) or _rag_uses_keyword
     if (
         rag_config
         and rag_config.enabled
         and not plan_mode
-        and vec_enabled
-        and embedding_service
+        and _rag_has_backend
         and message_text.strip()
     ):
         try:
@@ -603,10 +606,8 @@ async def _build_chat_system_prompt(
             meta["rag_status"] = "disabled"
         elif plan_mode:
             meta["rag_status"] = "skipped_plan_mode"
-        elif not vec_enabled:
+        elif not _rag_has_backend:
             meta["rag_status"] = "no_vec_support"
-        elif not embedding_service:
-            meta["rag_status"] = "no_embedding_service"
         else:
             meta["rag_status"] = "skipped"
         meta["rag_chunks"] = 0
