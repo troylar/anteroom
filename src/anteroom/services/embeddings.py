@@ -188,9 +188,10 @@ def get_effective_dimensions(config: AppConfig) -> int:
 class LocalEmbeddingService:
     """Generate embeddings locally using fastembed (ONNX Runtime, no external API)."""
 
-    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5", dimensions: int = 0) -> None:
+    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5", dimensions: int = 0, cache_dir: str = "") -> None:
         self._model_name = model_name
         self._dimensions = dimensions if dimensions > 0 else get_local_model_dimensions(model_name)
+        self._cache_dir = cache_dir
         self._embedding_model: Any = None
 
     @property
@@ -213,14 +214,18 @@ class LocalEmbeddingService:
             )
         logger.info("Loading local embedding model '%s' (first use may download ~50MB)", self._model_name)
         try:
-            self._embedding_model = TextEmbedding(model_name=self._model_name)
+            kwargs: dict[str, Any] = {"model_name": self._model_name}
+            if self._cache_dir:
+                kwargs["cache_dir"] = self._cache_dir
+            self._embedding_model = TextEmbedding(**kwargs)
         except Exception as e:
             error_str = str(e).lower()
             if any(hint in error_str for hint in ("connection", "timeout", "resolve", "ssl", "network", "urlopen")):
                 raise EmbeddingPermanentError(
                     f"Failed to download embedding model '{self._model_name}'. "
                     f"If you're behind a firewall, download the model on a machine with internet access "
-                    f"and copy ~/.cache/fastembed/ to this machine. Error: {e}"
+                    f"and copy ~/.cache/fastembed/ to this machine, or set embeddings.cache_dir "
+                    f"in config.yaml. Error: {e}"
                 ) from e
             raise EmbeddingPermanentError(f"Failed to load local embedding model '{self._model_name}': {e}") from e
         logger.info("Local embedding model '%s' loaded (%d dimensions)", self._model_name, self._dimensions)
@@ -312,6 +317,7 @@ def create_embedding_service(config: AppConfig) -> EmbeddingService | LocalEmbed
         return LocalEmbeddingService(
             model_name=config.embeddings.local_model,
             dimensions=dims,
+            cache_dir=config.embeddings.cache_dir,
         )
 
     # API-based provider

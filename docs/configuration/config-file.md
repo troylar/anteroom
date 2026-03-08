@@ -154,6 +154,7 @@ embeddings:
   base_url: ""
   api_key: ""
   api_key_command: ""
+  cache_dir: ""                        # Custom fastembed model cache directory (default: ~/.cache/fastembed/)
 
 reranker:
   enabled: null                        # null = auto-detect (use if fastembed available)
@@ -162,6 +163,7 @@ reranker:
   top_k: 5                            # Keep top-K chunks after reranking
   score_threshold: 0.0                 # Minimum relevance score (0 = no threshold)
   candidate_multiplier: 3             # Fetch top_k * multiplier candidates before reranking
+  cache_dir: ""                        # Custom fastembed model cache directory (default: ~/.cache/fastembed/)
 
 dlp:
   enabled: false                       # Set true to enable DLP scanning
@@ -483,6 +485,7 @@ Controls vector embeddings for semantic search. Requires an OpenAI-compatible em
 | `base_url` | string | `""` | Embedding API endpoint (falls back to `ai.base_url` if empty) |
 | `api_key` | string | `""` | API key for the embedding endpoint |
 | `api_key_command` | string | `""` | External command to obtain the embedding API key dynamically |
+| `cache_dir` | string | `""` | Custom fastembed model cache directory; useful for air-gapped environments where models are pre-downloaded; env: `AI_CHAT_EMBEDDINGS_CACHE_DIR` |
 
 ### reranker
 
@@ -496,6 +499,7 @@ Controls cross-encoder reranking of RAG results. When enabled, retrieved chunks 
 | `top_k` | integer | `5` | Keep top-K chunks after reranking (capped to `rag.max_chunks` at runtime); env: `AI_CHAT_RERANKER_TOP_K` |
 | `score_threshold` | float | `0.0` | Minimum relevance score; cross-encoder logits can be negative; env: `AI_CHAT_RERANKER_SCORE_THRESHOLD` |
 | `candidate_multiplier` | integer | `3` | Fetch `top_k * candidate_multiplier` candidates before reranking; env: `AI_CHAT_RERANKER_CANDIDATE_MULTIPLIER` |
+| `cache_dir` | string | `""` | Custom fastembed model cache directory; useful for air-gapped environments where models are pre-downloaded; env: `AI_CHAT_RERANKER_CACHE_DIR` |
 
 ### dlp
 

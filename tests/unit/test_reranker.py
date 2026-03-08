@@ -132,6 +132,32 @@ class TestLocalRerankerService:
         svc = LocalRerankerService(model_name="test-model")
         assert svc.model == "test-model"
 
+    def test_cache_dir_stored(self) -> None:
+        svc = LocalRerankerService(cache_dir="/tmp/models")
+        assert svc._cache_dir == "/tmp/models"
+
+    def test_cache_dir_default_empty(self) -> None:
+        svc = LocalRerankerService()
+        assert svc._cache_dir == ""
+
+    def test_cache_dir_passed_to_text_cross_encoder(self) -> None:
+        mock_fastembed = MagicMock()
+        mock_tce_class = MagicMock()
+        mock_fastembed.TextCrossEncoder = mock_tce_class
+        svc = LocalRerankerService(model_name="test-model", cache_dir="/custom/cache")
+        with patch.dict("sys.modules", {"fastembed": mock_fastembed}):
+            svc._ensure_model()
+        mock_tce_class.assert_called_once_with(model_name="test-model", cache_dir="/custom/cache")
+
+    def test_cache_dir_not_passed_when_empty(self) -> None:
+        mock_fastembed = MagicMock()
+        mock_tce_class = MagicMock()
+        mock_fastembed.TextCrossEncoder = mock_tce_class
+        svc = LocalRerankerService(model_name="test-model", cache_dir="")
+        with patch.dict("sys.modules", {"fastembed": mock_fastembed}):
+            svc._ensure_model()
+        mock_tce_class.assert_called_once_with(model_name="test-model")
+
 
 # ---------------------------------------------------------------------------
 # Factory
@@ -171,3 +197,9 @@ class TestCreateRerankerService:
         svc = create_reranker_service(config)
         assert svc is not None
         assert svc.model == "custom/model"
+
+    def test_cache_dir_passed_through(self) -> None:
+        config = self._make_config(enabled=True, cache_dir="/vendored/models")
+        svc = create_reranker_service(config)
+        assert svc is not None
+        assert svc._cache_dir == "/vendored/models"

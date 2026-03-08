@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 class LocalRerankerService:
     """Rerank chunks locally using fastembed TextCrossEncoder (ONNX, no external API)."""
 
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2") -> None:
+    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", cache_dir: str = "") -> None:
         self._model_name = model_name
+        self._cache_dir = cache_dir
         self._cross_encoder: Any = None
 
     @property
@@ -35,14 +36,18 @@ class LocalRerankerService:
             )
         logger.info("Loading cross-encoder model '%s' (first use may download)", self._model_name)
         try:
-            self._cross_encoder = TextCrossEncoder(model_name=self._model_name)
+            kwargs: dict[str, Any] = {"model_name": self._model_name}
+            if self._cache_dir:
+                kwargs["cache_dir"] = self._cache_dir
+            self._cross_encoder = TextCrossEncoder(**kwargs)
         except Exception as e:
             error_str = str(e).lower()
             if any(hint in error_str for hint in ("connection", "timeout", "resolve", "ssl", "network", "urlopen")):
                 raise EmbeddingPermanentError(
                     f"Failed to download cross-encoder model '{self._model_name}'. "
                     f"If you're behind a firewall, download the model on a machine with internet access "
-                    f"and copy ~/.cache/fastembed/ to this machine. Error: {e}"
+                    f"and copy ~/.cache/fastembed/ to this machine, or set reranker.cache_dir "
+                    f"in config.yaml. Error: {e}"
                 ) from e
             raise EmbeddingPermanentError(f"Failed to load cross-encoder model '{self._model_name}': {e}") from e
         logger.info("Cross-encoder model '%s' loaded", self._model_name)
@@ -100,4 +105,4 @@ def create_reranker_service(config: AppConfig) -> LocalRerankerService | None:
         logger.warning("Reranker provider %r is not yet supported, disabling reranker", provider)
         return None
 
-    return LocalRerankerService(model_name=config.reranker.model)
+    return LocalRerankerService(model_name=config.reranker.model, cache_dir=config.reranker.cache_dir)

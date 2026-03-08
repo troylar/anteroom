@@ -252,6 +252,7 @@ prompt: |
   | dimensions      | int       | 0 (auto)               | AI_CHAT_EMBEDDINGS_DIMENSIONS     |
   | base_url        | str       | —                      | AI_CHAT_EMBEDDINGS_BASE_URL       |
   | api_key         | str       | —                      | AI_CHAT_EMBEDDINGS_API_KEY        |
+  | cache_dir       | str       | —                      | AI_CHAT_EMBEDDINGS_CACHE_DIR      |
 
   #### RAG Pipeline (rag section)
 
@@ -275,6 +276,7 @@ prompt: |
   | top_k                | int   | 5                                        | AI_CHAT_RERANKER_TOP_K               |
   | score_threshold      | float | 0.0                                      | AI_CHAT_RERANKER_SCORE_THRESHOLD     |
   | candidate_multiplier | int   | 3                                        | AI_CHAT_RERANKER_CANDIDATE_MULTIPLIER|
+  | cache_dir            | str   | —                                        | AI_CHAT_RERANKER_CACHE_DIR           |
 
   #### Codebase Index (codebase_index section)
 
