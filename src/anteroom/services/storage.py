@@ -2758,13 +2758,16 @@ def reprocess_source(
         return source, ["Source has no stored file — cannot reprocess"]
 
     full_path = safe_resolve_pathlib(data_dir / storage_path)
-    if not full_path or not full_path.is_relative_to(safe_resolve_pathlib(data_dir)):
+    if not full_path.is_relative_to(safe_resolve_pathlib(data_dir)):
         return source, ["Invalid storage path — cannot reprocess"]
     if not full_path.is_file():
         return source, ["Original file not found — cannot reprocess"]
 
     mime_type = source.get("mime_type", "application/octet-stream")
-    file_data = full_path.read_bytes()
+    try:
+        file_data = full_path.read_bytes()
+    except OSError as exc:
+        return source, [f"Cannot read source file: {exc}"]
     extraction_result = _try_extract(file_data, mime_type)
     warnings.extend(extraction_result.warnings)
 

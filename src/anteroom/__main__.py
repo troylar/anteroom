@@ -344,7 +344,6 @@ def _check_knowledge_deps() -> None:
         print("   All knowledge pipeline dependencies available.")
     else:
         print("   Some optional dependencies are missing (knowledge features will degrade gracefully).")
-    print("\nAll connection checks passed.")
 
 
 async def _test_connection(config: AppConfig) -> None:
@@ -386,6 +385,7 @@ async def _test_connection(config: AppConfig) -> None:
 
     print("\n3. Checking knowledge pipeline dependencies...")
     _check_knowledge_deps()
+    print("\nAll connection checks passed.")
 
 
 def _run_db(args: argparse.Namespace) -> None:

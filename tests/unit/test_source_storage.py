@@ -710,6 +710,26 @@ class TestReprocessSource:
 
         assert any("re-extraction produced no text" in w.lower() for w in warnings)
 
+    def test_reprocess_file_read_error(self, db: ThreadSafeConnection, tmp_path: Path) -> None:
+        """reprocess_source returns a warning instead of raising when file can't be read."""
+        from unittest.mock import patch
+
+        source, _ = save_source_file(
+            db,
+            title="test.txt",
+            filename="test.txt",
+            mime_type="text/plain",
+            data=b"hello world",
+            data_dir=tmp_path,
+        )
+
+        # Mock read_bytes to raise OSError (e.g. permission denied)
+        with patch("pathlib.Path.read_bytes", side_effect=OSError("Permission denied")):
+            result, warnings = reprocess_source(db, source["id"], tmp_path)
+
+        assert any("cannot read" in w.lower() for w in warnings)
+        assert result.get("id") == source["id"]
+
 
 class TestGetSourceEmbeddingStatus:
     def test_no_chunks(self, db: ThreadSafeConnection) -> None:
