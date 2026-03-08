@@ -82,6 +82,34 @@ class TestLocalRerankerService:
             with pytest.raises(EmbeddingPermanentError, match="fastembed is not installed"):
                 svc._ensure_model()
 
+    def test_ensure_model_network_error(self) -> None:
+        from anteroom.services.embeddings import EmbeddingPermanentError
+
+        svc = LocalRerankerService()
+        mock_fastembed = MagicMock()
+        mock_fastembed.TextCrossEncoder.side_effect = RuntimeError("connection timeout")
+        with patch.dict("sys.modules", {"fastembed": mock_fastembed}):
+            svc._cross_encoder = None
+            with pytest.raises(EmbeddingPermanentError, match="Failed to download"):
+                svc._ensure_model()
+
+    def test_ensure_model_generic_error(self) -> None:
+        from anteroom.services.embeddings import EmbeddingPermanentError
+
+        svc = LocalRerankerService()
+        mock_fastembed = MagicMock()
+        mock_fastembed.TextCrossEncoder.side_effect = RuntimeError("invalid model format")
+        with patch.dict("sys.modules", {"fastembed": mock_fastembed}):
+            svc._cross_encoder = None
+            with pytest.raises(EmbeddingPermanentError, match="Failed to load cross-encoder"):
+                svc._ensure_model()
+
+    def test_ensure_model_caches(self) -> None:
+        svc = LocalRerankerService()
+        sentinel = MagicMock()
+        svc._cross_encoder = sentinel
+        assert svc._ensure_model() is sentinel
+
     @pytest.mark.asyncio
     async def test_probe_success(self) -> None:
         svc = LocalRerankerService()

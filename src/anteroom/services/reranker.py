@@ -59,9 +59,8 @@ class LocalRerankerService:
             return []
         try:
             model = self._ensure_model()
-            pairs = [(query, doc) for doc in documents]
 
-            def _score(p: list[tuple[str, str]] = pairs) -> list[float]:
+            def _score() -> list[float]:
                 return list(model.rerank(query, documents))
 
             raw_scores: list[float] = await asyncio.to_thread(_score)
