@@ -1893,12 +1893,14 @@ def list_sources(
         params.append(group_id)
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    params.extend([limit, offset])
 
-    rows = db.execute_fetchall(
-        f"SELECT s.* FROM sources s {where} ORDER BY s.updated_at DESC LIMIT ? OFFSET ?",
-        tuple(params),
-    )
+    if limit > 0:
+        params.extend([limit, offset])
+        sql = f"SELECT s.* FROM sources s {where} ORDER BY s.updated_at DESC LIMIT ? OFFSET ?"
+    else:
+        sql = f"SELECT s.* FROM sources s {where} ORDER BY s.updated_at DESC"
+
+    rows = db.execute_fetchall(sql, tuple(params))
     return [dict(r) for r in rows]
 
 

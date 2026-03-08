@@ -474,18 +474,30 @@ const Sources = (() => {
         const search = (document.getElementById('sources-search') || {}).value || '';
         const typeFilter = (document.getElementById('sources-type-filter') || {}).value || '';
 
-        let url = '/api/sources?limit=100';
-        if (search) url += `&search=${encodeURIComponent(search)}`;
-        if (typeFilter) url += `&type=${encodeURIComponent(typeFilter)}`;
-
         await _refreshSpaceSourceIds();
 
         try {
-            const data = await App.api(url);
-            _sources = data.sources || [];
-            if (_spaceFilterActive) {
-                _sources = _sources.filter(s => _spaceSourceIds.has(s.id));
+            let sources;
+            if (_spaceFilterActive && _spaceSourceIds.size > 0) {
+                // Fetch space sources directly — avoids pagination cap
+                const spaceId = App.getState().currentSpaceId;
+                sources = await App.api(`/api/spaces/${encodeURIComponent(spaceId)}/sources`);
+                // Apply local search/type filters
+                if (search) {
+                    const q = search.toLowerCase();
+                    sources = sources.filter(s => (s.title || '').toLowerCase().includes(q) || (s.content || '').toLowerCase().includes(q));
+                }
+                if (typeFilter) {
+                    sources = sources.filter(s => s.type === typeFilter);
+                }
+            } else {
+                let url = '/api/sources?limit=100';
+                if (search) url += `&search=${encodeURIComponent(search)}`;
+                if (typeFilter) url += `&type=${encodeURIComponent(typeFilter)}`;
+                const data = await App.api(url);
+                sources = data.sources || [];
             }
+            _sources = sources;
             _renderList();
         } catch (err) {
             listEl.innerHTML = `<div class="sources-error">${DOMPurify.sanitize(err.message)}</div>`;

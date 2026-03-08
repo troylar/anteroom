@@ -3564,17 +3564,26 @@ async def _run_repl(
                             list_sources as _list_srcs,
                         )
 
-                        all_srcs = _list_srcs(db)
+                        all_srcs = _list_srcs(db, limit=0)
                         match = None
+                        # Exact match by ID or title
                         for s in all_srcs:
                             if s["id"] == query or s.get("title", "").lower() == query.lower():
                                 match = s
                                 break
+                        # Partial title match with disambiguation
                         if not match:
-                            for s in all_srcs:
-                                if query.lower() in s.get("title", "").lower():
-                                    match = s
-                                    break
+                            candidates = [s for s in all_srcs if query.lower() in s.get("title", "").lower()]
+                            if len(candidates) == 1:
+                                match = candidates[0]
+                            elif len(candidates) > 1:
+                                renderer.console.print(f"[{CHROME}]Multiple sources match '{query}':[/{CHROME}]")
+                                for c in candidates[:10]:
+                                    _ct = c.get("title", "Untitled")
+                                    _ci = str(c["id"])[:8]
+                                    renderer.console.print(f"  {_ct} [{MUTED}]{_ci}...[/{MUTED}]")
+                                renderer.console.print(f"[{CHROME}]Be more specific or use the source ID.[/{CHROME}]\n")
+                                continue
                         if not match:
                             renderer.render_error(f"Source '{query}' not found.")
                             continue
@@ -3604,15 +3613,24 @@ async def _run_repl(
 
                         linked = _get_direct(db, sp["id"])
                         match = None
+                        # Exact match by ID or title
                         for s in linked:
                             if s["id"] == query or s.get("title", "").lower() == query.lower():
                                 match = s
                                 break
+                        # Partial title match with disambiguation
                         if not match:
-                            for s in linked:
-                                if query.lower() in s.get("title", "").lower():
-                                    match = s
-                                    break
+                            candidates = [s for s in linked if query.lower() in s.get("title", "").lower()]
+                            if len(candidates) == 1:
+                                match = candidates[0]
+                            elif len(candidates) > 1:
+                                renderer.console.print(f"[{CHROME}]Multiple sources match '{query}':[/{CHROME}]")
+                                for c in candidates[:10]:
+                                    _ct = c.get("title", "Untitled")
+                                    _ci = str(c["id"])[:8]
+                                    renderer.console.print(f"  {_ct} [{MUTED}]{_ci}...[/{MUTED}]")
+                                renderer.console.print(f"[{CHROME}]Be more specific or use the source ID.[/{CHROME}]\n")
+                                continue
                         if not match:
                             renderer.render_error(f"Source '{query}' is not directly linked to space '{sp['name']}'.")
                             continue

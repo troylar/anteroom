@@ -168,3 +168,51 @@ def test_direct_links_exclude_group_links() -> None:
     assert len(direct) == 1
     assert direct[0]["id"] == "src1"
     assert direct[0]["title"] == "Doc Alpha"
+
+
+def test_list_sources_limit_zero_returns_all() -> None:
+    """list_sources with limit=0 returns all sources (no pagination cap)."""
+    from anteroom.services.storage import list_sources
+
+    db = _make_db()
+    # Add more sources to exceed default limit
+    now = datetime.now(timezone.utc).isoformat()
+    for i in range(5):
+        db.execute(
+            f"INSERT INTO sources VALUES ('extra{i}', 'text', 'Extra {i}', 'c', 'text/plain', "
+            f"NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{now}', '{now}')"
+        )
+    db.commit()
+
+    # Default limit returns up to 100 (we have 7 total)
+    default = list_sources(db)
+    assert len(default) == 7
+
+    # limit=0 also returns all
+    unlimited = list_sources(db, limit=0)
+    assert len(unlimited) == 7
+
+
+def test_partial_match_multiple_candidates() -> None:
+    """When multiple sources match a partial query, all should be candidates."""
+    from anteroom.services.storage import list_sources
+
+    db = _make_db()
+    now = datetime.now(timezone.utc).isoformat()
+    db.execute(
+        f"INSERT INTO sources VALUES ('src3', 'text', 'Q1 Report', 'c', 'text/plain', "
+        f"NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{now}', '{now}')"
+    )
+    db.execute(
+        f"INSERT INTO sources VALUES ('src4', 'text', 'Q2 Report', 'c', 'text/plain', "
+        f"NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{now}', '{now}')"
+    )
+    db.commit()
+
+    all_srcs = list_sources(db, limit=0)
+    query = "report"
+    candidates = [s for s in all_srcs if query.lower() in s.get("title", "").lower()]
+    # Should match "Report Beta", "Q1 Report", "Q2 Report"
+    assert len(candidates) == 3
+    titles = {c["title"] for c in candidates}
+    assert titles == {"Report Beta", "Q1 Report", "Q2 Report"}

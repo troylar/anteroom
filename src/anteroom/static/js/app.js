@@ -1166,7 +1166,7 @@ const App = (() => {
 
             // Populate the picker with all sources not already linked
             if (picker) {
-                const allSources = await api('/api/sources?limit=200');
+                const allSources = await api('/api/sources?limit=0');
                 const sourceList = allSources.sources || [];
                 picker.innerHTML = '<option value="">Link a source...</option>';
                 sourceList.forEach(src => {

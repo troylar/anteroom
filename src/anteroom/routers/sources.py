@@ -62,7 +62,7 @@ async def list_sources(
     type: str | None = Query(default=None, pattern="^(file|text|url)$"),
     tag_id: str | None = None,
     group_id: str | None = None,
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=0, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     db = _get_db(request)
