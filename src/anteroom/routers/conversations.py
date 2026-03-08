@@ -229,7 +229,8 @@ async def delete_conversation(conversation_id: str, request: Request) -> None:
     data_dir = request.app.state.config.app.data_dir
     # Clean up embeddings before deleting conversation
     try:
-        storage.delete_embeddings_for_conversation(db, conversation_id)
+        _vm = getattr(request.app.state, "vec_manager", None)
+        storage.delete_embeddings_for_conversation(db, conversation_id, vec_index=_vm.messages if _vm else None)
     except Exception:
         pass  # Non-critical; table may not exist
 
@@ -319,7 +320,14 @@ async def update_message(conversation_id: str, message_id: str, body: MessageEdi
     conv = storage.get_conversation(db, conversation_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    updated = storage.update_message_content(db, conversation_id, message_id, body.content)
+    _vm = getattr(request.app.state, "vec_manager", None)
+    updated = storage.update_message_content(
+        db,
+        conversation_id,
+        message_id,
+        body.content,
+        vec_index=_vm.messages if _vm else None,
+    )
     if not updated:
         raise HTTPException(status_code=404, detail="Message not found")
     return updated
@@ -337,7 +345,8 @@ async def delete_message(conversation_id: str, message_id: str, request: Request
         raise HTTPException(
             status_code=400, detail="Individual message deletion is only supported for note and document conversations"
         )
-    deleted = storage.delete_message(db, conversation_id, message_id)
+    _vm = getattr(request.app.state, "vec_manager", None)
+    deleted = storage.delete_message(db, conversation_id, message_id, vec_index=_vm.messages if _vm else None)
     if not deleted:
         raise HTTPException(status_code=404, detail="Message not found")
     return None
@@ -354,7 +363,15 @@ async def replace_document(conversation_id: str, body: DocumentContent, request:
     if conv.get("type") != "document":
         raise HTTPException(status_code=400, detail="Only document conversations support full content replacement")
     uid, uname = _get_identity(request)
-    msg = storage.replace_document_content(db, conversation_id, body.content, user_id=uid, user_display_name=uname)
+    _vm = getattr(request.app.state, "vec_manager", None)
+    msg = storage.replace_document_content(
+        db,
+        conversation_id,
+        body.content,
+        user_id=uid,
+        user_display_name=uname,
+        vec_index=_vm.messages if _vm else None,
+    )
     return msg
 
 
@@ -367,7 +384,14 @@ async def delete_messages_after(conversation_id: str, request: Request, after_po
         raise HTTPException(status_code=404, detail="Conversation not found")
     data_dir = request.app.state.config.app.data_dir
     # SECURITY-REVIEW: after_position is int via Query(ge=0); all queries use parameterized ?
-    storage.delete_messages_after_position(db, conversation_id, after_position, data_dir)
+    _vm = getattr(request.app.state, "vec_manager", None)
+    storage.delete_messages_after_position(
+        db,
+        conversation_id,
+        after_position,
+        data_dir,
+        vec_index=_vm.messages if _vm else None,
+    )
     return None
 
 
@@ -386,12 +410,14 @@ async def rewind_conversation(conversation_id: str, body: RewindRequest, request
 
     data_dir = request.app.state.config.app.data_dir
     # SECURITY-REVIEW: to_position validated against known positions; parameterized queries throughout
+    _vm = getattr(request.app.state, "vec_manager", None)
     result = await rewind_service(
         db=db,
         conversation_id=conversation_id,
         to_position=body.to_position,
         undo_files=body.undo_files,
         data_dir=data_dir,
+        vec_index=_vm.messages if _vm else None,
     )
 
     return RewindResponse(

@@ -122,6 +122,12 @@ nav:
     - api/messages.md
     - api/spaces.md
     - api/config.md
+  - Knowledge & RAG:
+    - knowledge/index.md
+    - knowledge/how-rag-works.md
+    - knowledge/sources.md
+    - knowledge/config-reference.md
+    - knowledge/api-reference.md
   - Packs & Artifacts:
     - packs/index.md
     - packs/concepts.md

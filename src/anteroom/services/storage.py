@@ -821,6 +821,8 @@ def update_message_content(
     conversation_id: str,
     message_id: str,
     new_content: str,
+    *,
+    vec_index: Any | None = None,
 ) -> dict[str, Any] | None:
     row = db.execute_fetchone(
         "SELECT * FROM messages WHERE id = ? AND conversation_id = ?",
@@ -833,7 +835,7 @@ def update_message_content(
     db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
     db.commit()
     # Invalidate stale embedding so the worker will re-embed with new content
-    delete_embedding_for_message(db, message_id)
+    delete_embedding_for_message(db, message_id, vec_index=vec_index)
     updated = db.execute_fetchone("SELECT * FROM messages WHERE id = ?", (message_id,))
     return dict(updated) if updated else None
 
@@ -842,6 +844,8 @@ def delete_message(
     db: ThreadSafeConnection,
     conversation_id: str,
     message_id: str,
+    *,
+    vec_index: Any | None = None,
 ) -> bool:
     """Delete a single message by ID, validating it belongs to the given conversation."""
     row = db.execute_fetchone(
@@ -850,6 +854,9 @@ def delete_message(
     )
     if not row:
         return False
+    # Remove from usearch before deleting metadata (CASCADE will remove embedding row)
+    if vec_index is not None:
+        vec_index.remove(message_id)
     db.execute("DELETE FROM messages WHERE id = ? AND conversation_id = ?", (message_id, conversation_id))
     now = _now()
     db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
@@ -863,8 +870,19 @@ def replace_document_content(
     content: str,
     user_id: str | None = None,
     user_display_name: str | None = None,
+    *,
+    vec_index: Any | None = None,
 ) -> dict[str, Any]:
     """Replace all messages in a document conversation with a single new message."""
+    # Remove old message vectors from usearch before CASCADE deletes metadata
+    if vec_index is not None:
+        emb_rows = db.execute_fetchall(
+            "SELECT message_id FROM message_embeddings WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+        for r in emb_rows:
+            vec_index.remove(r["message_id"])
+
     mid = _uuid()
     now = _now()
     with db.transaction() as conn:
@@ -895,6 +913,8 @@ def delete_messages_after_position(
     conversation_id: str,
     position: int,
     data_dir: Path | None = None,
+    *,
+    vec_index: Any | None = None,
 ) -> int:
     msgs = db.execute_fetchall(
         "SELECT id FROM messages WHERE conversation_id = ? AND position > ?",
@@ -903,6 +923,16 @@ def delete_messages_after_position(
     msg_ids = [dict(m)["id"] for m in msgs]
     if not msg_ids:
         return 0
+
+    # Remove vectors from usearch before CASCADE deletes metadata
+    if vec_index is not None:
+        in_clause, in_params = _in_clause(msg_ids)
+        emb_rows = db.execute_fetchall(
+            f"SELECT message_id FROM message_embeddings WHERE message_id IN {in_clause}",
+            tuple(in_params),
+        )
+        for r in emb_rows:
+            vec_index.remove(r["message_id"])
 
     if data_dir:
         in_clause, in_params = _in_clause(msg_ids)
@@ -1320,17 +1350,11 @@ _MAX_EMBEDDING_DIMENSIONS = 4096
 _MAX_SEARCH_LIMIT = 1000
 
 
-def _validate_embedding(embedding: list[float]) -> bytes:
-    """Validate embedding vector and convert to bytes for sqlite-vec."""
-    import math
-    import struct
+def _validate_embedding(embedding: list[float]) -> None:
+    """Validate embedding vector values."""
+    from .vector_index import _validate_embedding as _vi_validate
 
-    if not embedding or len(embedding) > _MAX_EMBEDDING_DIMENSIONS:
-        raise ValueError(f"Embedding must have 1-{_MAX_EMBEDDING_DIMENSIONS} dimensions, got {len(embedding)}")
-    for i, val in enumerate(embedding):
-        if not isinstance(val, (int, float)) or (isinstance(val, float) and not math.isfinite(val)):
-            raise ValueError(f"Embedding dimension {i} is not a finite number")
-    return struct.pack(f"{len(embedding)}f", *embedding)
+    _vi_validate(embedding)
 
 
 def store_embedding(
@@ -1339,16 +1363,17 @@ def store_embedding(
     conversation_id: str,
     embedding: list[float],
     content_hash: str,
+    *,
+    vec_index: Any | None = None,
 ) -> None:
-    """Store a message embedding in both metadata and vec0 tables."""
-    from ..db import has_vec_support
+    """Store a message embedding in metadata table and usearch index.
 
-    raw_conn = db._conn if hasattr(db, "_conn") else db
-    if not has_vec_support(raw_conn):
-        return
+    The *vec_index* parameter should be a ``VectorIndex`` instance (the messages
+    index from ``VectorIndexManager``).  When ``None``, only metadata is written.
+    """
+    _validate_embedding(embedding)
 
     now = _now()
-    embedding_bytes = _validate_embedding(embedding)
 
     with db.transaction() as conn:
         conn.execute(
@@ -1356,12 +1381,18 @@ def store_embedding(
             " created_at) VALUES (?, ?, 0, ?, ?)",
             (message_id, conversation_id, content_hash, now),
         )
-        # Delete existing vec entry for this message before inserting
-        conn.execute("DELETE FROM vec_messages WHERE message_id = ?", (message_id,))
-        conn.execute(
-            "INSERT INTO vec_messages (embedding, message_id, conversation_id) VALUES (?, ?, ?)",
-            (embedding_bytes, message_id, conversation_id),
-        )
+
+    if vec_index is not None:
+        try:
+            vec_index.add(message_id, embedding)
+        except Exception:
+            # Vector add failed — reset metadata to pending so the worker retries.
+            logger.warning("Failed to add message %s to usearch index; resetting to pending", message_id, exc_info=True)
+            db.execute(
+                "UPDATE message_embeddings SET status = 'pending' WHERE message_id = ?",
+                (message_id,),
+            )
+            db.commit()
 
 
 def search_similar_messages(
@@ -1371,69 +1402,121 @@ def search_similar_messages(
     conversation_id: str | None = None,
     conversation_type: str | None = None,
     space_id: str | None = None,
+    *,
+    vec_index: Any | None = None,
 ) -> list[dict[str, Any]]:
-    """Search for semantically similar messages using vec0 cosine similarity.
+    """Search for semantically similar messages using usearch cosine similarity.
 
     When *space_id* is given, results are post-filtered to messages from
     conversations that belong to the specified space.
-    """
-    from ..db import has_vec_support
 
-    raw_conn = db._conn if hasattr(db, "_conn") else db
-    if not has_vec_support(raw_conn):
+    The *vec_index* parameter should be a ``VectorIndex`` instance (the messages
+    index from ``VectorIndexManager``).
+    """
+    if vec_index is None:
         return []
 
     if conversation_type and conversation_type not in VALID_CONVERSATION_TYPES:
         conversation_type = None
 
     limit = max(1, min(limit, _MAX_SEARCH_LIMIT))
-    embedding_bytes = _validate_embedding(embedding)
+    _validate_embedding(embedding)
 
-    # When post-filtering by conversation_type or space_id, over-fetch from the
-    # vector index to compensate for rows that will be discarded.
-    needs_post_filter = bool(conversation_type or space_id)
-    vec_k = limit * 4 if needs_post_filter else limit
-    vec_k = min(vec_k, _MAX_SEARCH_LIMIT)
+    needs_post_filter = bool(conversation_type or space_id or conversation_id)
 
-    if conversation_id:
+    if not needs_post_filter:
+        knn_results = vec_index.search(embedding, limit)
+        if not knn_results:
+            return []
+        return _resolve_message_results(db, knn_results, limit)
+
+    # Iterative widening: increase vec_k until we have enough filtered results
+    # or exhaust the index.
+    vec_k = limit * 4
+    seen_ids: set[str] = set()
+    results: list[dict[str, Any]] = []
+
+    while len(results) < limit:
+        vec_k = min(vec_k, _MAX_SEARCH_LIMIT)
+        knn_results = vec_index.search(embedding, vec_k)
+        if not knn_results:
+            break
+
+        new_ids = [r["key"] for r in knn_results if r["key"] not in seen_ids]
+        if not new_ids:
+            break  # No new candidates — index exhausted
+        seen_ids.update(new_ids)
+
+        distance_map = {r["key"]: r["distance"] for r in knn_results}
+
+        placeholders = ",".join("?" * len(new_ids))
         rows = db.execute_fetchall(
-            """
-            WITH knn AS (
-                SELECT message_id, conversation_id, distance
-                FROM vec_messages
-                WHERE embedding MATCH ? AND k = ? AND conversation_id = ?
-            )
-            SELECT knn.message_id, knn.conversation_id, knn.distance, m.content, m.role,
+            f"""
+            SELECT m.id AS message_id, m.conversation_id, m.content, m.role,
                    c.type AS conversation_type, c.space_id AS conversation_space_id
-            FROM knn
-            LEFT JOIN messages m ON m.id = knn.message_id
-            LEFT JOIN conversations c ON c.id = knn.conversation_id
+            FROM messages m
+            LEFT JOIN conversations c ON c.id = m.conversation_id
+            WHERE m.id IN ({placeholders})
             """,
-            (embedding_bytes, vec_k, conversation_id),
+            tuple(new_ids),
         )
-    else:
-        rows = db.execute_fetchall(
-            """
-            WITH knn AS (
-                SELECT message_id, conversation_id, distance
-                FROM vec_messages
-                WHERE embedding MATCH ? AND k = ?
+
+        for r in rows:
+            d = dict(r)
+            if conversation_id and d["conversation_id"] != conversation_id:
+                continue
+            if conversation_type and d.get("conversation_type") != conversation_type:
+                continue
+            if space_id and d.get("conversation_space_id") != space_id:
+                continue
+            results.append(
+                {
+                    "message_id": d["message_id"],
+                    "conversation_id": d["conversation_id"],
+                    "content": d["content"] or "",
+                    "role": d["role"] or "user",
+                    "distance": distance_map[d["message_id"]],
+                    "conversation_type": d.get("conversation_type") or "chat",
+                }
             )
-            SELECT knn.message_id, knn.conversation_id, knn.distance, m.content, m.role,
-                   c.type AS conversation_type, c.space_id AS conversation_space_id
-            FROM knn
-            LEFT JOIN messages m ON m.id = knn.message_id
-            LEFT JOIN conversations c ON c.id = knn.conversation_id
-            """,
-            (embedding_bytes, vec_k),
-        )
+
+        # If we already fetched up to the max, stop.
+        if vec_k >= _MAX_SEARCH_LIMIT:
+            break
+        vec_k = min(vec_k * 2, _MAX_SEARCH_LIMIT)
+
+    # Sort by distance (closest first) and trim to limit.
+    results.sort(key=lambda x: x["distance"])
+    return results[:limit]
+
+
+def _resolve_message_results(
+    db: ThreadSafeConnection,
+    knn_results: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Look up message metadata for KNN results (no post-filtering)."""
+    message_ids = [r["key"] for r in knn_results]
+    distance_map = {r["key"]: r["distance"] for r in knn_results}
+
+    placeholders = ",".join("?" * len(message_ids))
+    rows = db.execute_fetchall(
+        f"""
+        SELECT m.id AS message_id, m.conversation_id, m.content, m.role,
+               c.type AS conversation_type
+        FROM messages m
+        LEFT JOIN conversations c ON c.id = m.conversation_id
+        WHERE m.id IN ({placeholders})
+        """,
+        tuple(message_ids),
+    )
+
+    row_map = {dict(r)["message_id"]: dict(r) for r in rows}
 
     results = []
-    for r in rows:
-        d = dict(r)
-        if conversation_type and d.get("conversation_type") != conversation_type:
-            continue
-        if space_id and d.get("conversation_space_id") != space_id:
+    for msg_id in message_ids:
+        d = row_map.get(msg_id)
+        if d is None:
             continue
         results.append(
             {
@@ -1441,7 +1524,7 @@ def search_similar_messages(
                 "conversation_id": d["conversation_id"],
                 "content": d["content"] or "",
                 "role": d["role"] or "user",
-                "distance": d["distance"],
+                "distance": distance_map[msg_id],
                 "conversation_type": d.get("conversation_type") or "chat",
             }
         )
@@ -1451,13 +1534,14 @@ def search_similar_messages(
 
 
 def get_unembedded_messages(db: ThreadSafeConnection, limit: int = 100) -> list[dict[str, Any]]:
-    """Get messages that don't have embeddings yet."""
+    """Get messages that don't have embeddings yet, or that need re-embedding."""
     rows = db.execute_fetchall(
         """
         SELECT m.id, m.conversation_id, m.content, m.role
         FROM messages m
         LEFT JOIN message_embeddings me ON me.message_id = m.id
-        WHERE me.message_id IS NULL AND m.role IN ('user', 'assistant')
+        WHERE (me.message_id IS NULL OR me.status = 'pending')
+              AND m.role IN ('user', 'assistant')
         ORDER BY m.created_at
         LIMIT ?
         """,
@@ -1492,37 +1576,34 @@ def mark_embedding_skipped(
     db.commit()
 
 
-def delete_embedding_for_message(db: ThreadSafeConnection, message_id: str) -> None:
+def delete_embedding_for_message(db: ThreadSafeConnection, message_id: str, *, vec_index: Any | None = None) -> None:
     """Delete the embedding (and any skip/fail sentinel) for a single message.
 
     Called when message content is edited so the worker will re-embed it.
     No-op if the embeddings tables don't exist (e.g. vec support disabled).
     """
-    from ..db import has_vec_support
-
     try:
-        raw_conn = db._conn if hasattr(db, "_conn") else db
-        with db.transaction() as conn:
-            if has_vec_support(raw_conn):
-                conn.execute("DELETE FROM vec_messages WHERE message_id = ?", (message_id,))
-            conn.execute("DELETE FROM message_embeddings WHERE message_id = ?", (message_id,))
+        if vec_index is not None:
+            vec_index.remove(message_id)
+        db.execute("DELETE FROM message_embeddings WHERE message_id = ?", (message_id,))
+        db.commit()
     except (sqlite3.OperationalError, sqlite3.DatabaseError):
         logger.warning("Failed to delete embedding for message %s (table may not exist)", message_id)
 
 
-def delete_embeddings_for_conversation(db: ThreadSafeConnection, conversation_id: str) -> None:
+def delete_embeddings_for_conversation(
+    db: ThreadSafeConnection, conversation_id: str, *, vec_index: Any | None = None
+) -> None:
     """Delete all embeddings for a conversation."""
-    from ..db import has_vec_support
+    if vec_index is not None:
+        rows = db.execute_fetchall(
+            "SELECT message_id FROM message_embeddings WHERE conversation_id = ?", (conversation_id,)
+        )
+        for r in rows:
+            vec_index.remove(r["message_id"])
 
-    raw_conn = db._conn if hasattr(db, "_conn") else db
-    if not has_vec_support(raw_conn):
-        db.execute("DELETE FROM message_embeddings WHERE conversation_id = ?", (conversation_id,))
-        db.commit()
-        return
-
-    with db.transaction() as conn:
-        conn.execute("DELETE FROM vec_messages WHERE conversation_id = ?", (conversation_id,))
-        conn.execute("DELETE FROM message_embeddings WHERE conversation_id = ?", (conversation_id,))
+    db.execute("DELETE FROM message_embeddings WHERE conversation_id = ?", (conversation_id,))
+    db.commit()
 
 
 def get_embedding_stats(db: ThreadSafeConnection) -> dict[str, Any]:
@@ -1530,7 +1611,7 @@ def get_embedding_stats(db: ThreadSafeConnection) -> dict[str, Any]:
     total_row = db.execute_fetchone("SELECT COUNT(*) FROM messages WHERE role IN ('user', 'assistant')")
     total_messages = total_row[0] if total_row else 0
 
-    embedded_row = db.execute_fetchone("SELECT COUNT(*) FROM message_embeddings")
+    embedded_row = db.execute_fetchone("SELECT COUNT(*) FROM message_embeddings WHERE status = ?", ("embedded",))
     embedded_messages = embedded_row[0] if embedded_row else 0
 
     return {
@@ -1716,6 +1797,8 @@ def update_source(
     title: str | None = None,
     content: str | None = None,
     url: str | None = None,
+    *,
+    vec_index: Any | None = None,
 ) -> dict[str, Any] | None:
     source = db.execute_fetchone("SELECT * FROM sources WHERE id = ?", (source_id,))
     if not source:
@@ -1737,6 +1820,14 @@ def update_source(
 
     # Re-chunk if content changed
     if content is not None:
+        # Remove old chunk vectors from usearch before deleting metadata
+        if vec_index is not None:
+            chunk_rows = db.execute_fetchall(
+                "SELECT chunk_id FROM source_chunk_embeddings WHERE source_id = ?",
+                (source_id,),
+            )
+            for row in chunk_rows:
+                vec_index.remove(row["chunk_id"])
         db.execute("DELETE FROM source_chunks WHERE source_id = ?", (source_id,))
         db.commit()
         chunks = chunk_text(content)
@@ -1746,11 +1837,26 @@ def update_source(
     return get_source(db, source_id)
 
 
-def delete_source(db: ThreadSafeConnection, source_id: str, data_dir: Path | None = None) -> bool:
+def delete_source(
+    db: ThreadSafeConnection,
+    source_id: str,
+    data_dir: Path | None = None,
+    *,
+    vec_index: Any | None = None,
+) -> bool:
     source_row = db.execute_fetchone("SELECT * FROM sources WHERE id = ?", (source_id,))
     if not source_row:
         return False
     source = dict(source_row)
+
+    # Remove source chunk vectors from usearch before CASCADE deletes metadata
+    if vec_index is not None:
+        chunk_rows = db.execute_fetchall(
+            "SELECT chunk_id FROM source_chunk_embeddings WHERE source_id = ?",
+            (source_id,),
+        )
+        for row in chunk_rows:
+            vec_index.remove(row["chunk_id"])
 
     # Remove file from disk if it exists
     if data_dir and source.get("storage_path"):
@@ -1926,13 +2032,13 @@ def list_source_chunks(db: ThreadSafeConnection, source_id: str) -> list[dict[st
 
 
 def get_unembedded_source_chunks(db: ThreadSafeConnection, limit: int = 100) -> list[dict[str, Any]]:
-    """Get source chunks that don't have embeddings yet."""
+    """Get source chunks that don't have embeddings yet, or that need re-embedding."""
     rows = db.execute_fetchall(
         """
         SELECT sc.id, sc.source_id, sc.content, sc.content_hash
         FROM source_chunks sc
         LEFT JOIN source_chunk_embeddings sce ON sce.chunk_id = sc.id
-        WHERE sce.chunk_id IS NULL
+        WHERE sce.chunk_id IS NULL OR sce.status = 'pending'
         ORDER BY sc.created_at
         LIMIT ?
         """,
@@ -2282,16 +2388,17 @@ def store_source_chunk_embedding(
     source_id: str,
     embedding: list[float],
     content_hash: str,
+    *,
+    vec_index: Any | None = None,
 ) -> None:
-    """Store a source chunk embedding in both metadata and vec0 tables."""
-    from ..db import has_vec_support
+    """Store a source chunk embedding in metadata table and usearch index.
 
-    raw_conn = db._conn if hasattr(db, "_conn") else db
-    if not has_vec_support(raw_conn):
-        return
+    The *vec_index* parameter should be a ``VectorIndex`` instance (the source
+    chunks index from ``VectorIndexManager``).
+    """
+    _validate_embedding(embedding)
 
     now = _now()
-    embedding_bytes = _validate_embedding(embedding)
 
     with db.transaction() as conn:
         conn.execute(
@@ -2299,11 +2406,17 @@ def store_source_chunk_embedding(
             " VALUES (?, ?, ?, ?)",
             (chunk_id, source_id, content_hash, now),
         )
-        conn.execute("DELETE FROM vec_source_chunks WHERE chunk_id = ?", (chunk_id,))
-        conn.execute(
-            "INSERT INTO vec_source_chunks (embedding, chunk_id, source_id) VALUES (?, ?, ?)",
-            (embedding_bytes, chunk_id, source_id),
-        )
+
+    if vec_index is not None:
+        try:
+            vec_index.add(chunk_id, embedding)
+        except Exception:
+            logger.warning("Failed to add chunk %s to usearch index; resetting to pending", chunk_id, exc_info=True)
+            db.execute(
+                "UPDATE source_chunk_embeddings SET status = 'pending' WHERE chunk_id = ?",
+                (chunk_id,),
+            )
+            db.commit()
 
 
 def search_similar_source_chunks(
@@ -2312,67 +2425,123 @@ def search_similar_source_chunks(
     limit: int = 20,
     source_id: str | None = None,
     space_id: str | None = None,
+    *,
+    vec_index: Any | None = None,
 ) -> list[dict[str, Any]]:
-    """Search for semantically similar source chunks using vec0 cosine similarity.
+    """Search for semantically similar source chunks using usearch cosine similarity.
 
     When *space_id* is given, results are filtered to sources linked to that
     space (direct, group, or tag-filter linkage via ``space_sources``).
-    """
-    from ..db import has_vec_support
 
-    raw_conn = db._conn if hasattr(db, "_conn") else db
-    if not has_vec_support(raw_conn):
+    The *vec_index* parameter should be a ``VectorIndex`` instance (the source
+    chunks index from ``VectorIndexManager``).
+    """
+    if vec_index is None:
         return []
 
     limit = max(1, min(limit, _MAX_SEARCH_LIMIT))
-    embedding_bytes = _validate_embedding(embedding)
+    _validate_embedding(embedding)
 
-    # Over-fetch when space filtering so we still return enough
-    # results after post-filter (KNN is computed before the JOIN).
-    fetch_limit = min(limit * 3, _MAX_SEARCH_LIMIT) if space_id else limit
+    needs_post_filter = bool(source_id or space_id)
 
-    if source_id:
-        rows = db.execute_fetchall(
-            """
-            WITH knn AS (
-                SELECT chunk_id, source_id, distance
-                FROM vec_source_chunks
-                WHERE embedding MATCH ? AND k = ? AND source_id = ?
-            )
-            SELECT knn.chunk_id, knn.source_id, knn.distance, sc.content, sc.chunk_index
-            FROM knn
-            LEFT JOIN source_chunks sc ON sc.id = knn.chunk_id
-            """,
-            (embedding_bytes, fetch_limit, source_id),
-        )
-    else:
-        rows = db.execute_fetchall(
-            """
-            WITH knn AS (
-                SELECT chunk_id, source_id, distance
-                FROM vec_source_chunks
-                WHERE embedding MATCH ? AND k = ?
-            )
-            SELECT knn.chunk_id, knn.source_id, knn.distance, sc.content, sc.chunk_index
-            FROM knn
-            LEFT JOIN source_chunks sc ON sc.id = knn.chunk_id
-            """,
-            (embedding_bytes, fetch_limit),
-        )
+    if not needs_post_filter:
+        knn_results = vec_index.search(embedding, limit)
+        if not knn_results:
+            return []
+        return _resolve_chunk_results(db, knn_results, limit)
 
-    results = [
-        {
-            "chunk_id": dict(r)["chunk_id"],
-            "source_id": dict(r)["source_id"],
-            "content": dict(r)["content"],
-            "chunk_index": dict(r)["chunk_index"],
-            "distance": dict(r)["distance"],
-        }
-        for r in rows
-    ]
-
+    # Resolve space_source_ids once if needed.
+    space_source_ids: set[str] | None = None
     if space_id:
         space_source_ids = {s["id"] for s in get_space_sources(db, space_id)}
-        results = [r for r in results if r["source_id"] in space_source_ids]
 
+    # Iterative widening for scoped queries.
+    vec_k = limit * 4
+    seen_ids: set[str] = set()
+    results: list[dict[str, Any]] = []
+
+    while len(results) < limit:
+        vec_k = min(vec_k, _MAX_SEARCH_LIMIT)
+        knn_results = vec_index.search(embedding, vec_k)
+        if not knn_results:
+            break
+
+        new_ids = [r["key"] for r in knn_results if r["key"] not in seen_ids]
+        if not new_ids:
+            break
+        seen_ids.update(new_ids)
+
+        distance_map = {r["key"]: r["distance"] for r in knn_results}
+
+        placeholders = ",".join("?" * len(new_ids))
+        rows = db.execute_fetchall(
+            f"""
+            SELECT sc.id AS chunk_id, sc.source_id, sc.content, sc.chunk_index
+            FROM source_chunks sc
+            WHERE sc.id IN ({placeholders})
+            """,
+            tuple(new_ids),
+        )
+
+        for r in rows:
+            d = dict(r)
+            if source_id and d["source_id"] != source_id:
+                continue
+            if space_source_ids is not None and d["source_id"] not in space_source_ids:
+                continue
+            results.append(
+                {
+                    "chunk_id": d["chunk_id"],
+                    "source_id": d["source_id"],
+                    "content": d["content"],
+                    "chunk_index": d["chunk_index"],
+                    "distance": distance_map[d["chunk_id"]],
+                }
+            )
+
+        if vec_k >= _MAX_SEARCH_LIMIT:
+            break
+        vec_k = min(vec_k * 2, _MAX_SEARCH_LIMIT)
+
+    results.sort(key=lambda x: x["distance"])
     return results[:limit]
+
+
+def _resolve_chunk_results(
+    db: ThreadSafeConnection,
+    knn_results: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Look up chunk metadata for KNN results (no post-filtering)."""
+    chunk_ids = [r["key"] for r in knn_results]
+    distance_map = {r["key"]: r["distance"] for r in knn_results}
+
+    placeholders = ",".join("?" * len(chunk_ids))
+    rows = db.execute_fetchall(
+        f"""
+        SELECT sc.id AS chunk_id, sc.source_id, sc.content, sc.chunk_index
+        FROM source_chunks sc
+        WHERE sc.id IN ({placeholders})
+        """,
+        tuple(chunk_ids),
+    )
+
+    row_map = {dict(r)["chunk_id"]: dict(r) for r in rows}
+
+    results = []
+    for cid in chunk_ids:
+        d = row_map.get(cid)
+        if d is None:
+            continue
+        results.append(
+            {
+                "chunk_id": d["chunk_id"],
+                "source_id": d["source_id"],
+                "content": d["content"],
+                "chunk_index": d["chunk_index"],
+                "distance": distance_map[cid],
+            }
+        )
+        if len(results) >= limit:
+            break
+    return results
