@@ -59,6 +59,28 @@ corpus:
         - id: "chunk-db-sources"
           content: "The sources table stores knowledge documents with id, type (text/url/file), title, content, url, filename, and content_hash. Source chunks link to sources via source_id."
 
+    # Frontend-only source (linked to space-frontend, not space-backend)
+    - id: "src-frontend-guide"
+      title: "Frontend Development Guide"
+      type: "text"
+      chunks:
+        - id: "chunk-fe-components"
+          content: "Use React with TypeScript for all frontend components. The component library is based on Radix UI primitives with custom styling. All components must be accessible (WCAG 2.1 AA)."
+        - id: "chunk-fe-state"
+          content: "State management uses Zustand for global state and React Query for server state. Avoid Redux. Keep component state local when possible."
+
+  # Space definitions for scoping tests
+  spaces:
+    - id: "space-backend"
+      name: "backend"
+      sources: ["src-python-guide", "src-security-policy", "src-deployment-guide", "src-api-docs", "src-database-schema"]
+      conversations: ["conv-migration", "conv-rate-limiting", "conv-embeddings", "conv-spaces"]
+
+    - id: "space-frontend"
+      name: "frontend"
+      sources: ["src-frontend-guide"]
+      conversations: []
+
   conversations:
     - id: "conv-migration"
       title: "Database Migration Discussion"
@@ -281,3 +303,101 @@ queries:
     relevant: []
     k: 5
     category: "negative"
+
+  # -- Harder negatives: near-miss vocabulary overlap --
+  - id: "q-neg-python-snake"
+    query: "What is the average lifespan of a python snake in captivity?"
+    relevant: []
+    k: 5
+    category: "negative_hard"
+
+  - id: "q-neg-docker-shipping"
+    query: "How much cargo can a standard shipping docker container hold?"
+    relevant: []
+    k: 5
+    category: "negative_hard"
+
+  - id: "q-neg-session-music"
+    query: "How do I book a recording session at a music studio?"
+    relevant: []
+    k: 5
+    category: "negative_hard"
+
+  # -- Harder negatives: acronym / identifier collisions --
+  - id: "q-neg-api-beekeeping"
+    query: "What API standards exist for monitoring beehive health?"
+    relevant: []
+    k: 5
+    category: "negative_hard"
+
+  - id: "q-neg-sql-sequel"
+    query: "What is SQL in the context of the movie Wreck-It Ralph sequel?"
+    relevant: []
+    k: 5
+    category: "negative_hard"
+
+  # -- Harder negatives: ambiguous terms --
+  - id: "q-neg-deployment-military"
+    query: "What is the typical deployment length for military personnel overseas?"
+    relevant: []
+    k: 5
+    category: "negative_hard"
+
+  - id: "q-neg-migration-birds"
+    query: "What routes do birds follow during seasonal migration?"
+    relevant: []
+    k: 5
+    category: "negative_hard"
+
+  - id: "q-neg-helm-sailing"
+    query: "How do you maintain the helm of a sailboat in rough seas?"
+    relevant: []
+    k: 5
+    category: "negative_hard"
+
+  # -- Space-scoping queries --
+  # These test that space_id filtering works correctly.
+  # Queries run with space_id="space-backend" should only see backend sources/messages.
+  # Queries run with space_id="space-frontend" should only see frontend sources/messages.
+  - id: "q-space-backend-auth"
+    query: "How should passwords be hashed in our backend?"
+    relevant: ["chunk-sec-auth"]
+    k: 5
+    category: "space_scoping"
+    space_id: "space-backend"
+
+  - id: "q-space-backend-docker"
+    query: "How do I deploy the backend with Docker?"
+    relevant: ["chunk-deploy-docker"]
+    k: 5
+    category: "space_scoping"
+    space_id: "space-backend"
+
+  - id: "q-space-backend-migration"
+    query: "How are database migrations handled?"
+    relevant: ["msg-migration-a1"]
+    k: 5
+    category: "space_scoping"
+    space_id: "space-backend"
+
+  - id: "q-space-frontend-excluded"
+    query: "How should passwords be hashed?"
+    relevant: []
+    excluded: ["chunk-sec-auth", "chunk-sec-sql", "chunk-sec-sessions"]
+    k: 5
+    category: "space_scoping"
+    space_id: "space-frontend"
+
+  - id: "q-space-frontend-react"
+    query: "What component library do we use for the frontend?"
+    relevant: ["chunk-fe-components"]
+    k: 5
+    category: "space_scoping"
+    space_id: "space-frontend"
+
+  - id: "q-space-no-scope"
+    query: "How should passwords be hashed in our system?"
+    relevant: ["chunk-sec-auth"]
+    k: 5
+    category: "space_scoping"
+    space_id: null

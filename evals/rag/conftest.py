@@ -212,6 +212,33 @@ def seeded_env(embedding_service: Any, dataset: dict[str, Any]) -> dict[str, Any
     finally:
         loop.close()
 
+        # Seed spaces and space_sources for scoping tests
+        for space in corpus.get("spaces", []):
+            space_id = space["id"]
+            space_name = space["name"]
+            db.execute(
+                "INSERT INTO spaces (id, name, source_file, source_hash, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (space_id, space_name, f"/tmp/{space_name}", "fakehash", now, now),
+            )
+            db.commit()
+
+            # Link sources to space
+            for src_id in space.get("sources", []):
+                db.execute(
+                    "INSERT INTO space_sources (space_id, source_id, created_at) VALUES (?, ?, ?)",
+                    (space_id, src_id, now),
+                )
+            db.commit()
+
+            # Set space_id on conversations
+            for conv_id in space.get("conversations", []):
+                db.execute(
+                    "UPDATE conversations SET space_id = ? WHERE id = ?",
+                    (space_id, conv_id),
+                )
+            db.commit()
+
     return {
         "db": db,
         "vec_manager": vec_manager,

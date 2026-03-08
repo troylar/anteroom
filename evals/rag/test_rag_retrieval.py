@@ -105,6 +105,7 @@ class QueryResult:
     mrr: float
     ndcg: float
     top1_distance: float | None = None
+    excluded: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -118,10 +119,11 @@ def all_results(
     embedding_service: Any,
     dataset: dict[str, Any],
 ) -> list[QueryResult]:
-    """Run every eval query through retrieve_context() once per session."""
+    """Run every non-space-scoped eval query through retrieve_context() once per session."""
     db = seeded_env["db"]
     vec_manager = seeded_env["vec_manager"]
-    queries = dataset["queries"]
+    # Space-scoping queries are handled by the space_results fixture
+    queries = [q for q in dataset["queries"] if q.get("category") != "space_scoping"]
 
     loop = asyncio.new_event_loop()
     results: list[QueryResult] = []
@@ -154,6 +156,58 @@ def all_results(
                     mrr=_mrr(retrieved_ids, relevant),
                     ndcg=_ndcg_at_k(retrieved_ids, relevant, k),
                     top1_distance=top1_dist,
+                )
+            )
+    finally:
+        loop.close()
+
+    return results
+
+
+@pytest.fixture(scope="session")
+def space_results(
+    seeded_env: dict[str, Any],
+    embedding_service: Any,
+    dataset: dict[str, Any],
+) -> list[QueryResult]:
+    """Run space-scoped eval queries through retrieve_context() with space_id."""
+    db = seeded_env["db"]
+    vec_manager = seeded_env["vec_manager"]
+    queries = [q for q in dataset["queries"] if q.get("category") == "space_scoping"]
+
+    loop = asyncio.new_event_loop()
+    results: list[QueryResult] = []
+
+    try:
+        for q in queries:
+            chunks = loop.run_until_complete(
+                retrieve_context(
+                    query=q["query"],
+                    db=db,
+                    embedding_service=embedding_service,
+                    config=_EVAL_CONFIG,
+                    vec_manager=vec_manager,
+                    space_id=q.get("space_id"),
+                )
+            )
+            retrieved_ids = _extract_ids(chunks)
+            k = q["k"]
+            relevant = q["relevant"]
+            top1_dist = chunks[0].distance if chunks else None
+
+            results.append(
+                QueryResult(
+                    query_id=q["id"],
+                    category=q["category"],
+                    query_text=q["query"],
+                    relevant=relevant,
+                    retrieved_ids=retrieved_ids,
+                    k=k,
+                    recall=_recall_at_k(retrieved_ids, relevant, k),
+                    mrr=_mrr(retrieved_ids, relevant),
+                    ndcg=_ndcg_at_k(retrieved_ids, relevant, k),
+                    top1_distance=top1_dist,
+                    excluded=q.get("excluded"),
                 )
             )
     finally:
@@ -213,6 +267,29 @@ _NEGATIVE_QUERY_IDS = [
     "q-neg-weather",
 ]
 
+_HARD_NEGATIVE_QUERY_IDS = [
+    "q-neg-python-snake",
+    "q-neg-docker-shipping",
+    "q-neg-session-music",
+    "q-neg-api-beekeeping",
+    "q-neg-sql-sequel",
+    "q-neg-deployment-military",
+    "q-neg-migration-birds",
+    "q-neg-helm-sailing",
+]
+
+_SPACE_SCOPING_QUERY_IDS = [
+    "q-space-backend-auth",
+    "q-space-backend-docker",
+    "q-space-backend-migration",
+    "q-space-frontend-excluded",
+    "q-space-frontend-react",
+    "q-space-no-scope",
+]
+
+# Space-scoped queries that hit the same dedup issue as unscoped message queries
+_KNOWN_SPACE_DEDUP_VICTIMS = {"q-space-backend-migration"}
+
 
 # Queries where dedup keeps the user question but drops the assistant answer.
 # These are real retrieval quality issues, not test bugs.
@@ -233,6 +310,55 @@ def test_positive_query_recall(all_results: list[QueryResult], qid: str) -> None
 
 
 # ---------------------------------------------------------------------------
+# Space-scoping tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("qid", _SPACE_SCOPING_QUERY_IDS)
+def test_space_scoped_query(space_results: list[QueryResult], qid: str) -> None:
+    """Space-scoped queries must respect space boundaries."""
+    r = _get(space_results, qid)
+    if r.relevant:
+        if qid in _KNOWN_SPACE_DEDUP_VICTIMS:
+            if r.recall == 0:
+                pytest.xfail(
+                    f"[{r.query_id}] recall@{r.k}=0 (known dedup issue) — "
+                    f"retrieved {r.retrieved_ids[:5]}, expected any of {r.relevant}"
+                )
+        assert r.recall > 0, (
+            f"[{r.query_id}] recall@{r.k}=0 with space scoping — "
+            f"retrieved {r.retrieved_ids}, expected any of {r.relevant}"
+        )
+    # Check that excluded content (from other spaces) does not leak through
+    if r.excluded:
+        leaked = set(r.retrieved_ids) & set(r.excluded)
+        assert not leaked, f"[{r.query_id}] space isolation violated — excluded IDs leaked: {leaked}"
+
+
+# ---------------------------------------------------------------------------
+# Hard negative tests — vocabulary overlap, acronym collisions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("qid", _HARD_NEGATIVE_QUERY_IDS)
+def test_hard_negative_distance(all_results: list[QueryResult], qid: str) -> None:
+    """Hard negatives with vocabulary overlap must not match too closely."""
+    r = _get(all_results, qid)
+    # Hard negatives share vocabulary with the corpus (e.g. "python", "docker",
+    # "session", "migration") but are about completely different topics.
+    # We track their top-1 distance to catch precision regressions.
+    # Floor is lower than easy negatives since vocabulary overlap is expected
+    # to produce closer (but still distant) matches.
+    hard_neg_min_distance = 0.30
+    if r.top1_distance is not None and r.top1_distance < hard_neg_min_distance:
+        pytest.fail(
+            f"Hard negative [{r.query_id}] has top-1 distance "
+            f"{r.top1_distance:.3f} < floor {hard_neg_min_distance} — "
+            f"precision regression on vocabulary-overlap queries"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Aggregate scoring test with formatted report
 # ---------------------------------------------------------------------------
 
@@ -250,7 +376,6 @@ def test_aggregate_scores(all_results: list[QueryResult]) -> None:
         by_cat.setdefault(r.category, []).append(r)
 
     positive = [r for r in all_results if r.relevant]
-    negative = [r for r in all_results if not r.relevant]
 
     def _avg(vals: list[float]) -> float:
         return sum(vals) / len(vals) if vals else 0.0
@@ -274,7 +399,7 @@ def test_aggregate_scores(all_results: list[QueryResult]) -> None:
     lines.append(f"  {'Category':<20} {'Count':>6} {'Avg Recall':>11} {'Avg MRR':>9} {'Avg nDCG':>9}")
     lines.append(f"  {'-' * 20} {'-' * 6} {'-' * 11} {'-' * 9} {'-' * 9}")
 
-    for cat in ["source_chunks", "messages", "cross", "paraphrase", "vague", "negative"]:
+    for cat in ["source_chunks", "messages", "cross", "paraphrase", "vague", "negative", "negative_hard"]:
         group = by_cat.get(cat, [])
         if not group:
             continue
@@ -290,9 +415,11 @@ def test_aggregate_scores(all_results: list[QueryResult]) -> None:
     overall_mrr = _avg([r.mrr for r in positive])
     overall_ndcg = _avg([r.ndcg for r in positive])
 
-    # Empty-result rate for negative queries: fraction that correctly returned nothing useful
-    # (all retrieved IDs are irrelevant, which is always true for negative queries)
-    empty_rate = sum(1 for r in negative if not r.retrieved_ids) / len(negative) if negative else 1.0
+    # Negative queries: easy and hard
+    easy_neg = by_cat.get("negative", [])
+    hard_neg = by_cat.get("negative_hard", [])
+    all_neg = easy_neg + hard_neg
+    empty_rate = sum(1 for r in all_neg if not r.retrieved_ids) / len(all_neg) if all_neg else 1.0
 
     lines.append("")
     lines.append("-" * 90)
@@ -300,7 +427,7 @@ def test_aggregate_scores(all_results: list[QueryResult]) -> None:
     lines.append(f"    Recall@k:          {overall_recall:.3f}  (min: {_MIN_OVERALL_RECALL})")
     lines.append(f"    MRR:               {overall_mrr:.3f}")
     lines.append(f"    nDCG@k:            {overall_ndcg:.3f}")
-    lines.append(f"    Negative empty %:  {empty_rate:.1%}  (3 queries)")
+    lines.append(f"    Negative empty %:  {empty_rate:.1%}  ({len(all_neg)} queries)")
     lines.append("")
 
     # Source-chunk and message breakdowns
@@ -321,17 +448,77 @@ def test_aggregate_scores(all_results: list[QueryResult]) -> None:
     )
     assert msg_recall >= _MIN_MESSAGE_RECALL, f"Message recall {msg_recall:.3f} below minimum {_MIN_MESSAGE_RECALL}"
 
-    # Negative queries: verify that the top-1 distance for every negative query
+    # Negative queries: verify that the top-1 distance for every easy negative
     # stays above a floor.  Dense-only retrieval has limited precision on negatives
     # (e.g. a cookie recipe query can match at distance 0.43), so the floor is set
     # to the current observed minimum.  Catches regressions where off-topic queries
     # start matching *closer* than today's baseline.  Hybrid search (#810) and
     # reranking (#811) should push these distances higher.
+    # Hard negatives are checked separately in test_hard_negative_distance with
+    # a lower floor (vocabulary overlap is expected to produce closer matches).
     neg_min_distance = 0.40
-    for r in negative:
+    for r in easy_neg:
         if r.top1_distance is not None and r.top1_distance < neg_min_distance:
             pytest.fail(
                 f"Negative query [{r.query_id}] has top-1 distance "
                 f"{r.top1_distance:.3f} < floor {neg_min_distance} — "
                 f"precision regression on off-topic queries"
             )
+
+    # Hard negative distance summary
+    hard_neg_dists = [r.top1_distance for r in hard_neg if r.top1_distance is not None]
+    if hard_neg_dists:
+        lines.append("")
+        avg_dist = sum(hard_neg_dists) / len(hard_neg_dists)
+        lines.append(
+            f"  Hard negative distances:  min={min(hard_neg_dists):.3f}"
+            f"  avg={avg_dist:.3f}  max={max(hard_neg_dists):.3f}"
+        )
+        lines.append("=" * 90)
+        print("\n".join(lines[-3:]))
+
+
+# ---------------------------------------------------------------------------
+# Space-scoping aggregate test
+# ---------------------------------------------------------------------------
+
+
+def test_space_scoping_aggregate(space_results: list[QueryResult]) -> None:
+    """Print space-scoping scorecard and verify isolation."""
+    lines: list[str] = []
+    lines.append("")
+    lines.append("=" * 90)
+    lines.append("  RAG Space-Scoping Eval — Scorecard")
+    lines.append("=" * 90)
+    lines.append("")
+    lines.append(f"  {'Query ID':<30} {'Recall@k':>9} {'Retrieved':>30}")
+    lines.append(f"  {'-' * 30} {'-' * 9} {'-' * 30}")
+
+    for r in space_results:
+        lines.append(f"  {r.query_id:<30} {r.recall:>9.2f} {str(r.retrieved_ids[:3]):>30}")
+
+    positive_space = [r for r in space_results if r.relevant]
+    negative_space = [r for r in space_results if not r.relevant]
+
+    if positive_space:
+        avg_recall = sum(r.recall for r in positive_space) / len(positive_space)
+        lines.append("")
+        lines.append(f"  Positive space queries:  avg recall = {avg_recall:.3f}")
+
+    if negative_space:
+        # For negative space queries (e.g. asking about passwords in frontend space),
+        # verify no relevant results leak through
+        leaked = [r for r in negative_space if r.retrieved_ids]
+        correct = len(negative_space) - len(leaked)
+        lines.append(f"  Negative space queries:  {correct}/{len(negative_space)} correctly empty")
+
+    lines.append("=" * 90)
+    print("\n".join(lines))
+
+    # Positive space queries must retrieve at least one relevant doc
+    for r in positive_space:
+        if r.query_id in _KNOWN_SPACE_DEDUP_VICTIMS and r.recall == 0:
+            continue  # known dedup issue, reported in parametrized test
+        assert r.recall > 0, (
+            f"[{r.query_id}] space-scoped recall@{r.k}=0 — retrieved {r.retrieved_ids}, expected any of {r.relevant}"
+        )
