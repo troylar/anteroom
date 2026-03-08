@@ -7,6 +7,31 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 7, 2026
 
+### v1.102.0 — Faster, Simpler Vector Search
+
+Anteroom's RAG pipeline now uses usearch instead of sqlite-vec for vector similarity search, eliminating a C extension that was difficult to install on many platforms.
+
+#### Usearch Vector Engine
+
+The vector search backend has been completely rewritten. Two persistent usearch indexes handle nearest-neighbor search with cosine similarity, while SQLite metadata tables remain the source of truth. Cross-platform installation, crash recovery with per-key verification, iterative widening for space-scoped search, and automatic rollback on failure. (#778)
+
+```yaml
+rag:
+  max_chunks: 10
+  similarity_threshold: 0.5
+  max_tokens: 2000
+```
+
+See [Knowledge & RAG](../knowledge/index.md) for full documentation and [How RAG Works](../knowledge/how-rag-works.md) for the pipeline walkthrough.
+
+#### Knowledge & RAG Documentation
+
+A new top-level documentation section explains the complete RAG pipeline: embedding, retrieval, defensive wrapping, and space scoping. (#778)
+
+See [Knowledge & RAG Overview](../knowledge/index.md), [Sources](../knowledge/sources.md), [Configuration](../knowledge/config-reference.md), and [API Reference](../knowledge/api-reference.md).
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.102.0)
+
 ### v1.101.1
 
 **Fixed:**
