@@ -483,7 +483,7 @@ const Sources = (() => {
         try {
             const data = await App.api(url);
             _sources = data.sources || [];
-            if (_spaceFilterActive && _spaceSourceIds.size > 0) {
+            if (_spaceFilterActive) {
                 _sources = _sources.filter(s => _spaceSourceIds.has(s.id));
             }
             _renderList();

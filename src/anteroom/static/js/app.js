@@ -1147,11 +1147,16 @@ const App = (() => {
                 unlinkBtn.title = 'Unlink from space';
                 unlinkBtn.textContent = '\u00d7';
                 unlinkBtn.addEventListener('click', async () => {
-                    await api(`/api/spaces/${encodeURIComponent(spaceId)}/sources/${encodeURIComponent(src.id)}`, {
-                        method: 'DELETE',
-                    });
-                    await _loadSpaceSources(spaceId);
-                    Sources.refreshList();
+                    try {
+                        await api(`/api/spaces/${encodeURIComponent(spaceId)}/sources/${encodeURIComponent(src.id)}`, {
+                            method: 'DELETE',
+                        });
+                        await _loadSpaceSources(spaceId);
+                        Sources.refreshList();
+                    } catch (err) {
+                        unlinkBtn.textContent = '!';
+                        unlinkBtn.title = 'Unlink failed';
+                    }
                 });
                 row.appendChild(titleSpan);
                 row.appendChild(typeSpan);
@@ -1178,13 +1183,17 @@ const App = (() => {
                 newPicker.addEventListener('change', async () => {
                     const sourceId = newPicker.value;
                     if (!sourceId) return;
-                    await api(`/api/spaces/${encodeURIComponent(spaceId)}/sources`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ source_id: sourceId }),
-                    });
-                    await _loadSpaceSources(spaceId);
-                    Sources.refreshList();
+                    try {
+                        await api(`/api/spaces/${encodeURIComponent(spaceId)}/sources`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ source_id: sourceId }),
+                        });
+                        await _loadSpaceSources(spaceId);
+                        Sources.refreshList();
+                    } catch (err) {
+                        newPicker.value = '';
+                    }
                 });
             }
         } catch (err) {

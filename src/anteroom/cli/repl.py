@@ -3578,6 +3578,11 @@ async def _run_repl(
                         if not match:
                             renderer.render_error(f"Source '{query}' not found.")
                             continue
+                        already = get_direct_space_source_links(db, sp["id"])
+                        if any(r["id"] == match["id"] for r in already):
+                            _t = match.get("title", "Untitled")
+                            renderer.console.print(f"[{CHROME}]'{_t}' is already linked to '{sp['name']}'[/{CHROME}]\n")
+                            continue
                         _link_src(db, sp["id"], source_id=match["id"])
                         renderer.console.print(
                             f"[green]Linked '{match.get('title', 'Untitled')}' to space '{sp['name']}'[/green]\n"
