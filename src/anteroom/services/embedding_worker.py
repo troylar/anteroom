@@ -47,6 +47,7 @@ class EmbeddingWorker:
         self._task: asyncio.Task[None] | None = None
         self._store_failures: dict[str, int] = {}
         self._cycle_count = 0
+        self._repair_offset = 0
 
     @property
     def disabled(self) -> bool:
@@ -134,31 +135,39 @@ class EmbeddingWorker:
         """Detect source chunks marked 'embedded' but missing from the vector index.
 
         Resets them to 'pending' so the normal worker flow re-embeds them.
-        Follows the same pattern as ``VectorIndexManager.rebuild_from_db()``.
+        Uses an advancing OFFSET cursor so that every embedded row is
+        eventually checked, even when the total exceeds ``limit``.
         """
         if not self._vec_manager or not self._vec_manager.source_chunks:
             return
         try:
             rows = self._db.execute_fetchall(
-                "SELECT chunk_id FROM source_chunk_embeddings WHERE status = 'embedded' LIMIT ?",
-                (limit,),
+                "SELECT chunk_id FROM source_chunk_embeddings "
+                "WHERE status = 'embedded' ORDER BY chunk_id LIMIT ? OFFSET ?",
+                (limit, self._repair_offset),
             )
             if not rows:
+                # Wrapped around — reset cursor for next sweep
+                self._repair_offset = 0
                 return
             missing_ids = [r["chunk_id"] for r in rows if not self._vec_manager.source_chunks.contains(r["chunk_id"])]
-            if not missing_ids:
-                return
-            placeholders = ",".join("?" * len(missing_ids))
-            self._db.execute(
-                f"UPDATE source_chunk_embeddings SET status = 'pending' WHERE chunk_id IN ({placeholders})",
-                tuple(missing_ids),
-            )
-            self._db.commit()
-            logger.warning(
-                "Mid-session repair: reset %d of %d source chunk embeddings to 'pending'",
-                len(missing_ids),
-                len(rows),
-            )
+            if missing_ids:
+                placeholders = ",".join("?" * len(missing_ids))
+                self._db.execute(
+                    f"UPDATE source_chunk_embeddings SET status = 'pending' WHERE chunk_id IN ({placeholders})",
+                    tuple(missing_ids),
+                )
+                self._db.commit()
+                logger.warning(
+                    "Mid-session repair: reset %d of %d source chunk embeddings to 'pending'",
+                    len(missing_ids),
+                    len(rows),
+                )
+            # Advance cursor; if we got a full page, there may be more
+            if len(rows) < limit:
+                self._repair_offset = 0
+            else:
+                self._repair_offset += limit
         except Exception:
             logger.warning("Failed to repair stale source chunk embeddings", exc_info=True)
 
