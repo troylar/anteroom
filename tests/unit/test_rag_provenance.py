@@ -51,10 +51,7 @@ class TestRagSourcesMetadata:
         ]
 
         # This mirrors the exact logic added to routers/chat.py
-        rag_sources = [
-            {"label": c.source_label, "type": c.source_type, "source_id": c.source_id}
-            for c in chunks
-        ]
+        rag_sources = [{"label": c.source_label, "type": c.source_type, "source_id": c.source_id} for c in chunks]
 
         assert len(rag_sources) == 2
         assert rag_sources[0] == {"label": "Q3 Report", "type": "source_chunk", "source_id": "src-1"}
@@ -62,24 +59,21 @@ class TestRagSourcesMetadata:
 
     def test_rag_sources_empty_for_no_chunks(self) -> None:
         chunks: list[_FakeChunk] = []
-        rag_sources = [
-            {"label": c.source_label, "type": c.source_type, "source_id": c.source_id}
-            for c in chunks
-        ]
+        rag_sources = [{"label": c.source_label, "type": c.source_type, "source_id": c.source_id} for c in chunks]
         assert rag_sources == []
 
     def test_rag_sources_preserves_all_chunk_labels(self) -> None:
         chunks = [
             _FakeChunk(
-                content=f"c{i}", source_type="source_chunk", source_label=f"doc-{i}",
-                distance=0.1 * i, source_id=f"s-{i}",
+                content=f"c{i}",
+                source_type="source_chunk",
+                source_label=f"doc-{i}",
+                distance=0.1 * i,
+                source_id=f"s-{i}",
             )
             for i in range(5)
         ]
-        rag_sources = [
-            {"label": c.source_label, "type": c.source_type, "source_id": c.source_id}
-            for c in chunks
-        ]
+        rag_sources = [{"label": c.source_label, "type": c.source_type, "source_id": c.source_id} for c in chunks]
         assert len(rag_sources) == 5
         assert [s["label"] for s in rag_sources] == ["doc-0", "doc-1", "doc-2", "doc-3", "doc-4"]
 
@@ -149,8 +143,11 @@ class TestRenderRagSources:
     def test_source_chunk_type_badge(self) -> None:
         chunks = [
             _FakeChunk(
-                content="c1", source_type="source_chunk", source_label="manual.pdf",
-                distance=0.2, source_id="s1",
+                content="c1",
+                source_type="source_chunk",
+                source_label="manual.pdf",
+                distance=0.2,
+                source_id="s1",
             ),
         ]
         output = self._capture(chunks)
