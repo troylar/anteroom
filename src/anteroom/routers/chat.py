@@ -581,6 +581,10 @@ async def _build_chat_system_prompt(
             )
             meta["rag_status"] = "ok" if rag_chunks else "no_results"
             meta["rag_chunks"] = len(rag_chunks)
+            meta["rag_sources"] = [
+                {"label": c.source_label, "type": c.source_type, "source_id": c.source_id}
+                for c in rag_chunks
+            ]
             if rag_chunks:
                 extra += format_rag_context(rag_chunks)
         except Exception:
