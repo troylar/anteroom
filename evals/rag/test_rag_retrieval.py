@@ -104,6 +104,7 @@ class QueryResult:
     recall: float
     mrr: float
     ndcg: float
+    top1_distance: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +140,7 @@ def all_results(
             retrieved_ids = _extract_ids(chunks)
             k = q["k"]
             relevant = q["relevant"]
+            top1_dist = chunks[0].distance if chunks else None
 
             results.append(
                 QueryResult(
@@ -151,6 +153,7 @@ def all_results(
                     recall=_recall_at_k(retrieved_ids, relevant, k),
                     mrr=_mrr(retrieved_ids, relevant),
                     ndcg=_ndcg_at_k(retrieved_ids, relevant, k),
+                    top1_distance=top1_dist,
                 )
             )
     finally:
@@ -317,3 +320,18 @@ def test_aggregate_scores(all_results: list[QueryResult]) -> None:
         f"Source-chunk recall {src_recall:.3f} below minimum {_MIN_SOURCE_CHUNK_RECALL}"
     )
     assert msg_recall >= _MIN_MESSAGE_RECALL, f"Message recall {msg_recall:.3f} below minimum {_MIN_MESSAGE_RECALL}"
+
+    # Negative queries: verify that the top-1 distance for every negative query
+    # stays above a floor.  Dense-only retrieval has limited precision on negatives
+    # (e.g. a cookie recipe query can match at distance 0.43), so the floor is set
+    # to the current observed minimum.  Catches regressions where off-topic queries
+    # start matching *closer* than today's baseline.  Hybrid search (#810) and
+    # reranking (#811) should push these distances higher.
+    neg_min_distance = 0.40
+    for r in negative:
+        if r.top1_distance is not None and r.top1_distance < neg_min_distance:
+            pytest.fail(
+                f"Negative query [{r.query_id}] has top-1 distance "
+                f"{r.top1_distance:.3f} < floor {neg_min_distance} — "
+                f"precision regression on off-topic queries"
+            )

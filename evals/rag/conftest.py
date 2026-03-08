@@ -85,12 +85,33 @@ def _load_dataset() -> dict[str, Any]:
 
 @pytest.fixture(scope="session")
 def embedding_service():
-    """Session-scoped local embedding service (loads model once)."""
+    """Session-scoped local embedding service (loads model once).
+
+    Eagerly probes the model to skip cleanly when fastembed is absent
+    or the model cannot be downloaded.
+    """
     try:
         from anteroom.services.embeddings import LocalEmbeddingService
     except ImportError:
         pytest.skip("fastembed not available")
-    return LocalEmbeddingService("BAAI/bge-small-en-v1.5")
+
+    import asyncio
+
+    svc = LocalEmbeddingService("BAAI/bge-small-en-v1.5")
+
+    # Probe: force the lazy model load and first embedding so failures
+    # surface here as a skip rather than as a hard error in seeded_env.
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(svc.embed("probe"))
+        if not result:
+            pytest.skip("embedding service returned empty result")
+    except Exception as exc:
+        pytest.skip(f"embedding service unavailable: {exc}")
+    finally:
+        loop.close()
+
+    return svc
 
 
 @pytest.fixture(scope="session")
