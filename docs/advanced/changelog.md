@@ -7,6 +7,36 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 8, 2026
 
+### v1.106.0 — Offline-Ready Embeddings
+
+Anteroom's local embedding and reranking models are now fully usable in air-gapped environments, and keyword retrieval works correctly without an embedding service.
+
+#### Vendored Model Cache
+
+Both the embedding service and the reranker service now accept a `cache_dir` config field. When set, models load from that directory with `local_files_only` mode enabled — fastembed fails fast instead of attempting network requests. Pre-download models once on a connected machine, copy the directory, and configure the path. (#825)
+
+```yaml
+embeddings:
+  provider: "local"
+  cache_dir: "/opt/anteroom/models"
+reranker:
+  cache_dir: "/opt/anteroom/models"
+```
+
+See [Configuration Reference](../knowledge/config-reference.md) for all embedding and reranker config options.
+
+#### Keyword RAG Without Embeddings
+
+The chat entrypoints previously required an active embedding service before calling RAG, even for keyword or hybrid modes that don't need embeddings. Keyword-only search now works correctly without fastembed installed. (#825)
+
+See [How RAG Works](../knowledge/how-rag-works.md) for retrieval mode details.
+
+#### Documentation
+
+Comprehensive updates to RAG and knowledge documentation covering hybrid retrieval, cross-encoder reranking, and the new `cache_dir` config. (#827)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.106.0)
+
 ### v1.105.0 — Rules That Bite
 
 Security rules that ship with Anteroom should actually stop dangerous code — not just warn about it. This release fixes the security-baseline pack so its rules block writes containing `eval()`, hardcoded secrets, and SQL injection, adds a new way to exclude tools without bypassing the approval gate, and squashes two CLI annoyances.
