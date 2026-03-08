@@ -622,3 +622,15 @@ class TestTriStateEnabled:
 
         config = EmbeddingsConfig()
         assert config.enabled is None
+
+    def test_local_factory_passes_cache_dir(self) -> None:
+        from anteroom.config import AIConfig, AppConfig, EmbeddingsConfig
+
+        config = AppConfig(
+            ai=AIConfig(base_url="https://api.test", api_key="sk-test"),
+            embeddings=EmbeddingsConfig(enabled=True, provider="local", cache_dir="/vendored/models"),
+        )
+        service = create_embedding_service(config)
+        assert service is not None
+        assert isinstance(service, LocalEmbeddingService)
+        assert service._cache_dir == "/vendored/models"
