@@ -385,6 +385,12 @@ BEGIN
     VALUES (NEW.id, NEW.conversation_id, NEW.content);
 END;
 
+CREATE TRIGGER IF NOT EXISTS fts_messages_update_msg
+AFTER UPDATE OF content ON messages
+BEGIN
+    UPDATE messages_fts SET content = NEW.content WHERE message_id = OLD.id;
+END;
+
 CREATE TRIGGER IF NOT EXISTS fts_messages_delete_msg
 AFTER DELETE ON messages
 BEGIN

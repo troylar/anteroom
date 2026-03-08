@@ -774,3 +774,94 @@ class TestRetrieveContextHybridMode:
             chunks = await retrieve_context("test query text here", db, embedding_service, config)
 
         assert chunks == []
+
+    @pytest.mark.asyncio
+    async def test_keyword_mode_works_without_embedding_service(self) -> None:
+        """Keyword-only mode must not require an embedding service."""
+        db = MagicMock()
+        config = _make_config(retrieval_mode="keyword")
+
+        kw_msg = [
+            {
+                "message_id": "m1",
+                "conversation_id": "c1",
+                "content": "keyword result",
+                "role": "user",
+                "distance": 0.0,
+                "fts_rank": -5.0,
+            },
+        ]
+
+        with patch("anteroom.services.rag.storage") as mock_storage:
+            mock_storage.search_keyword_messages = MagicMock(return_value=kw_msg)
+            mock_storage.search_keyword_source_chunks = MagicMock(return_value=[])
+            mock_storage.get_conversation = MagicMock(return_value={"title": "Conv"})
+
+            chunks = await retrieve_context("test query text here", db, None, config)
+
+        assert len(chunks) == 1
+        assert chunks[0].content == "keyword result"
+
+    @pytest.mark.asyncio
+    async def test_hybrid_mode_degrades_to_keyword_when_embed_fails(self) -> None:
+        """Hybrid mode should fall back to keyword-only when embeddings fail."""
+        embedding_service = AsyncMock()
+        embedding_service.embed = AsyncMock(side_effect=RuntimeError("embed error"))
+        db = MagicMock()
+        config = _make_config(retrieval_mode="hybrid")
+
+        kw_msg = [
+            {
+                "message_id": "m1",
+                "conversation_id": "c1",
+                "content": "keyword fallback",
+                "role": "user",
+                "distance": 0.0,
+                "fts_rank": -5.0,
+            },
+        ]
+
+        with patch("anteroom.services.rag.storage") as mock_storage:
+            mock_storage.search_keyword_messages = MagicMock(return_value=kw_msg)
+            mock_storage.search_keyword_source_chunks = MagicMock(return_value=[])
+            mock_storage.get_conversation = MagicMock(return_value={"title": "Conv"})
+
+            chunks = await retrieve_context("test query text here", db, embedding_service, config)
+
+        assert len(chunks) == 1
+        assert chunks[0].content == "keyword fallback"
+
+    @pytest.mark.asyncio
+    async def test_hybrid_mode_does_not_apply_cosine_threshold(self) -> None:
+        """Hybrid mode uses synthetic RRF distances; cosine threshold must not filter."""
+        embedding_service = AsyncMock()
+        embedding_service.embed = AsyncMock(return_value=_fake_embedding())
+        db = MagicMock()
+        # Very strict threshold that would filter cosine distances
+        config = _make_config(retrieval_mode="hybrid", similarity_threshold=0.01)
+
+        dense_msg = [
+            {"message_id": "m1", "conversation_id": "c1", "content": "dense", "role": "user", "distance": 0.1},
+        ]
+        kw_msg = [
+            {
+                "message_id": "m2",
+                "conversation_id": "c2",
+                "content": "keyword",
+                "role": "user",
+                "distance": 0.0,
+                "fts_rank": -5.0,
+            },
+        ]
+
+        with patch("anteroom.services.rag.storage") as mock_storage:
+            mock_storage.search_similar_messages = MagicMock(return_value=dense_msg)
+            mock_storage.search_similar_source_chunks = MagicMock(return_value=[])
+            mock_storage.search_keyword_messages = MagicMock(return_value=kw_msg)
+            mock_storage.search_keyword_source_chunks = MagicMock(return_value=[])
+            mock_storage.get_conversation = MagicMock(return_value={"title": "Conv"})
+
+            chunks = await retrieve_context("test query text here", db, embedding_service, config)
+
+        # Both results should survive — threshold should not apply in hybrid mode
+        assert len(chunks) == 2

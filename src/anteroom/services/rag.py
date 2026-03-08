@@ -51,24 +51,36 @@ async def retrieve_context(
     if not config.enabled:
         return []
 
-    if not embedding_service:
-        return []
-
     if len(query.strip()) < 10:
-        return []
-
-    try:
-        embedding = await embedding_service.embed(query)
-    except Exception:
-        logger.debug("RAG: embedding failed, skipping retrieval", exc_info=True)
-        return []
-
-    if not embedding:
         return []
 
     mode = getattr(config, "retrieval_mode", "dense")
     use_dense = mode in ("dense", "hybrid")
     use_keyword = mode in ("keyword", "hybrid")
+
+    # Dense retrieval requires an embedding service; keyword-only does not.
+    embedding: list[float] | None = None
+    if use_dense:
+        if not embedding_service:
+            if not use_keyword:
+                return []
+            use_dense = False
+        else:
+            try:
+                embedding = await embedding_service.embed(query)
+            except Exception:
+                logger.debug("RAG: embedding failed, skipping retrieval", exc_info=True)
+                if not use_keyword:
+                    return []
+                use_dense = False
+
+            if not embedding:
+                if not use_keyword:
+                    return []
+                use_dense = False
+    elif not use_keyword:
+        # Neither dense nor keyword — nothing to do
+        return []
 
     dense_msg: list[dict[str, Any]] = []
     dense_src: list[dict[str, Any]] = []
@@ -139,11 +151,15 @@ async def retrieve_context(
     chunks: list[RetrievedChunk] = []
 
     # Build message chunks
+    # Apply similarity threshold only in pure dense mode; hybrid distances are
+    # synthetic RRF scores not comparable to cosine distances, and keyword mode
+    # has no meaningful distance metric.
+    apply_threshold = mode == "dense"
     if config.include_conversations:
         for r in msg_results:
             if config.exclude_current and r.get("conversation_id") == current_conversation_id:
                 continue
-            if use_dense and r["distance"] > config.similarity_threshold:
+            if apply_threshold and r["distance"] > config.similarity_threshold:
                 continue
             conv_title = _get_conversation_title(db, r["conversation_id"])
             chunks.append(
@@ -161,7 +177,7 @@ async def retrieve_context(
     # Build source chunks
     if config.include_sources:
         for r in src_results:
-            if use_dense and r["distance"] > config.similarity_threshold:
+            if apply_threshold and r["distance"] > config.similarity_threshold:
                 continue
             source_title = _get_source_title(db, r["source_id"])
             chunks.append(

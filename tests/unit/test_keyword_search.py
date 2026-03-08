@@ -233,3 +233,22 @@ class TestSearchKeywordSourceChunks:
         db = _init_db()
         results = search_keyword_source_chunks(db, "x")
         assert results == []
+
+
+class TestFtsUpdateTrigger:
+    def test_message_update_reflected_in_fts(self) -> None:
+        """FTS index must stay in sync when message content is updated."""
+        db = _init_db()
+        _seed_conversation(db, "c1")
+        _seed_message(db, "m1", "c1", "original content about pytest")
+
+        results = search_keyword_messages(db, "pytest")
+        assert len(results) == 1
+
+        db.execute("UPDATE messages SET content = 'updated content about ruff' WHERE id = 'm1'")
+        db.commit()
+
+        assert search_keyword_messages(db, "pytest") == []
+        results = search_keyword_messages(db, "ruff")
+        assert len(results) == 1
+        assert results[0]["message_id"] == "m1"
