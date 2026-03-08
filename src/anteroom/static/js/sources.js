@@ -491,7 +491,7 @@ const Sources = (() => {
                     sources = sources.filter(s => s.type === typeFilter);
                 }
             } else {
-                let url = '/api/sources?limit=100';
+                let url = '/api/sources?limit=0';
                 if (search) url += `&search=${encodeURIComponent(search)}`;
                 if (typeFilter) url += `&type=${encodeURIComponent(typeFilter)}`;
                 const data = await App.api(url);
