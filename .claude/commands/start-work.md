@@ -1,18 +1,17 @@
 ---
 name: start-work
-description: Begin work on a GitHub issue — create branch, explore code, plan implementation
+description: Begin work on an approved GitHub issue — create branch and worktree
 allowed-tools: Bash, Read, Edit, Grep, Glob, Task
 ---
 
 # /start-work Skill
 
-Set up everything needed to begin implementing a GitHub issue.
+Create a branch and worktree for an approved GitHub issue. The issue must have been planned (`/plan-work`) and approved (`/senior-review`) before work can begin.
 
 ## Usage
 
 ```
-/start-work 83                  # Start work on issue #83 in a worktree
-/start-work 83 --plan-only      # Just create the plan, don't create a branch or worktree
+/start-work 83                  # Start work on approved issue #83 in a worktree
 ```
 
 The argument is a GitHub issue number.
@@ -103,49 +102,6 @@ Auto-run `/plan-work <N>`. After `/plan-work` completes, display:
 ```
 **Stop. Do not proceed.**
 
-### Step 1e: Vision Alignment Check
-
-Read `VISION.md` and evaluate the issue against the product vision.
-
-1. Check against the **"What Anteroom Is Not"** negative guardrails:
-   - Does this make Anteroom a walled garden? (proprietary extension system, required infrastructure for extensibility)
-   - Does this make Anteroom more like a ChatGPT clone? (chat-only feature with no agentic/tool value)
-   - Does this make Anteroom a configuration burden? (feature that doesn't work without configuration, missing sensible defaults)
-   - Does this add enterprise software patterns? (license keys, SSO, admin panels)
-   - Does this complicate deployment? (new infrastructure dependencies, Docker requirements)
-   - Does this make Anteroom a model host? (model management, benchmarking, serving)
-
-2. Check against **Out of Scope** (hard no): cloud/SaaS, model training, mobile native, complex deployment, admin dashboards, recreating IDE functionality
-
-3. Run the **Litmus Test**:
-   - Can someone in a locked-down enterprise use this?
-   - Does it work with `pip install`?
-   - Is it lean?
-   - Does it work in both interfaces?
-   - Would the team use this daily?
-
-4. Check for **complexity creep**: Does this issue add new dependencies, new config options, or new infrastructure requirements? If so, is each one justified?
-
-**Report:**
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  🎯 Vision Alignment: #<N>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  Supports:     <which core principles this advances>
-  Guardrails:   ✅ / ⚠️ <any "Is Not" concerns>
-  Litmus test:  ✅ / ⚠️ <any concerns>
-  Scope:        ✅ / ❌
-  Complexity:   ✅ / ⚠️ <new deps, config, or infra>
-
-────────────────────────────────────────────
-```
-
-- If **[FAIL]**: explain the conflict, suggest alternatives, ask the user how to proceed. Do not create a branch.
-- If **[WARN]**: show the concern, ask the user to confirm before proceeding.
-- If all **[PASS]**: continue to Step 2.
-
 ### Step 2: Check for Existing Work
 
 Check if work has already started on this issue:
@@ -166,8 +122,6 @@ Generate a branch name from the issue:
 - Format: `issue-<N>-<short-description>`
 - `<short-description>`: 2-4 words from the issue title, kebab-case, max 50 chars total
 - Example: issue #83 "Add knowledge notebook support" → `issue-83-knowledge-notebooks`
-
-If `--plan-only` was passed, skip branch/workspace creation.
 
 #### Create Worktree
 
@@ -192,67 +146,9 @@ The worktree path follows the pattern: `../<repo-name>-<N>-<short-description>` 
 
 **IMPORTANT:** Never create a branch in the main checkout. Always use a worktree.
 
-### Step 4: Deep Code Exploration (parallel agents)
+### Step 4: Report
 
-Launch parallel agents to understand the codebase context for this issue:
-
-**Agent A — Architecture context (Sonnet):**
-1. Read `CLAUDE.md` for architecture overview
-2. Identify which layer(s) this issue touches (routers, services, tools, CLI, static, DB)
-3. List the key files and patterns relevant to this change
-
-**Agent B — Existing implementation (Sonnet):**
-1. Based on the issue description and affected files, read the current code
-2. Understand existing patterns: how similar features are implemented
-3. Identify integration points and dependencies
-4. Note any TODOs, FIXMEs, or comments related to this work
-
-**Agent C — Test landscape (Sonnet):**
-1. Find test files related to the affected modules
-2. Understand testing patterns: fixtures, mocking approach, async test setup
-3. Identify what new unit tests will be needed
-4. Identify UX test needs per `.claude/rules/ux-testing.md`:
-   - If web UI code is affected: check existing Playwright tests in `tests/e2e/test_ui_*.py`, identify new Playwright tests needed
-   - If CLI UX code is affected: check existing integration tests in `tests/integration/`, identify new CLI integration tests needed
-   - If JS files are affected: check for existing JS unit tests, identify new Vitest tests needed
-   - If shared core is affected: flag both interfaces need UX coverage
-
-### Step 5: Create Implementation Plan
-
-Based on the exploration, create a structured plan:
-
-```markdown
-## Implementation Plan: #<N> — <title>
-
-### Summary
-<1-2 sentences on what this change does>
-
-### Files to Create
-- `src/anteroom/<path>` — <purpose>
-- `tests/unit/test_<name>.py` — <what it tests>
-
-### Files to Modify
-- `src/anteroom/<path>` — <what changes and why>
-- `src/anteroom/<path>` — <what changes and why>
-
-### Implementation Steps
-1. <First thing to do — be specific about what code to write/change>
-2. <Next step>
-3. <Continue...>
-N. Run tests: `pytest tests/unit/ -v`
-N+1. Run lint: `ruff check src/ tests/`
-
-### Testing Strategy
-- **Unit tests**: <what to test, how to test it>
-- **UX tests**: <Playwright E2E for web UI changes, CLI integration for REPL changes, visual snapshots for renderer changes, JS unit tests for frontend logic — or "N/A: backend-only change">
-- **Edge cases**: <edge cases to cover>
-- **Integration points**: <integration points to verify>
-
-### Risks & Considerations
-- <Anything tricky, breaking changes, migration needs>
-```
-
-### Step 6: Report
+Extract the implementation plan from the issue body (everything after `## Implementation Plan`) and display it.
 
 Print:
 ```
@@ -264,12 +160,9 @@ Print:
   📂 Worktree:   ../<repo>-<N>-<description>
   👤 Assigned:   @<user>
   🏷️ Status:     in-progress
-  📋 Plan:       <number> steps across <number> files
-  🧪 Unit tests: <number> existing, <number> new needed
-  🎭 UX tests:   <Playwright / CLI integration / snapshots / JS unit — or "N/A: backend-only">
-  🎯 Vision:     ✅ supports <principles>
+  ✅ Approved:   senior-approved
 
-<The implementation plan from Step 5>
+<The implementation plan from the issue body>
 
 ────────────────────────────────────────────
   👉 Next: cd ../<repo>-<N>-<description> and say "go",
@@ -279,8 +172,7 @@ Print:
 
 ## Guidelines
 
-- The plan should be detailed enough that another developer (or Claude session) could follow it
-- Don't start coding — this skill only sets up the context and plan
-- If the issue description is vague or missing acceptance criteria, flag what's unclear and suggest criteria
-- If the issue requires changes to the DB schema, call that out prominently
-- If the issue touches security-sensitive code (auth, sessions, crypto, tools), note OWASP requirements
+- Don't start coding — this skill only sets up the branch and worktree
+- The implementation plan from `/plan-work` is already in the issue body — display it for reference
+- If the issue body has no implementation plan section, warn the user (this shouldn't happen if the workflow was followed)
+- If the issue description is vague or missing acceptance criteria, flag what's unclear
