@@ -20,6 +20,26 @@ Run a full validation suite on the current branch and create a pull request with
 
 ## Workflow
 
+### Step 0: Detect Worktree
+
+Determine if we're running inside a git worktree:
+
+```bash
+WORKTREE_PATH=$(git rev-parse --show-toplevel)
+MAIN_WORKTREE=$(git worktree list --porcelain | head -1 | sed 's/worktree //')
+```
+
+If `$WORKTREE_PATH` != `$MAIN_WORKTREE`, we are in a worktree. **All file reads, edits, and commands MUST use the worktree path, not the main checkout.** Display the worktree path prominently in the pre-flight output:
+
+```
+  📂 Worktree:  /path/to/worktree
+```
+
+If not in a worktree, display:
+```
+  📂 Working directory: /path/to/repo
+```
+
 ### Step 1: Pre-flight (parallel)
 
 **A — Branch status:**
@@ -377,6 +397,7 @@ Display the full validation results locally in the chat:
   🔍 PR Validation
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+  📂 Worktree: <worktree path> (or "main checkout" if not in a worktree)
   🔀 Target:   <branch> → main
   📊 Commits:  N commits, M files changed
 
@@ -452,7 +473,9 @@ If Result is NOT READY, abort and show what to fix. Do not create the PR.
 
 ### Step 9: Generate PR Description
 
-Analyze all commits and changed files to generate the PR body:
+The PR description is the reviewer's primary tool. It must be rich enough that a reviewer can understand every change without reading the code first. Optimize for reviewer efficiency: a great PR description means fewer questions, faster approval, and better reviews.
+
+#### 9a: Gather Context
 
 ```bash
 git log --format='%s%n%b' main..HEAD
@@ -460,43 +483,113 @@ git diff --stat main..HEAD
 git diff main..HEAD
 ```
 
-Structure the PR body:
+Also read the primary issue body to understand the original intent and acceptance criteria:
+```bash
+gh issue view <N> --json body,title --jq '{title,body}'
+```
+
+#### 9b: Build Per-File Change Manifest
+
+For every changed file, read the full diff hunk and write a detailed entry. This is the most important part of the PR description — it's what reviewers will scan first to orient themselves.
+
+For each file in `git diff --name-only main..HEAD`:
+
+1. **Read the file's diff**: understand what lines were added, removed, or modified
+2. **Classify the change type**: new file, modified, deleted
+3. **Describe the intent**: not just "what changed" but "why it changed" and "what it enables"
+4. **Note reviewer focus areas**: anything subtle, security-sensitive, or architecturally significant
+
+#### 9c: Structure the PR Body
 
 ```markdown
 ## Summary
 
-<2-4 bullet points describing what this PR does and why, written for a reviewer>
-
-## Changes
-
-<Grouped by area — routers, services, tools, tests, etc.>
-
-### <Area>
-- `file.py` — <what changed and why>
+<2-4 sentences describing what this PR does, why it's needed, and the approach taken. Write for a reviewer who hasn't read the issue — they should understand the full picture from this section alone.>
 
 ## Issue References
 
-Closes #<primary issue>
-Addresses #<secondary issue>
+Closes #<primary issue> — <issue title>
+Addresses #<secondary issue> — <issue title>
+
+## How It Works
+
+<1-2 paragraphs explaining the design/approach at a high level. What's the data flow? What are the key decisions? What alternatives were considered? This section helps reviewers understand the "shape" of the change before diving into files.>
+
+## File-by-File Changes
+
+<For every changed file, provide a detailed entry. Group by area. This section should be thorough enough that a reviewer can understand each file's changes without opening the diff.>
+
+### Database
+| File | Type | Description |
+|------|------|-------------|
+| `src/anteroom/db.py` | Modified | <2-3 sentences: what changed, why, any migration notes. e.g., "Added `metadata TEXT` column to messages table schema. Both the CREATE TABLE definition (for fresh installs) and the ALTER TABLE migration (for existing databases) are updated. Column is nullable with no default."> |
+
+### Services
+| File | Type | Description |
+|------|------|-------------|
+| `src/anteroom/services/storage.py` | Modified | <Detailed description of each function touched: new params, new functions, changed behavior. e.g., "`create_message()` now accepts optional `metadata: dict` param, serialized to JSON. New `update_message_metadata()` function for post-stream updates. `list_messages()` deserializes JSON metadata with graceful fallback on invalid JSON. `fork_conversation()` and `copy_conversation_to_db()` both preserve metadata through their INSERT statements."> |
+
+### Web UI
+| File | Type | Description |
+|------|------|-------------|
+| `src/anteroom/routers/chat.py` | Modified | <What changed in the router, what SSE events are affected, what data flow changed> |
+| `src/anteroom/static/js/chat.js` | Modified | <What DOM changes, what events are handled, any new rendering logic> |
+
+### CLI
+| File | Type | Description |
+|------|------|-------------|
+| `src/anteroom/cli/renderer.py` | Modified | <What rendering changed, any new display elements> |
+| `src/anteroom/cli/repl.py` | Modified | <What REPL behavior changed, resume path changes, command changes> |
+
+### Tests
+| File | Type | Description |
+|------|------|-------------|
+| `tests/unit/test_storage_metadata.py` | **New** | <N tests covering: list what's tested. e.g., "13 tests: create with/without metadata, update metadata, list with JSON deserialization (including invalid JSON edge case), fork preserves metadata, copy preserves metadata"> |
+| `tests/unit/test_rag_provenance.py` | Modified | <What tests were added and what they verify> |
+
+### Documentation
+| File | Type | Description |
+|------|------|-------------|
+| `CLAUDE.md` | Modified | <What was updated and why> |
+
+## Reviewer Guide
+
+<Help the reviewer focus their attention. Call out:>
+
+**Key areas to scrutinize:**
+- <e.g., "JSON serialization round-trip in `storage.py` — ensure no data loss through serialize/deserialize cycle">
+- <e.g., "Metadata preservation in `fork_conversation()` vs `copy_conversation_to_db()` — different serialization approaches due to different data sources (raw SQL vs deserialized dicts)">
+- <e.g., "Dual rendering path in `renderer.py` — objects (live streaming) vs dicts (persisted metadata)">
+
+**What's NOT changing:**
+- <e.g., "No changes to the agent loop, tool execution, or auth flow">
+- <This helps reviewers scope their review and not waste time checking unchanged areas>
+
+**Schema/migration notes:**
+- <If DB schema changed: document the migration path, backward compatibility, and what happens to existing data>
 
 ## Test Plan
 
-- [ ] Unit tests pass: `pytest tests/unit/ -v`
-- [ ] Lint passes: `ruff check src/ tests/`
-- [ ] <Specific test scenarios relevant to this PR>
+- [x] Unit tests pass: `pytest tests/unit/ -v` (<N> passed)
+- [x] Lint passes: `ruff check src/ tests/`
+- [x] Format passes: `ruff format --check src/ tests/`
+- [ ] <Specific test scenarios relevant to this PR, e.g., "Create conversation with RAG sources, resume it, verify sources display in both CLI and web UI">
 - [ ] <Manual verification steps if applicable>
+
+**Test coverage summary:**
+- <N> new test files, <M> new tests total
+- Key scenarios covered: <list the important test categories>
+- Known gaps: <any areas not covered and why, e.g., "No Playwright E2E test for web UI rendering — would require mock RAG pipeline">
 
 ## Security Considerations
 
-<Only include if the PR touches auth, sessions, input handling, DB queries, or tool execution. Otherwise omit this section.>
+<Only include if the PR touches auth, sessions, input handling, DB queries, or tool execution. Otherwise omit this section entirely.>
+
+<If included, be specific: "All new SQL uses parameterized queries. JSON deserialization uses `json.loads` with try/except fallback. No user input reaches the metadata column directly — only internal `rag_sources` dicts from the RAG pipeline.">
 
 ## Vision Alignment
 
 <Include a brief note on which core principles this PR supports. If the PR adds new dependencies, config options, or infrastructure requirements, note them here with justification. Omit this section for trivial changes (typos, small fixes).>
-
-## Documentation
-
-<If the validation report flagged stale or missing docs, list them here as action items. Otherwise omit this section.>
 
 ---
 Generated with [Claude Code](https://claude.ai/code)
@@ -548,6 +641,7 @@ gh pr view --json number,url,title
   🚀 PR Created
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+  📂 Worktree: <worktree path> (or "main checkout" if not in a worktree)
   🔗 PR:       #<N> — <title>
   🌐 URL:      <url>
   🔀 Base:     main ← <branch>

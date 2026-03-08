@@ -288,7 +288,7 @@ Use this structure:
 
 ### <Feature Name>
 
-<1-2 paragraphs explaining what this does, why it matters, and how it works. Use concrete examples — a team pack that blocks production writes, a config key that enables a new mode. Write as if explaining to a colleague, not filing a changelog entry.> (#NN)
+<1-2 paragraphs explaining what this does, why it matters, and how it works. Use concrete examples — a team pack that blocks production writes, a config key that enables a new mode. Write as if explaining to a colleague, not filing a changelog entry.> ([#NN](https://github.com/troylar/anteroom/issues/NN))
 
 \`\`\`yaml
 # Optional: include a short config/code example if it makes the feature tangible
@@ -298,14 +298,14 @@ See [Relevant Doc Page](../path/to/page.md) for full details and [Another Page](
 
 ### <Another Feature>
 
-<Same narrative style.> (#NN)
+<Same narrative style.> ([#NN](https://github.com/troylar/anteroom/issues/NN))
 
 See [Doc Page](../path/to/page.md) for usage details.
 
 ### Bug Fixes
 
-- <Description of what was broken and that it's fixed> (#NN)
-- <Another fix> (#NN)
+- <Description of what was broken and that it's fixed> ([#NN](https://github.com/troylar/anteroom/issues/NN))
+- <Another fix> ([#NN](https://github.com/troylar/anteroom/issues/NN))
 
 See [Troubleshooting](../packs/troubleshooting.md) for common issues.
 
@@ -325,7 +325,7 @@ Note any manual steps needed (usually none — migrations are automatic).
 ```
 
 **Rules:**
-- EVERY bullet point or paragraph that corresponds to a GitHub issue MUST include the issue reference as `(#NN)`
+- EVERY bullet point or paragraph that corresponds to a GitHub issue MUST include a linked issue reference: `([#NN](https://github.com/troylar/anteroom/issues/NN))`. GitHub Release notes are rendered outside the repo context, so bare `#NN` references do NOT auto-link — always use full URLs
 - Omit empty sections (e.g., if no bug fixes, skip that section)
 - Lead with what users care about, put developer details at the bottom
 - Write feature descriptions in plain language, not commit-message-speak
@@ -393,6 +393,7 @@ The changelog is a **user-facing document** — it tells the story of each relea
    ```
 
    **Changelog-specific rules:**
+   - Issue references use bare `(#NN)` — GitHub auto-links these in repo-hosted markdown. Do NOT use full URLs here (unlike release notes)
    - Use `####` (H4) for feature sections within a version entry (the version title is `###` H3)
    - Every feature section MUST end with a `See [Doc Page](../path.md)` cross-link to relevant documentation
    - Use relative links (e.g., `../packs/how-packs-work.md`) — these resolve correctly on the docs site
