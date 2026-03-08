@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 8, 2026
 
+### v1.106.1
+
+**Fixed:**
+
+- `/space link-source` and `/space unlink-source` now disambiguate when multiple sources share the same title, showing candidates with truncated IDs instead of silently failing (#833)
+- Web UI sources panel uncapped from 100 to unlimited (`limit=0`) so large knowledge bases display all sources (#833)
+- Fixed `UnboundLocalError` crash in `/space link-source` when matching by title — missing import of `get_direct_space_source_links` (#833)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.106.1)
+
 ### v1.106.0 — Offline-Ready Embeddings
 
 Anteroom's local embedding and reranking models are now fully usable in air-gapped environments, and keyword retrieval works correctly without an embedding service.
