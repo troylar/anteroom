@@ -155,6 +155,16 @@ embeddings:
   api_key: ""
   api_key_command: ""
 
+reranker:
+  enabled: null                        # null = auto-detect (use if fastembed available)
+  provider: "local"                    # "local" (fastembed) or "api"
+  model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  top_k: 5                            # Keep top-K chunks after reranking
+  score_threshold: 0.0                 # Minimum relevance score (0 = no threshold)
+  candidate_multiplier: 3             # Fetch top_k * multiplier candidates before reranking
+  # base_url: ""                       # API base URL (api provider only)
+  # api_key: ""                        # API key (api provider only)
+
 dlp:
   enabled: false                       # Set true to enable DLP scanning
   scan_output: true                    # Scan AI responses (default: true)
@@ -475,6 +485,21 @@ Controls vector embeddings for semantic search. Requires an OpenAI-compatible em
 | `base_url` | string | `""` | Embedding API endpoint (falls back to `ai.base_url` if empty) |
 | `api_key` | string | `""` | API key for the embedding endpoint |
 | `api_key_command` | string | `""` | External command to obtain the embedding API key dynamically |
+
+### reranker
+
+Controls cross-encoder reranking of RAG results. When enabled, retrieved chunks are re-scored by a cross-encoder model for improved relevance before being injected into the prompt. Uses fastembed `TextCrossEncoder` locally by default (no external API needed).
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `null` (auto-detect) | Enable reranking; `null` uses reranking when fastembed is available; env: `AI_CHAT_RERANKER_ENABLED` |
+| `provider` | string | `local` | Provider: `local` (fastembed TextCrossEncoder) or `api` (OpenAI-compatible endpoint); env: `AI_CHAT_RERANKER_PROVIDER` |
+| `model` | string | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model name; env: `AI_CHAT_RERANKER_MODEL` |
+| `top_k` | integer | `5` | Keep top-K chunks after reranking; env: `AI_CHAT_RERANKER_TOP_K` |
+| `score_threshold` | float | `0.0` | Minimum relevance score (0-1); chunks below this are dropped; env: `AI_CHAT_RERANKER_SCORE_THRESHOLD` |
+| `candidate_multiplier` | integer | `3` | Fetch `top_k * candidate_multiplier` candidates before reranking; env: `AI_CHAT_RERANKER_CANDIDATE_MULTIPLIER` |
+| `base_url` | string | `""` | API base URL (api provider only); env: `AI_CHAT_RERANKER_BASE_URL` |
+| `api_key` | string | `""` | API key (api provider only); env: `AI_CHAT_RERANKER_API_KEY` |
 
 ### dlp
 
