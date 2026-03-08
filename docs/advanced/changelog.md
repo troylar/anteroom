@@ -7,6 +7,33 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 8, 2026
 
+### v1.105.0 — Rules That Bite
+
+Security rules that ship with Anteroom should actually stop dangerous code — not just warn about it. This release fixes the security-baseline pack so its rules block writes containing `eval()`, hardcoded secrets, and SQL injection, adds a new way to exclude tools without bypassing the approval gate, and squashes two CLI annoyances.
+
+#### Rule Enforcement Now Covers File Writes
+
+The built-in security-baseline pack (no-eval, parameterized-queries, no-hardcoded-secrets) previously only checked bash commands. The rule enforcer now inspects file content for `write_file` and `new_text` for `edit_file`, so rules like "no `eval()` in source files" and "no hardcoded `api_key = ...`" actually fire. The `yaml.load()` rule now distinguishes `SafeLoader` from unsafe loaders. (#819)
+
+See [Tool Safety](../security/tool-safety.md) for details on rule enforcement.
+
+#### `--denied-tools` Flag
+
+The new `--denied-tools` flag hard-blocks tools without the auto-approval side effect of `--allowed-tools`. Denied takes priority over allowed. Also available in config as `safety.denied_tools`. (#820)
+
+```bash
+aroom chat --denied-tools bash,run_agent
+```
+
+See [CLI documentation](../cli/index.md) for all flags.
+
+#### Bug Fixes
+
+- Line repetition detection now stops mid-stream at the threshold instead of consuming the entire response first (#821)
+- Thinking spinner clears before tool approval prompts in the CLI (#823)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.105.0)
+
 ### v1.104.0 — Smarter Retrieval
 
 Anteroom's RAG pipeline now includes an optional cross-encoder reranking stage that significantly improves the relevance of retrieved context.
