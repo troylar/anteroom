@@ -366,6 +366,32 @@ class TestLocalEmbeddingService:
         service = LocalEmbeddingService(model_name="BAAI/bge-small-en-v1.5", dimensions=512)
         assert service.dimensions == 512
 
+    def test_cache_dir_stored(self) -> None:
+        service = LocalEmbeddingService(cache_dir="/tmp/models")
+        assert service._cache_dir == "/tmp/models"
+
+    def test_cache_dir_default_empty(self) -> None:
+        service = LocalEmbeddingService()
+        assert service._cache_dir == ""
+
+    def test_cache_dir_passed_to_text_embedding(self) -> None:
+        mock_fastembed = MagicMock()
+        mock_te_class = MagicMock()
+        mock_fastembed.TextEmbedding = mock_te_class
+        service = LocalEmbeddingService(model_name="test-model", cache_dir="/custom/cache")
+        with patch.dict("sys.modules", {"fastembed": mock_fastembed}):
+            service._ensure_model()
+        mock_te_class.assert_called_once_with(model_name="test-model", cache_dir="/custom/cache", local_files_only=True)
+
+    def test_cache_dir_not_passed_when_empty(self) -> None:
+        mock_fastembed = MagicMock()
+        mock_te_class = MagicMock()
+        mock_fastembed.TextEmbedding = mock_te_class
+        service = LocalEmbeddingService(model_name="test-model", cache_dir="")
+        with patch.dict("sys.modules", {"fastembed": mock_fastembed}):
+            service._ensure_model()
+        mock_te_class.assert_called_once_with(model_name="test-model")
+
     @pytest.mark.asyncio
     async def test_embed_returns_none_on_empty_text(self) -> None:
         service = LocalEmbeddingService()
@@ -596,3 +622,15 @@ class TestTriStateEnabled:
 
         config = EmbeddingsConfig()
         assert config.enabled is None
+
+    def test_local_factory_passes_cache_dir(self) -> None:
+        from anteroom.config import AIConfig, AppConfig, EmbeddingsConfig
+
+        config = AppConfig(
+            ai=AIConfig(base_url="https://api.test", api_key="sk-test"),
+            embeddings=EmbeddingsConfig(enabled=True, provider="local", cache_dir="/vendored/models"),
+        )
+        service = create_embedding_service(config)
+        assert service is not None
+        assert isinstance(service, LocalEmbeddingService)
+        assert service._cache_dir == "/vendored/models"

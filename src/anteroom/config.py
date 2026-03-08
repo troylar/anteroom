@@ -391,6 +391,7 @@ class EmbeddingsConfig:
     base_url: str = ""
     api_key: str = ""
     api_key_command: str = ""
+    cache_dir: str = ""  # custom fastembed cache directory for offline/vendored models
 
 
 @dataclass
@@ -618,6 +619,7 @@ class RerankerConfig:
     top_k: int = 5  # keep top-K after reranking (capped to rag.max_chunks at runtime)
     score_threshold: float = 0.0  # minimum relevance score (cross-encoder logit); 0 = no threshold
     candidate_multiplier: int = 3  # fetch top_k * multiplier candidates before reranking
+    cache_dir: str = ""  # custom fastembed cache directory for offline/vendored models
 
 
 @dataclass
@@ -1461,6 +1463,7 @@ def load_config(
     emb_base_url = emb_raw.get("base_url") or os.environ.get("AI_CHAT_EMBEDDINGS_BASE_URL", "")
     emb_api_key = emb_raw.get("api_key") or os.environ.get("AI_CHAT_EMBEDDINGS_API_KEY", "")
     emb_api_key_command = emb_raw.get("api_key_command") or os.environ.get("AI_CHAT_EMBEDDINGS_API_KEY_COMMAND", "")
+    emb_cache_dir = emb_raw.get("cache_dir") or os.environ.get("AI_CHAT_EMBEDDINGS_CACHE_DIR", "")
 
     embeddings_config = EmbeddingsConfig(
         enabled=emb_enabled,
@@ -1471,6 +1474,7 @@ def load_config(
         base_url=emb_base_url,
         api_key=emb_api_key,
         api_key_command=emb_api_key_command,
+        cache_dir=str(emb_cache_dir),
     )
 
     safety_raw = raw.get("safety", {})
@@ -1813,6 +1817,7 @@ def load_config(
         )
     except (ValueError, TypeError):
         reranker_candidate_multiplier = 3
+    reranker_cache_dir = reranker_raw.get("cache_dir") or os.environ.get("AI_CHAT_RERANKER_CACHE_DIR", "")
     reranker_config = RerankerConfig(
         enabled=reranker_enabled,
         provider=reranker_provider,
@@ -1820,6 +1825,7 @@ def load_config(
         top_k=reranker_top_k,
         score_threshold=reranker_score_threshold,
         candidate_multiplier=reranker_candidate_multiplier,
+        cache_dir=str(reranker_cache_dir),
     )
 
     # Proxy config

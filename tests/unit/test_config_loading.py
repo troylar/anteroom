@@ -1667,6 +1667,57 @@ class TestRerankerConfig:
         config, _ = load_config(cfg)
         assert config.reranker.candidate_multiplier == 10
 
+    def test_reranker_cache_dir_yaml(self, tmp_path: Path) -> None:
+        cfg = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://t", "api_key": "k"},
+                "reranker": {"cache_dir": "/vendored/reranker"},
+            },
+        )
+        config, _ = load_config(cfg)
+        assert config.reranker.cache_dir == "/vendored/reranker"
+
+    def test_reranker_cache_dir_env_var(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AI_CHAT_RERANKER_CACHE_DIR", "/env/reranker")
+        cfg = _minimal(tmp_path)
+        config, _ = load_config(cfg)
+        assert config.reranker.cache_dir == "/env/reranker"
+
+    def test_reranker_cache_dir_default_empty(self, tmp_path: Path) -> None:
+        cfg = _minimal(tmp_path)
+        config, _ = load_config(cfg)
+        assert config.reranker.cache_dir == ""
+
+
+# ---------------------------------------------------------------------------
+# Embeddings cache_dir config
+# ---------------------------------------------------------------------------
+
+
+class TestEmbeddingsCacheDirConfig:
+    def test_embeddings_cache_dir_yaml(self, tmp_path: Path) -> None:
+        cfg = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://t", "api_key": "k"},
+                "embeddings": {"cache_dir": "/vendored/embeddings"},
+            },
+        )
+        config, _ = load_config(cfg)
+        assert config.embeddings.cache_dir == "/vendored/embeddings"
+
+    def test_embeddings_cache_dir_env_var(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AI_CHAT_EMBEDDINGS_CACHE_DIR", "/env/embeddings")
+        cfg = _minimal(tmp_path)
+        config, _ = load_config(cfg)
+        assert config.embeddings.cache_dir == "/env/embeddings"
+
+    def test_embeddings_cache_dir_default_empty(self, tmp_path: Path) -> None:
+        cfg = _minimal(tmp_path)
+        config, _ = load_config(cfg)
+        assert config.embeddings.cache_dir == ""
+
 
 # ---------------------------------------------------------------------------
 # Proxy config (lines 1672-1694)

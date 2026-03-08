@@ -988,6 +988,105 @@ class TestBuildChatSystemPrompt:
         assert meta["rag_chunks"] == 0
 
     @pytest.mark.asyncio
+    async def test_rag_keyword_mode_without_embeddings(self) -> None:
+        """Keyword retrieval mode should work even without vec_enabled or embedding_service."""
+        from anteroom.routers.chat import _build_chat_system_prompt
+
+        ai_service = MagicMock()
+        ai_service.config.model = "gpt-4o"
+        tool_registry = MagicMock()
+        tool_registry.list_tools.return_value = []
+        tool_registry._working_dir = None
+        mcp_manager = MagicMock()
+        mcp_manager.get_server_statuses.return_value = []
+        config = MagicMock()
+        config.app.tls = False
+        config.rag.enabled = True
+        config.rag.retrieval_mode = "keyword"
+        config.codebase_index.map_tokens = 1000
+        db = MagicMock()
+
+        fake_chunks = [MagicMock()]
+
+        with (
+            patch("anteroom.routers.chat.build_runtime_context", return_value="CTX"),
+            patch("anteroom.routers.chat.load_instructions", return_value=None),
+            patch("anteroom.routers.chat.storage") as mock_storage,
+            patch("anteroom.services.codebase_index.create_index_service", return_value=None),
+            patch("anteroom.services.rag.retrieve_context", return_value=fake_chunks),
+            patch("anteroom.services.rag.strip_rag_context", side_effect=lambda x: x),
+            patch("anteroom.services.rag.format_rag_context", return_value="\nRAG KW"),
+        ):
+            mock_storage.get_canvas_for_conversation.return_value = None
+            _result, meta = await _build_chat_system_prompt(
+                ai_service=ai_service,
+                tool_registry=tool_registry,
+                mcp_manager=mcp_manager,
+                config=config,
+                db=db,
+                conversation_id=str(uuid.uuid4()),
+                space_instructions=None,
+                plan_prompt="",
+                plan_mode=False,
+                message_text="search query",
+                source_ids=[],
+                source_tag=None,
+                source_group_id=None,
+                vec_enabled=False,
+                embedding_service=None,
+            )
+
+        assert meta["rag_status"] == "ok"
+        assert meta["rag_chunks"] == 1
+
+    @pytest.mark.asyncio
+    async def test_rag_dense_mode_without_embeddings_skipped(self) -> None:
+        """Dense mode without embeddings should skip RAG (not keyword fallback)."""
+        from anteroom.routers.chat import _build_chat_system_prompt
+
+        ai_service = MagicMock()
+        ai_service.config.model = "gpt-4o"
+        tool_registry = MagicMock()
+        tool_registry.list_tools.return_value = []
+        tool_registry._working_dir = None
+        mcp_manager = MagicMock()
+        mcp_manager.get_server_statuses.return_value = []
+        config = MagicMock()
+        config.app.tls = False
+        config.rag.enabled = True
+        config.rag.retrieval_mode = "dense"
+        config.codebase_index.map_tokens = 1000
+        db = MagicMock()
+
+        with (
+            patch("anteroom.routers.chat.build_runtime_context", return_value="CTX"),
+            patch("anteroom.routers.chat.load_instructions", return_value=None),
+            patch("anteroom.routers.chat.storage") as mock_storage,
+            patch("anteroom.services.codebase_index.create_index_service", return_value=None),
+        ):
+            mock_storage.get_canvas_for_conversation.return_value = None
+            _result, meta = await _build_chat_system_prompt(
+                ai_service=ai_service,
+                tool_registry=tool_registry,
+                mcp_manager=mcp_manager,
+                config=config,
+                db=db,
+                conversation_id=str(uuid.uuid4()),
+                space_instructions=None,
+                plan_prompt="",
+                plan_mode=False,
+                message_text="search query",
+                source_ids=[],
+                source_tag=None,
+                source_group_id=None,
+                vec_enabled=False,
+                embedding_service=None,
+            )
+
+        assert meta["rag_status"] == "no_vec_support"
+        assert meta["rag_chunks"] == 0
+
+    @pytest.mark.asyncio
     async def test_attachment_filenames_inject_guidance(self) -> None:
         from anteroom.routers.chat import _build_chat_system_prompt
 

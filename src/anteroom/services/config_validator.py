@@ -157,6 +157,7 @@ _KNOWN_KEYS: dict[str, set[str]] = {
         "base_url",
         "api_key",
         "api_key_command",
+        "cache_dir",
     },
     "safety": {
         "enabled",
@@ -247,6 +248,7 @@ _KNOWN_KEYS: dict[str, set[str]] = {
         "top_k",
         "score_threshold",
         "candidate_multiplier",
+        "cache_dir",
     },
     "codebase_index": {"enabled", "map_tokens", "languages", "exclude_dirs"},
     "session": {
