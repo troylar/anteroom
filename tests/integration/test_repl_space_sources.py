@@ -1,35 +1,33 @@
-"""Integration tests for CLI /space link-source and /space unlink-source disambiguation.
+"""Integration tests for CLI /space link-source disambiguation via the real REPL.
 
-Tests the three-tier matching logic (ID -> exact title -> partial title) by
-exercising the same code path as the REPL, including the disambiguation output
-that the user sees when multiple sources share the same title.
+Drives the actual REPL code path in src/anteroom/cli/repl.py by mocking
+PromptSession.prompt_async to feed commands, and capturing renderer.console
+output to verify disambiguation messages appear in the terminal.
 
-The REPL's link-source/unlink-source flow is tested here by:
-1. Calling the same service functions the REPL calls (list_sources, link_source_to_space)
-2. Running the same matching algorithm inline
-3. Capturing Rich console output to verify disambiguation messages
+This tests the real REPL loop — not a duplicated matching function.
 """
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
-from datetime import datetime, timezone
+from contextlib import contextmanager
 from io import StringIO
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from rich.console import Console
 
+from anteroom.config import AIConfig, AppConfig, AppSettings, CliConfig, SafetyConfig
 from anteroom.db import _SCHEMA, ThreadSafeConnection
-from anteroom.services.storage import (
-    create_source,
-    get_direct_space_source_links,
-    link_source_to_space,
-    list_sources,
-)
+from anteroom.services.storage import create_source
 
 
-def _make_db() -> ThreadSafeConnection:
-    """Create an in-memory DB with full schema."""
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
+def _make_db(tmp_path: Any) -> ThreadSafeConnection:
+    """Create a DB with full schema."""
+    db_path = str(tmp_path / "test.db")
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(_SCHEMA)
@@ -37,8 +35,10 @@ def _make_db() -> ThreadSafeConnection:
     return ThreadSafeConnection(conn)
 
 
-def _seed_space(db: ThreadSafeConnection, space_id: str = "sp1", name: str = "myspace") -> dict:
-    """Create a space and return its row."""
+def _seed_space(db: ThreadSafeConnection, space_id: str = "sp1", name: str = "testspace") -> dict:
+    """Insert a space row."""
+    from datetime import datetime, timezone
+
     now = datetime.now(timezone.utc).isoformat()
     db.execute(
         "INSERT INTO spaces (id, name, source_file, source_hash, last_loaded_at, created_at, updated_at) "
@@ -49,186 +49,205 @@ def _seed_space(db: ThreadSafeConnection, space_id: str = "sp1", name: str = "my
     return {"id": space_id, "name": name}
 
 
-def _run_link_source_match(all_srcs: list[dict], query: str, console: Console) -> dict | None:
-    """Reproduce the REPL's three-tier matching logic for /space link-source.
+def _make_config(tmp_path: Any) -> AppConfig:
+    """Minimal AppConfig for REPL tests."""
+    return AppConfig(
+        ai=AIConfig(
+            base_url="http://localhost:1/v1",
+            api_key="test-key",
+            model="test-model",
+        ),
+        app=AppSettings(data_dir=tmp_path, tls=False),
+        safety=SafetyConfig(approval_mode="auto"),
+        cli=CliConfig(),
+    )
 
-    This is the exact algorithm from repl.py lines 3567-3601, extracted
-    so we can test it with a captured console.
+
+@contextmanager
+def _noop_patch_stdout(**kwargs: Any) -> Any:
+    """No-op replacement for prompt_toolkit.patch_stdout.patch_stdout."""
+    yield
+
+
+async def _run_repl_with_commands(
+    commands: list[str],
+    config: AppConfig,
+    db: ThreadSafeConnection,
+    space: dict[str, Any],
+) -> str:
+    """Run _run_repl with mocked PromptSession feeding specific commands.
+
+    Returns the captured console output as a string.
     """
-    match = None
-    # Tier 1: Exact match by ID (unique, no ambiguity)
-    for s in all_srcs:
-        if s["id"] == query:
-            match = s
-            break
-    # Tier 2: Exact title match with disambiguation
-    if not match:
-        exact = [s for s in all_srcs if s.get("title", "").lower() == query.lower()]
-        if len(exact) == 1:
-            match = exact[0]
-        elif len(exact) > 1:
-            console.print(f"Multiple sources named '{query}':")
-            for c in exact[:10]:
-                _ct = c.get("title", "Untitled")
-                _ci = str(c["id"])[:8]
-                console.print(f"  {_ct} {_ci}...")
-            console.print("Use the source ID to disambiguate.")
-            return None  # signals "continue" in the REPL
-    # Tier 3: Partial title match with disambiguation
-    if not match:
-        candidates = [s for s in all_srcs if query.lower() in s.get("title", "").lower()]
-        if len(candidates) == 1:
-            match = candidates[0]
-        elif len(candidates) > 1:
-            console.print(f"Multiple sources match '{query}':")
-            for c in candidates[:10]:
-                _ct = c.get("title", "Untitled")
-                _ci = str(c["id"])[:8]
-                console.print(f"  {_ct} {_ci}...")
-            console.print("Be more specific or use the source ID.")
-            return None  # signals "continue" in the REPL
-    if not match:
-        console.print(f"Source '{query}' not found.")
-        return None
-    return match
+    from anteroom.cli.repl import _run_repl
+
+    buf = StringIO()
+    captured_console = Console(file=buf, force_terminal=False, width=120)
+
+    command_iter = iter([*commands, "/exit"])
+
+    async def fake_prompt(*args: Any, **kwargs: Any) -> str:
+        # Yield control so _agent_runner can process between commands
+        await asyncio.sleep(0.05)
+        try:
+            return next(command_iter)
+        except StopIteration:
+            raise EOFError()
+
+    mock_ai = MagicMock()
+    mock_ai.stream_chat = AsyncMock()
+    mock_tool_executor = AsyncMock()
+
+    mock_session_instance = MagicMock()
+    mock_session_instance.prompt_async = fake_prompt
+    mock_session_instance.default_buffer = MagicMock()
+    mock_session_instance.default_buffer.on_text_changed = MagicMock()
+
+    with (
+        patch("anteroom.cli.repl.renderer.console", captured_console),
+        patch("anteroom.cli.repl.renderer.render_error", lambda msg: captured_console.print(f"Error: {msg}")),
+        patch("anteroom.cli.repl.renderer.render_conversation_recap", lambda *a, **k: None),
+        # Prevent use_stdout_console from overwriting our captured_console
+        patch("anteroom.cli.renderer.use_stdout_console", lambda: None),
+        # Replace patch_stdout with a no-op context manager
+        patch("anteroom.cli.repl._patch_stdout", _noop_patch_stdout, create=True),
+        patch("prompt_toolkit.patch_stdout.patch_stdout", _noop_patch_stdout),
+        patch("prompt_toolkit.PromptSession") as mock_session_cls,
+    ):
+        mock_session_cls.return_value = mock_session_instance
+
+        try:
+            await _run_repl(
+                config=config,
+                db=db,
+                ai_service=mock_ai,
+                tool_executor=mock_tool_executor,
+                tools_openai=None,
+                extra_system_prompt="",
+                all_tool_names=[],
+                working_dir=str(config.app.data_dir),
+                space=space,
+            )
+        except (EOFError, KeyboardInterrupt, SystemExit):
+            pass
+
+    return buf.getvalue()
 
 
-class TestDisambiguationOutput:
-    """Verify the REPL's disambiguation messages for duplicate titles."""
+@pytest.mark.asyncio
+class TestReplDisambiguationFlow:
+    """Drive the real REPL and verify disambiguation output."""
 
-    def test_duplicate_exact_title_shows_disambiguation(self) -> None:
-        """When two sources share the same title, the REPL prints candidates + IDs."""
-        db = _make_db()
-        _seed_space(db)
+    async def test_link_source_duplicate_title_shows_disambiguation(self, tmp_path: Any) -> None:
+        """When two sources share the same title, the REPL prints candidates with IDs."""
+        db = _make_db(tmp_path)
+        sp = _seed_space(db)
         s1 = create_source(db, source_type="text", title="Quarterly Report", content="v1")
         s2 = create_source(db, source_type="text", title="Quarterly Report", content="v2")
+        config = _make_config(tmp_path)
 
-        all_srcs = list_sources(db, limit=0)
-        buf = StringIO()
-        console = Console(file=buf, force_terminal=False, width=120)
+        output = await _run_repl_with_commands(
+            ["/space link-source Quarterly Report"],
+            config,
+            db,
+            sp,
+        )
 
-        result = _run_link_source_match(all_srcs, "quarterly report", console)
-
-        assert result is None, "Should return None (disambiguation needed)"
-        output = buf.getvalue()
-        assert "Multiple sources named" in output
-        assert s1["id"][:8] in output
-        assert s2["id"][:8] in output
+        assert "Multiple sources named" in output, f"Expected disambiguation message, got: {output}"
+        assert s1["id"][:8] in output, f"Expected truncated ID {s1['id'][:8]} in output"
+        assert s2["id"][:8] in output, f"Expected truncated ID {s2['id'][:8]} in output"
         assert "Use the source ID to disambiguate" in output
 
-    def test_duplicate_exact_title_resolved_by_id(self) -> None:
-        """After disambiguation, using the source ID resolves unambiguously."""
-        db = _make_db()
-        _seed_space(db)
+    async def test_link_source_by_id_after_disambiguation(self, tmp_path: Any) -> None:
+        """After disambiguation, using the source ID links successfully."""
+        db = _make_db(tmp_path)
+        sp = _seed_space(db)
         s1 = create_source(db, source_type="text", title="Quarterly Report", content="v1")
         create_source(db, source_type="text", title="Quarterly Report", content="v2")
+        config = _make_config(tmp_path)
 
-        all_srcs = list_sources(db, limit=0)
-        buf = StringIO()
-        console = Console(file=buf, force_terminal=False, width=120)
+        output = await _run_repl_with_commands(
+            [f"/space link-source {s1['id']}"],
+            config,
+            db,
+            sp,
+        )
 
-        result = _run_link_source_match(all_srcs, s1["id"], console)
+        assert "Linked" in output, f"Expected link confirmation, got: {output}"
+        assert "Quarterly Report" in output
 
-        assert result is not None
-        assert result["id"] == s1["id"]
-        assert result["content"] == "v1"
-        assert buf.getvalue() == "", "No disambiguation output when ID match is exact"
-
-    def test_partial_match_multiple_shows_candidates(self) -> None:
-        """When partial title matches multiple sources, show disambiguation."""
-        db = _make_db()
-        _seed_space(db)
-        s1 = create_source(db, source_type="text", title="Q1 Report", content="c1")
-        s2 = create_source(db, source_type="text", title="Q2 Report", content="c2")
+    async def test_link_source_partial_match_multiple_shows_candidates(self, tmp_path: Any) -> None:
+        """Partial title matching multiple sources shows disambiguation."""
+        db = _make_db(tmp_path)
+        sp = _seed_space(db)
+        create_source(db, source_type="text", title="Q1 Report", content="c1")
+        create_source(db, source_type="text", title="Q2 Report", content="c2")
         create_source(db, source_type="text", title="Budget Plan", content="c3")
+        config = _make_config(tmp_path)
 
-        all_srcs = list_sources(db, limit=0)
-        buf = StringIO()
-        console = Console(file=buf, force_terminal=False, width=120)
+        output = await _run_repl_with_commands(
+            ["/space link-source report"],
+            config,
+            db,
+            sp,
+        )
 
-        result = _run_link_source_match(all_srcs, "report", console)
-
-        assert result is None
-        output = buf.getvalue()
-        assert "Multiple sources match" in output
-        assert s1["id"][:8] in output
-        assert s2["id"][:8] in output
+        assert "Multiple sources match" in output, f"Expected partial disambiguation, got: {output}"
         assert "Be more specific or use the source ID" in output
 
-    def test_single_exact_title_no_disambiguation(self) -> None:
-        """When only one source matches by exact title, no disambiguation needed."""
-        db = _make_db()
-        _seed_space(db)
-        create_source(db, source_type="text", title="Unique Title", content="c1")
-        create_source(db, source_type="text", title="Other Title", content="c2")
+    async def test_link_source_unique_title_links_directly(self, tmp_path: Any) -> None:
+        """A unique title match links without disambiguation."""
+        db = _make_db(tmp_path)
+        sp = _seed_space(db)
+        create_source(db, source_type="text", title="Unique Doc", content="c1")
+        create_source(db, source_type="text", title="Other Doc", content="c2")
+        config = _make_config(tmp_path)
 
-        all_srcs = list_sources(db, limit=0)
-        buf = StringIO()
-        console = Console(file=buf, force_terminal=False, width=120)
+        output = await _run_repl_with_commands(
+            ["/space link-source Unique Doc"],
+            config,
+            db,
+            sp,
+        )
 
-        result = _run_link_source_match(all_srcs, "unique title", console)
+        assert "Linked" in output, f"Expected link confirmation, got: {output}"
+        assert "Multiple" not in output, "Should not show disambiguation"
 
-        assert result is not None
-        assert result["title"] == "Unique Title"
-        assert buf.getvalue() == ""
-
-    def test_single_partial_match_no_disambiguation(self) -> None:
-        """When only one source matches by partial title, no disambiguation needed."""
-        db = _make_db()
-        _seed_space(db)
-        create_source(db, source_type="text", title="Architecture Overview", content="c1")
-        create_source(db, source_type="text", title="Budget Summary", content="c2")
-
-        all_srcs = list_sources(db, limit=0)
-        buf = StringIO()
-        console = Console(file=buf, force_terminal=False, width=120)
-
-        result = _run_link_source_match(all_srcs, "archit", console)
-
-        assert result is not None
-        assert result["title"] == "Architecture Overview"
-        assert buf.getvalue() == ""
-
-    def test_no_match_shows_not_found(self) -> None:
-        """When nothing matches, show 'not found' error."""
-        db = _make_db()
-        _seed_space(db)
+    async def test_link_source_not_found(self, tmp_path: Any) -> None:
+        """Non-matching query shows 'not found' error."""
+        db = _make_db(tmp_path)
+        sp = _seed_space(db)
         create_source(db, source_type="text", title="Alpha", content="c1")
+        config = _make_config(tmp_path)
 
-        all_srcs = list_sources(db, limit=0)
-        buf = StringIO()
-        console = Console(file=buf, force_terminal=False, width=120)
+        output = await _run_repl_with_commands(
+            ["/space link-source nonexistent"],
+            config,
+            db,
+            sp,
+        )
 
-        result = _run_link_source_match(all_srcs, "nonexistent", console)
+        assert "not found" in output.lower(), f"Expected 'not found', got: {output}"
 
-        assert result is None
-        assert "not found" in buf.getvalue()
+    async def test_unlink_source_duplicate_title_shows_disambiguation(self, tmp_path: Any) -> None:
+        """Unlink with duplicate titles also shows disambiguation."""
+        from anteroom.services.storage import link_source_to_space
 
-    def test_disambiguation_then_link_full_flow(self) -> None:
-        """Full flow: disambiguation, then ID-based link, then verify linked."""
-        db = _make_db()
+        db = _make_db(tmp_path)
         sp = _seed_space(db)
         s1 = create_source(db, source_type="text", title="Status Report", content="v1")
-        create_source(db, source_type="text", title="Status Report", content="v2")
+        s2 = create_source(db, source_type="text", title="Status Report", content="v2")
+        link_source_to_space(db, sp["id"], source_id=s1["id"])
+        link_source_to_space(db, sp["id"], source_id=s2["id"])
+        config = _make_config(tmp_path)
 
-        all_srcs = list_sources(db, limit=0)
-        buf = StringIO()
-        console = Console(file=buf, force_terminal=False, width=120)
+        output = await _run_repl_with_commands(
+            ["/space unlink-source Status Report"],
+            config,
+            db,
+            sp,
+        )
 
-        # First attempt by title — hits disambiguation
-        result = _run_link_source_match(all_srcs, "status report", console)
-        assert result is None
-        assert "Multiple sources named" in buf.getvalue()
-
-        # Second attempt by ID — resolves
-        buf2 = StringIO()
-        console2 = Console(file=buf2, force_terminal=False, width=120)
-        result = _run_link_source_match(all_srcs, s1["id"], console2)
-        assert result is not None
-        assert result["id"] == s1["id"]
-
-        # Link and verify
-        link_source_to_space(db, sp["id"], source_id=result["id"])
-        linked = get_direct_space_source_links(db, sp["id"])
-        assert len(linked) == 1
-        assert linked[0]["id"] == s1["id"]
+        assert "Multiple sources named" in output, f"Expected disambiguation, got: {output}"
+        assert s1["id"][:8] in output
+        assert s2["id"][:8] in output

@@ -96,9 +96,8 @@ class TestBrowserSourcesPanelUnlimited:
         page.wait_for_load_state("domcontentloaded")
         page.wait_for_selector("#btn-send", timeout=10000)
 
-        toggle = page.locator("#btn-toggle-sources")
-        if not toggle.is_visible():
-            pytest.skip("Sources toggle button not in UI")
+        toggle = page.locator("#btn-sources-toggle")
+        expect(toggle).to_be_visible(timeout=5000)
 
         toggle.click()
         page.wait_for_timeout(1500)

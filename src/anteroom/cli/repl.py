@@ -3558,6 +3558,9 @@ async def _run_repl(
                             renderer.console.print(f"[{CHROME}]Usage: /space link-source <title-or-id>[/{CHROME}]\n")
                             continue
                         from ..services.storage import (
+                            get_direct_space_source_links,
+                        )
+                        from ..services.storage import (
                             link_source_to_space as _link_src,
                         )
                         from ..services.storage import (
