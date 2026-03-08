@@ -5,6 +5,33 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## March 8, 2026
+
+### v1.103.0 — Search Gets Smarter
+
+Anteroom's RAG pipeline gains a hybrid retrieval mode that combines keyword search (FTS5) with dense vector search, merging results via Reciprocal Rank Fusion for better context quality.
+
+#### Hybrid Search with Reciprocal Rank Fusion
+
+The RAG pipeline now supports three retrieval modes: `dense` (vector similarity, the default), `keyword` (FTS5 full-text search), and `hybrid` (both, merged via RRF). Hybrid mode runs both search backends in parallel, ranks each result set independently, then combines them using reciprocal rank fusion with k=60. Results that appear in both lists get a natural relevance boost. (#810)
+
+```yaml
+rag:
+  retrieval_mode: hybrid  # dense | keyword | hybrid
+```
+
+The keyword mode works without any embedding service — useful when fastembed isn't available or embeddings are disabled. Hybrid mode degrades gracefully to keyword-only when embedding fails.
+
+See [Knowledge & RAG](../knowledge/index.md) for full documentation and [How RAG Works](../knowledge/how-rag-works.md) for the pipeline walkthrough.
+
+#### FTS5 Full-Text Search Infrastructure
+
+SQLite FTS5 virtual tables with Porter stemming now index both messages and source chunks automatically via INSERT/UPDATE/DELETE triggers. Existing databases are migrated and backfilled transparently on startup. Space-scoped keyword search filters at the SQL level to prevent limit starvation. (#810)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.103.0)
+
+---
+
 ## March 7, 2026
 
 ### v1.102.0 — Faster, Simpler Vector Search
