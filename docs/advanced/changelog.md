@@ -7,6 +7,27 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 8, 2026
 
+### v1.104.0 — Smarter Retrieval
+
+Anteroom's RAG pipeline now includes an optional cross-encoder reranking stage that significantly improves the relevance of retrieved context.
+
+#### Cross-Encoder Reranker
+
+The RAG pipeline previously relied solely on embedding similarity to rank retrieved chunks. Cross-encoder reranking adds a second stage: after initial retrieval fetches a broad candidate set, a cross-encoder model scores each candidate against the query directly, producing much more accurate relevance judgments. (#811)
+
+```yaml
+reranker:
+  enabled: null    # auto-detect (uses fastembed if available)
+  top_k: 5         # keep top-5 after reranking
+  candidate_multiplier: 3  # fetch 3x candidates for reranking
+```
+
+Runs locally via fastembed's `TextCrossEncoder` — no external API needed. Auto-detects on startup and degrades gracefully.
+
+See [Configuration Reference](../configuration/config-file.md) for all reranker settings.
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.104.0)
+
 ### v1.103.0 — Search Gets Smarter
 
 Anteroom's RAG pipeline gains a hybrid retrieval mode that combines keyword search (FTS5) with dense vector search, merging results via Reciprocal Rank Fusion for better context quality.
