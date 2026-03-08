@@ -2334,13 +2334,13 @@ def main() -> None:
         "--allowed-tools",
         dest="allowed_tools",
         default=None,
-        help="Comma-separated list of pre-allowed tools (e.g., bash,write_file). These tools skip the approval gate entirely",
+        help="Comma-separated pre-allowed tools (e.g., bash,write_file). Skips approval gate",
     )
     parser.add_argument(
         "--denied-tools",
         dest="denied_tools",
         default=None,
-        help="Comma-separated list of hard-blocked tools (e.g., bash,run_agent). These tools are blocked without any approval prompt",
+        help="Comma-separated hard-blocked tools (e.g., bash,run_agent). Blocked without prompt",
     )
     parser.add_argument(
         "--approval-mode",

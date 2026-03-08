@@ -200,5 +200,6 @@ class TestSecurityBaselineRuleEnforcement:
             ).fetchone()
             assert row is not None, f"Rule {name} not found in DB"
             import json
+
             meta = json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
             assert meta.get("enforce") == "hard", f"Rule {name} metadata missing enforce:hard in DB"
