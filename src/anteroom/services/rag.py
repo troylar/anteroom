@@ -322,6 +322,8 @@ async def _rerank_chunks(
 
     result: list[RetrievedChunk] = []
     for idx, score in scored:
+        if idx < 0 or idx >= len(chunks):
+            continue
         if score < reranker_config.score_threshold:
             continue
         chunk = chunks[idx]

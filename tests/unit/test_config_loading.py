@@ -1621,7 +1621,8 @@ class TestRerankerConfig:
         config, _ = load_config(cfg)
         assert config.reranker.top_k == 50  # clamped to max
 
-    def test_reranker_score_threshold_clamped(self, tmp_path: Path) -> None:
+    def test_reranker_score_threshold_not_clamped(self, tmp_path: Path) -> None:
+        """Cross-encoder scores are unbounded logits; threshold must not be clamped."""
         cfg = _write_config(
             tmp_path,
             {
@@ -1630,7 +1631,19 @@ class TestRerankerConfig:
             },
         )
         config, _ = load_config(cfg)
-        assert config.reranker.score_threshold == 1.0  # clamped
+        assert config.reranker.score_threshold == 5.0
+
+    def test_reranker_negative_score_threshold(self, tmp_path: Path) -> None:
+        """Negative thresholds are valid for cross-encoder logits."""
+        cfg = _write_config(
+            tmp_path,
+            {
+                "ai": {"base_url": "http://t", "api_key": "k"},
+                "reranker": {"score_threshold": -2.5},
+            },
+        )
+        config, _ = load_config(cfg)
+        assert config.reranker.score_threshold == -2.5
 
     def test_reranker_invalid_provider_defaults(self, tmp_path: Path) -> None:
         cfg = _write_config(

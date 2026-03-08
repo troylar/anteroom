@@ -616,7 +616,7 @@ class RerankerConfig:
     provider: str = "local"  # "local" (fastembed TextCrossEncoder) or "api"
     model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     top_k: int = 5  # keep top-K after reranking
-    score_threshold: float = 0.0  # minimum relevance score (0-1); 0 = no threshold
+    score_threshold: float = 0.0  # minimum relevance score (cross-encoder logit); 0 = no threshold
     candidate_multiplier: int = 3  # fetch top_k * multiplier candidates before reranking
     base_url: str = ""  # API base URL (api provider only)
     api_key: str = ""  # API key (api provider only)
@@ -1800,7 +1800,7 @@ def load_config(
         _raw_score_threshold = reranker_raw.get(
             "score_threshold", os.environ.get("AI_CHAT_RERANKER_SCORE_THRESHOLD", 0.0)
         )
-        reranker_score_threshold = max(0.0, min(1.0, float(_raw_score_threshold)))
+        reranker_score_threshold = float(_raw_score_threshold)
     except (ValueError, TypeError):
         reranker_score_threshold = 0.0
     try:

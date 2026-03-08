@@ -115,6 +115,35 @@ class TestRerankChunks:
         assert result[0].source_id == "src-1"
         assert result[0].chunk_id == "chunk-1"
 
+    @pytest.mark.asyncio
+    async def test_negative_score_threshold(self) -> None:
+        """Cross-encoder logits can be negative; threshold must support negative values."""
+        chunks = [_make_chunk("doc A", 0.1), _make_chunk("doc B", 0.2)]
+        reranker = AsyncMock()
+        # Scores: doc A relevant (positive logit), doc B irrelevant (negative logit)
+        reranker.rerank.return_value = [(0, 2.5), (1, -3.0)]
+        cfg = RerankerConfig(top_k=5, score_threshold=-1.0)
+
+        result = await _rerank_chunks("query", chunks, reranker, cfg)
+
+        # doc B score (-3.0) is below threshold (-1.0), should be filtered
+        assert len(result) == 1
+        assert result[0].content == "doc A"
+
+    @pytest.mark.asyncio
+    async def test_out_of_bounds_index_skipped(self) -> None:
+        """Invalid indices from the reranker are silently skipped."""
+        chunks = [_make_chunk("doc A", 0.1)]
+        reranker = AsyncMock()
+        # Return a valid index and an out-of-bounds index
+        reranker.rerank.return_value = [(0, 0.8), (5, 0.9), (-1, 0.7)]
+        cfg = RerankerConfig(top_k=5, score_threshold=0.0)
+
+        result = await _rerank_chunks("query", chunks, reranker, cfg)
+
+        assert len(result) == 1
+        assert result[0].content == "doc A"
+
 
 class TestRetrieveContextWithReranker:
     """Tests that retrieve_context passes reranker through correctly."""
