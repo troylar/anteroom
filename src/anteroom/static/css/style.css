@@ -2531,6 +2531,89 @@ body {
     box-shadow: 0 0 16px var(--accent-glow);
 }
 
+/* Space Sources (in Space Modal) */
+.space-sources-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-input);
+}
+.space-sources-list:empty::after {
+    content: 'No sources linked to this space.';
+    display: block;
+    padding: 12px;
+    color: var(--text-muted);
+    font-size: 12px;
+    text-align: center;
+}
+.space-source-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 13px;
+}
+.space-source-row:last-child { border-bottom: none; }
+.space-source-row .source-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+.space-source-row .source-type {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: 0 8px;
+    text-transform: uppercase;
+}
+.space-source-row .btn-unlink {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 4px;
+    line-height: 1;
+}
+.space-source-row .btn-unlink:hover { color: var(--danger, #e74c3c); }
+.space-sources-add { margin-top: 6px; }
+.space-sources-picker {
+    width: 100%;
+    padding: 6px 8px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: var(--font-ui);
+}
+.source-space-badge {
+    display: inline-block;
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--accent);
+    color: #fff;
+    margin-left: 6px;
+    vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.sources-space-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.sources-space-filter label { cursor: pointer; user-select: none; }
+.sources-space-filter input[type="checkbox"] { accent-color: var(--accent); }
+
 
 /* ============================================================
    THEME PICKER (in Settings Modal)

@@ -165,6 +165,15 @@
                         <input type="text" id="space-model-input" placeholder="e.g. gpt-4o" autocomplete="off">
                         <span class="setting-hint">Override the default model for this space. Leave blank to use the global default.</span>
                     </div>
+                    <div class="setting-group" id="space-sources-section" style="display:none">
+                        <label>Sources</label>
+                        <div id="space-sources-list" class="space-sources-list"></div>
+                        <div class="space-sources-add">
+                            <select id="space-sources-picker" class="space-sources-picker">
+                                <option value="">Link a source...</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button class="btn-modal-cancel" id="space-modal-cancel">Cancel</button>

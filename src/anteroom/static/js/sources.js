@@ -24,6 +24,10 @@ const Sources = (() => {
     let _attachedTag = null;     // {id, name}
     let _attachedGroup = null;   // {id, name}
 
+    // Space-source tracking
+    let _spaceSourceIds = new Set();  // IDs of sources linked to active space
+    let _spaceFilterActive = false;   // Show only space sources
+
     function init() {
         const closeBtn = document.getElementById('sources-close');
         const toggleBtn = document.getElementById('btn-sources-toggle');
@@ -449,6 +453,20 @@ const Sources = (() => {
         addBtn.replaceWith(picker);
     }
 
+    async function _refreshSpaceSourceIds() {
+        const spaceId = App.state ? App.state.currentSpaceId : null;
+        if (!spaceId) {
+            _spaceSourceIds = new Set();
+            return;
+        }
+        try {
+            const sources = await App.api(`/api/spaces/${encodeURIComponent(spaceId)}/sources`);
+            _spaceSourceIds = new Set(sources.map(s => s.id));
+        } catch {
+            _spaceSourceIds = new Set();
+        }
+    }
+
     async function refreshList() {
         const listEl = document.getElementById('sources-list');
         if (!listEl || _currentView !== 'list') return;
@@ -460,9 +478,14 @@ const Sources = (() => {
         if (search) url += `&search=${encodeURIComponent(search)}`;
         if (typeFilter) url += `&type=${encodeURIComponent(typeFilter)}`;
 
+        await _refreshSpaceSourceIds();
+
         try {
             const data = await App.api(url);
             _sources = data.sources || [];
+            if (_spaceFilterActive) {
+                _sources = _sources.filter(s => _spaceSourceIds.has(s.id));
+            }
             _renderList();
         } catch (err) {
             listEl.innerHTML = `<div class="sources-error">${DOMPurify.sanitize(err.message)}</div>`;
@@ -473,6 +496,27 @@ const Sources = (() => {
         const listEl = document.getElementById('sources-list');
         if (!listEl) return;
         listEl.innerHTML = '';
+
+        // Space filter toggle (only when a space is active)
+        const spaceId = App.state ? App.state.currentSpaceId : null;
+        if (spaceId && _spaceSourceIds.size > 0) {
+            const filterBar = document.createElement('div');
+            filterBar.className = 'sources-space-filter';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.id = 'sources-space-filter-cb';
+            cb.checked = _spaceFilterActive;
+            const lbl = document.createElement('label');
+            lbl.htmlFor = 'sources-space-filter-cb';
+            lbl.textContent = 'Space sources only';
+            cb.addEventListener('change', () => {
+                _spaceFilterActive = cb.checked;
+                refreshList();
+            });
+            filterBar.appendChild(cb);
+            filterBar.appendChild(lbl);
+            listEl.appendChild(filterBar);
+        }
 
         // "Attach by tag" link at the top
         const tagLink = document.createElement('div');
@@ -504,13 +548,15 @@ const Sources = (() => {
             item.dataset.id = source.id;
 
             const isAttached = _attachedSources.some(s => s.id === source.id);
+            const isInSpace = _spaceSourceIds.has(source.id);
             const typeBadge = _typeBadge(source.type);
             const title = DOMPurify.sanitize(source.title || 'Untitled');
+            const spaceBadge = isInSpace ? '<span class="source-space-badge">space</span>' : '';
             const date = App.formatTimestamp(source.created_at);
 
             item.innerHTML = `
                 <div class="source-item-main">
-                    <div class="source-item-title">${isAttached ? '<span class="source-attached-dot"></span>' : ''}${title}</div>
+                    <div class="source-item-title">${isAttached ? '<span class="source-attached-dot"></span>' : ''}${title}${spaceBadge}</div>
                     <div class="source-item-meta">
                         ${typeBadge}
                         <span class="source-item-date">${date}</span>

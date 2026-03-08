@@ -1096,6 +1096,7 @@ const App = (() => {
         const instructionsInput = document.getElementById('space-instructions-input');
         const modelInput = document.getElementById('space-model-input');
         const saveBtn = document.getElementById('space-modal-save');
+        const sourcesSection = document.getElementById('space-sources-section');
 
         if (space) {
             title.textContent = 'Edit Space';
@@ -1104,6 +1105,10 @@ const App = (() => {
             nameInput.value = space.name || '';
             instructionsInput.value = space.instructions || '';
             modelInput.value = space.model || '';
+            if (sourcesSection) {
+                sourcesSection.style.display = '';
+                _loadSpaceSources(space.id);
+            }
         } else {
             title.textContent = 'New Space';
             saveBtn.textContent = 'Create';
@@ -1111,9 +1116,89 @@ const App = (() => {
             nameInput.value = '';
             instructionsInput.value = '';
             modelInput.value = '';
+            if (sourcesSection) sourcesSection.style.display = 'none';
         }
         modal.style.display = 'flex';
         nameInput.focus();
+    }
+
+    async function _loadSpaceSources(spaceId) {
+        const listEl = document.getElementById('space-sources-list');
+        const picker = document.getElementById('space-sources-picker');
+        if (!listEl) return;
+        listEl.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:12px">Loading...</div>';
+
+        try {
+            const linked = await api(`/api/spaces/${encodeURIComponent(spaceId)}/sources?link_type=direct`);
+            listEl.innerHTML = '';
+            const linkedIds = new Set(linked.map(s => s.id));
+
+            linked.forEach(src => {
+                const row = document.createElement('div');
+                row.className = 'space-source-row';
+                const titleSpan = document.createElement('span');
+                titleSpan.className = 'source-title';
+                titleSpan.textContent = src.title || 'Untitled';
+                const typeSpan = document.createElement('span');
+                typeSpan.className = 'source-type';
+                typeSpan.textContent = src.type || '';
+                const unlinkBtn = document.createElement('button');
+                unlinkBtn.className = 'btn-unlink';
+                unlinkBtn.title = 'Unlink from space';
+                unlinkBtn.textContent = '\u00d7';
+                unlinkBtn.addEventListener('click', async () => {
+                    try {
+                        await api(`/api/spaces/${encodeURIComponent(spaceId)}/sources/${encodeURIComponent(src.id)}`, {
+                            method: 'DELETE',
+                        });
+                        await _loadSpaceSources(spaceId);
+                        Sources.refreshList();
+                    } catch (err) {
+                        unlinkBtn.textContent = '!';
+                        unlinkBtn.title = 'Unlink failed';
+                    }
+                });
+                row.appendChild(titleSpan);
+                row.appendChild(typeSpan);
+                row.appendChild(unlinkBtn);
+                listEl.appendChild(row);
+            });
+
+            // Populate the picker with all sources not already linked
+            if (picker) {
+                const allSources = await api('/api/sources?limit=200');
+                const sourceList = allSources.sources || [];
+                picker.innerHTML = '<option value="">Link a source...</option>';
+                sourceList.forEach(src => {
+                    if (!linkedIds.has(src.id)) {
+                        const opt = document.createElement('option');
+                        opt.value = src.id;
+                        opt.textContent = `${src.title || 'Untitled'} (${src.type || 'unknown'})`;
+                        picker.appendChild(opt);
+                    }
+                });
+                // Remove old listener by replacing node
+                const newPicker = picker.cloneNode(true);
+                picker.parentNode.replaceChild(newPicker, picker);
+                newPicker.addEventListener('change', async () => {
+                    const sourceId = newPicker.value;
+                    if (!sourceId) return;
+                    try {
+                        await api(`/api/spaces/${encodeURIComponent(spaceId)}/sources`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ source_id: sourceId }),
+                        });
+                        await _loadSpaceSources(spaceId);
+                        Sources.refreshList();
+                    } catch (err) {
+                        newPicker.value = '';
+                    }
+                });
+            }
+        } catch (err) {
+            listEl.innerHTML = `<div style="padding:8px;color:var(--text-muted);font-size:12px">Failed to load sources.</div>`;
+        }
     }
 
     function _initSpaceModal() {
