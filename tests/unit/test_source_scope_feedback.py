@@ -86,6 +86,61 @@ class TestRenderRagStatus:
                 mock_console.print.assert_not_called()
 
 
+class TestSpaceSourcesTagEnrichment:
+    """Verify the spaces router enriches sources with tag_ids (#853)."""
+
+    async def test_space_sources_endpoint_includes_tag_ids(self) -> None:
+        """api_get_space_sources should add tag_ids to each source dict."""
+        from unittest.mock import patch
+
+        from anteroom.routers.spaces import api_get_space_sources
+
+        fake_sources = [
+            {"id": "s1", "title": "Doc A"},
+            {"id": "s2", "title": "Doc B"},
+        ]
+        fake_tag_map = {"s1": ["t1", "t2"], "s2": ["t3"]}
+
+        mock_request = MagicMock()
+        mock_db = MagicMock()
+        mock_request.app.state.db = mock_db
+
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value={"id": "sp1"}),
+            patch("anteroom.routers.spaces.get_space_sources", return_value=fake_sources),
+            patch("anteroom.routers.spaces.get_source_tag_ids_bulk", return_value=fake_tag_map),
+        ):
+            result = await api_get_space_sources(mock_request, "sp1")
+
+        assert result[0]["tag_ids"] == ["t1", "t2"]
+        assert result[1]["tag_ids"] == ["t3"]
+
+    async def test_space_sources_tag_ids_graceful_on_db_error(self) -> None:
+        """tag_ids should default to [] on database errors."""
+        import sqlite3
+        from unittest.mock import patch
+
+        from anteroom.routers.spaces import api_get_space_sources
+
+        fake_sources = [{"id": "s1", "title": "Doc A"}]
+
+        mock_request = MagicMock()
+        mock_db = MagicMock()
+        mock_request.app.state.db = mock_db
+
+        with (
+            patch("anteroom.routers.spaces.get_space", return_value={"id": "sp1"}),
+            patch("anteroom.routers.spaces.get_space_sources", return_value=fake_sources),
+            patch(
+                "anteroom.routers.spaces.get_source_tag_ids_bulk",
+                side_effect=sqlite3.OperationalError("test"),
+            ),
+        ):
+            result = await api_get_space_sources(mock_request, "sp1")
+
+        assert result[0]["tag_ids"] == []
+
+
 class TestRenderRagSourcesBadgeLabels:
     """Verify render_rag_sources uses 'knowledge'/'conversation' badge labels."""
 
