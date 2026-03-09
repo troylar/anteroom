@@ -1133,7 +1133,8 @@ async def run_cli(
                 renderer.console.print(f"  Command: [{MUTED}]{verdict.details['command']}[/{MUTED}]")
             elif verdict.details.get("path"):
                 renderer.console.print(f"  Path: [{MUTED}]{verdict.details['path']}[/{MUTED}]")
-            answer = await _sub_prompt_async("  [y] Allow once  [s] Allow for session  [a] Allow always  [n] Deny: ")
+            renderer.console.print("  \\[y] Allow once  \\[s] Allow for session  \\[a] Allow always  \\[n] Deny")
+            answer = await _sub_prompt_async("  > ")
             if answer is None:
                 renderer.console.print(f"  [{MUTED}]✗ Denied: {escape(verdict.tool_name)}[/{MUTED}]\n")
                 renderer.start_thinking()
@@ -1172,10 +1173,10 @@ async def run_cli(
                 renderer.console.print(f"  [{MUTED}]{i}.[/{MUTED}] {opt}")
             hint = "(enter number to select, or type a custom answer; ctrl-d to cancel)"
             renderer.console.print(f"  [{MUTED}]{hint}[/{MUTED}]")
-            answer = await _sub_prompt_async("  Choice: ")
+            answer = await _sub_prompt_async("  > ")
         else:
             renderer.console.print(f"  [{MUTED}](ctrl-d to cancel)[/{MUTED}]")
-            answer = await _sub_prompt_async("  Answer: ")
+            answer = await _sub_prompt_async("  > ")
 
         if answer is None:
             renderer.console.print(f"  [{MUTED}](cancelled)[/{MUTED}]\n")

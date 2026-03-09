@@ -47,7 +47,7 @@ class TestSubPromptAsync:
         ):
             from prompt_toolkit.application.run_in_terminal import in_terminal
 
-            prompt_text = "  [y] Allow once  [n] Deny: "
+            prompt_text = "  > "
 
             async with in_terminal():
                 renderer.write_raw(prompt_text)
@@ -121,21 +121,20 @@ class TestConfirmDestructiveIntegration:
                 captured_console.print(f"\n[yellow bold]Warning:[/yellow bold] {verdict.reason}")
                 if verdict.details.get("command"):
                     captured_console.print(f"  Command: [{muted}]{verdict.details['command']}[/{muted}]")
+                captured_console.print("  \\[y] Allow once  \\[s] Allow for session  \\[a] Allow always  \\[n] Deny")
 
-                answer = await _sub_prompt_async(
-                    "  [y] Allow once  [s] Allow for session  [a] Allow always  [n] Deny: "
-                )
+                answer = await _sub_prompt_async("  > ")
 
             output = buf.getvalue()
             raw = raw_output.getvalue()
 
-            # Warning text rendered via Rich console
+            # Warning text and options rendered via Rich console (persists)
             assert "Destructive command detected" in output
             assert "rm -rf /tmp/test" in output
+            assert "[y] Allow once" in output
 
-            # Prompt text written via write_raw (raw fd)
-            assert "[y] Allow once" in raw
-            assert "[n] Deny:" in raw
+            # Input prompt written via write_raw (raw fd)
+            assert "> " in raw
 
             # Input was captured
             assert answer == "y"
@@ -163,12 +162,12 @@ class TestConfirmDestructiveIntegration:
             from prompt_toolkit.application.run_in_terminal import in_terminal
 
             async with in_terminal():
-                renderer.write_raw("  [y] Allow once  [n] Deny: ")
+                renderer.write_raw("  > ")
                 loop = asyncio.get_event_loop()
                 answer = await loop.run_in_executor(None, sys.stdin.readline)
 
             assert answer.strip() == "n"
-            assert "[y] Allow once" in raw_output.getvalue()
+            assert "> " in raw_output.getvalue()
 
     @pytest.mark.asyncio
     async def test_approval_flow_eof(self, tmp_path: Any) -> None:
