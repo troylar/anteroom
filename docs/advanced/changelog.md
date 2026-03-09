@@ -7,6 +7,16 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 9, 2026
 
+### v1.108.1
+
+**Fixed:**
+
+- CLI approval prompt options (`[y] Allow once`, `[s] Allow for session`, etc.) are now visible before the user needs to type a response. Three root causes addressed: `write_raw()` text overwritten on redraw, tool elapsed-time ticker overwriting the prompt area, and `in_terminal()` being a no-op from the agent runner task. (#849)
+
+See [Tool Safety](../security/tool-safety.md) for the approval flow and [CLI Guide](../cli/index.md) for REPL usage.
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.108.1)
+
 ### v1.108.0 — Leaner Help, Smarter Matching
 
 The built-in `/a-help` skill gets a major diet and learns to answer questions without being asked directly.
