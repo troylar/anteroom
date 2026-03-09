@@ -51,9 +51,7 @@ class TestConfirmDestructiveIntegration:
                 captured_console.print(f"\n[yellow bold]Warning:[/yellow bold] {verdict.reason}")
                 if verdict.details.get("command"):
                     captured_console.print(f"  Command: [{muted}]{verdict.details['command']}[/{muted}]")
-                captured_console.print(
-                    "  \\[y] Allow once  \\[s] Allow for session  \\[a] Allow always  \\[n] Deny"
-                )
+                captured_console.print("  \\[y] Allow once  \\[s] Allow for session  \\[a] Allow always  \\[n] Deny")
                 answer = await mock_sub_prompt("  > ")
 
             output = buf.getvalue()
