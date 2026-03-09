@@ -46,6 +46,8 @@ class EmbeddingWorker:
         self._base_interval = DEFAULT_INTERVAL
         self._task: asyncio.Task[None] | None = None
         self._store_failures: dict[str, int] = {}
+        self._cycle_count = 0
+        self._repair_offset = 0
 
     @property
     def disabled(self) -> bool:
@@ -124,7 +126,50 @@ class EmbeddingWorker:
         """Process unembedded messages and source chunks. Returns total count embedded."""
         count = await self._process_pending_messages()
         count += await self._process_pending_source_chunks()
+        self._cycle_count += 1
+        if self._cycle_count % 10 == 0:
+            self._repair_stale_embeddings()
         return count
+
+    def _repair_stale_embeddings(self, limit: int = 100) -> None:
+        """Detect source chunks marked 'embedded' but missing from the vector index.
+
+        Resets them to 'pending' so the normal worker flow re-embeds them.
+        Uses an advancing OFFSET cursor so that every embedded row is
+        eventually checked, even when the total exceeds ``limit``.
+        """
+        if not self._vec_manager or not self._vec_manager.source_chunks:
+            return
+        try:
+            rows = self._db.execute_fetchall(
+                "SELECT chunk_id FROM source_chunk_embeddings "
+                "WHERE status = 'embedded' ORDER BY chunk_id LIMIT ? OFFSET ?",
+                (limit, self._repair_offset),
+            )
+            if not rows:
+                # Wrapped around — reset cursor for next sweep
+                self._repair_offset = 0
+                return
+            missing_ids = [r["chunk_id"] for r in rows if not self._vec_manager.source_chunks.contains(r["chunk_id"])]
+            if missing_ids:
+                placeholders = ",".join("?" * len(missing_ids))
+                self._db.execute(
+                    f"UPDATE source_chunk_embeddings SET status = 'pending' WHERE chunk_id IN ({placeholders})",
+                    tuple(missing_ids),
+                )
+                self._db.commit()
+                logger.warning(
+                    "Mid-session repair: reset %d of %d source chunk embeddings to 'pending'",
+                    len(missing_ids),
+                    len(rows),
+                )
+            # Advance cursor; if we got a full page, there may be more
+            if len(rows) < limit:
+                self._repair_offset = 0
+            else:
+                self._repair_offset += limit
+        except Exception:
+            logger.warning("Failed to repair stale source chunk embeddings", exc_info=True)
 
     async def _process_pending_messages(self) -> int:
         """Process unembedded messages. Returns count of messages embedded."""
@@ -315,10 +360,21 @@ class EmbeddingWorker:
             except Exception as e:
                 logger.error("Failed to store embedding for source chunk %s: %s", chunk["id"], type(e).__name__)
 
+        if count > 0 and self._vec_manager:
+            try:
+                self._vec_manager.save_all()
+            except Exception:
+                logger.warning("Failed to flush vector index after inline embed", exc_info=True)
+
         return count
 
     async def embed_message(self, message_id: str, content: str, conversation_id: str) -> None:
-        """Embed a single message (called inline after message creation)."""
+        """Embed a single message (called inline after message creation).
+
+        Unlike ``embed_source()``, this does NOT call ``save_all()`` because it
+        is only invoked from within the background worker cycle where
+        ``run_forever()`` handles flushing after ``process_pending()``.
+        """
         if len(content) < MIN_CONTENT_LENGTH:
             return
 

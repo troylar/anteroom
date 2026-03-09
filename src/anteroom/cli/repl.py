@@ -851,6 +851,25 @@ async def _load_instructions_with_trust(
     return "\n\n".join(parts)
 
 
+async def _embed_after_upload(
+    get_worker: Any,
+    source_id: str,
+) -> int | None:
+    """Embed source chunks inline after CLI upload.
+
+    Extracted for testability — this is the parity fix for #834.
+    Returns chunk count on success, None if skipped or failed.
+    """
+    worker = await get_worker()
+    if not worker:
+        return None
+    try:
+        return await worker.embed_source(source_id)
+    except Exception:
+        logger.debug("Inline embed failed for upload; background worker will retry", exc_info=True)
+        return None
+
+
 async def _run_mcp_startup_live(
     mcp_manager: Any,
     mcp_servers: list[Any],
@@ -2573,6 +2592,24 @@ async def _run_repl(
                 logger.debug("RAG: failed to create embedding service", exc_info=True)
                 return None
 
+        _embedding_worker: list[Any] = [None]
+
+        async def _get_embedding_worker() -> Any:
+            """Lazily create an EmbeddingWorker for inline embedding after uploads."""
+            if _embedding_worker[0] is not None:
+                return _embedding_worker[0]
+            svc = await _get_rag_embedding_service()
+            if svc is None:
+                return None
+            try:
+                from ..services.embedding_worker import EmbeddingWorker
+
+                _embedding_worker[0] = EmbeddingWorker(db, svc, vec_manager=vec_manager)
+                return _embedding_worker[0]
+            except Exception:
+                logger.debug("Failed to create embedding worker for CLI", exc_info=True)
+                return None
+
         _rag_reranker_service: list[Any] = [None]
         _reranker_checked: list[bool] = [False]
 
@@ -2851,6 +2888,9 @@ async def _run_repl(
                             renderer.console.print(
                                 f"  [{MUTED}]{mime}, {len(source['content']):,} chars extracted[/{MUTED}]"
                             )
+                            n = await _embed_after_upload(_get_embedding_worker, source["id"])
+                            if n:
+                                renderer.console.print(f"  [{MUTED}]{n} chunk(s) embedded for search[/{MUTED}]")
                         else:
                             renderer.console.print(f"  [{MUTED}]{mime}, stored (no text extracted)[/{MUTED}]")
                         renderer.console.print()
