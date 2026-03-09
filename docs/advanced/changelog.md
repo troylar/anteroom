@@ -7,6 +7,24 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 9, 2026
 
+### v1.109.0 — Source Scope Awareness
+
+Anteroom's knowledge pipeline becomes more transparent — you now see exactly which sources are in scope, which are excluded, and how RAG retrieval is performing.
+
+#### Source Scope Exclusion Feedback
+
+When a space is active and sources are referenced by tag or group, Anteroom now shows which sources were excluded because they aren't linked to the current space. The web UI dims out-of-scope sources, displays scope counts in tag pickers and group details, and shows confirmation dialogs before attaching partially-scoped groups. The chat stream emits a toast when exclusions occur. (#853)
+
+See [Knowledge Management](../knowledge/index.md) for details on spaces and source scoping.
+
+#### Live RAG Status Feedback
+
+RAG retrieval status is surfaced in real-time across both interfaces. The CLI shows muted status lines (`[RAG: 5 relevant chunk(s) retrieved]`), silent for non-actionable states. Source badges now use clearer labels: "knowledge" for documents and "conversation" for message history. (#854)
+
+See [CLI Reference](../cli/index.md) for the RAG status display.
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.109.0)
+
 ### v1.108.1
 
 **Fixed:**
