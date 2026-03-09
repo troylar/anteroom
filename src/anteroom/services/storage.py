@@ -2842,10 +2842,7 @@ def get_source_embedding_statuses(db: ThreadSafeConnection, source_ids: list[str
             r = dict(row)
             embedded_counts[r["source_id"]] = r["cnt"]
 
-    return {
-        sid: _derive_embedding_status(chunk_counts.get(sid, 0), embedded_counts.get(sid, 0))
-        for sid in source_ids
-    }
+    return {sid: _derive_embedding_status(chunk_counts.get(sid, 0), embedded_counts.get(sid, 0)) for sid in source_ids}
 
 
 def get_source_embedding_status(db: ThreadSafeConnection, source_id: str) -> str:
