@@ -7,6 +7,24 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 9, 2026
 
+### v1.107.2 — Porting Docs for Claude Code Users
+
+Clear guidance for users bringing Claude Code command files into Anteroom skills — format differences, tool name mapping, sub-agent migration patterns, and common gotchas.
+
+#### Claude Code Porting Guide
+
+New documentation page explaining how to convert `.claude/commands/*.md` files (Markdown with YAML frontmatter) into Anteroom YAML skills. Covers field mapping, tool name mapping (Read to read_file, Agent to run_agent, etc.), and four documented "gotchas" that silently fail when porting without changes. (#843)
+
+See [Porting from Claude Code](../cli/porting-from-claude-code.md) for the full migration guide.
+
+#### Skill Examples Catalog
+
+Five complete, ready-to-use YAML skill examples: simple bash workflows with `{args}`, parallel sub-agent orchestration, codebase exploration, sequential deploy checklists, and security audits with model overrides. (#843)
+
+See [Skill Examples](../cli/skill-examples.md) for all examples and authoring tips.
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.107.2)
+
 ### v1.107.1
 
 **Fixed:**
