@@ -364,14 +364,10 @@ def _resolve_sources(
                     _referenced_sources.append(full)
 
     if not _referenced_sources:
-        _included = [
-            {"id": s["id"], "title": str(s.get("title", ""))[:200], "type": s.get("type", "text")}
-            for s in _referenced_sources
-        ]
         return SourceResolutionResult(
             content="",
             excluded_ids=_excluded_ids,
-            included=_included,
+            included=[],
             requested_count=_requested_count,
             truncated=False,
         )
