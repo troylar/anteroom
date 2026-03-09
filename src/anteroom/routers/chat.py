@@ -329,13 +329,13 @@ def _resolve_sources(
         _allowed_ids.update(s["id"] for s in storage.get_space_sources(db, space_id))
 
     _referenced_sources: list[dict[str, Any]] = []
-    _excluded_ids: list[str] = []
+    _excluded_set: set[str] = set()
     _requested_count = 0
     if source_ids:
         for sid in source_ids[:20]:
             _requested_count += 1
             if _allowed_ids is not None and sid not in _allowed_ids:
-                _excluded_ids.append(sid)
+                _excluded_set.add(sid)
                 continue
             src = storage.get_source(db, sid)
             if src and src.get("content"):
@@ -345,7 +345,7 @@ def _resolve_sources(
         for src in tagged:
             _requested_count += 1
             if _allowed_ids is not None and src["id"] not in _allowed_ids:
-                _excluded_ids.append(src["id"])
+                _excluded_set.add(src["id"])
                 continue
             if src.get("content") and src["id"] not in {s["id"] for s in _referenced_sources}:
                 full = storage.get_source(db, src["id"])
@@ -356,12 +356,13 @@ def _resolve_sources(
         for src in grouped:
             _requested_count += 1
             if _allowed_ids is not None and src["id"] not in _allowed_ids:
-                _excluded_ids.append(src["id"])
+                _excluded_set.add(src["id"])
                 continue
             if src.get("content") and src["id"] not in {s["id"] for s in _referenced_sources}:
                 full = storage.get_source(db, src["id"])
                 if full and full.get("content"):
                     _referenced_sources.append(full)
+    _excluded_ids: list[str] = sorted(_excluded_set)
 
     if not _referenced_sources:
         return SourceResolutionResult(
