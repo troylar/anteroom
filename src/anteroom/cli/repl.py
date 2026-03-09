@@ -1127,6 +1127,7 @@ async def run_cli(
             return False
 
         await renderer.stop_thinking()
+        renderer.stop_tool_ticker_sync()
 
         async with _approval_lock:
             renderer.console.print(f"\n[yellow bold]Warning:[/yellow bold] {verdict.reason}")
@@ -1167,6 +1168,7 @@ async def run_cli(
             return answer
 
         await renderer.stop_thinking()
+        renderer.stop_tool_ticker_sync()
 
         renderer.console.print(f"\n[yellow bold]Question:[/yellow bold] {question}")
         if options:
