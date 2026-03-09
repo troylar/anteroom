@@ -5,6 +5,18 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## March 9, 2026
+
+### v1.107.1
+
+**Fixed:**
+
+- Sources list endpoint now fetches embedding statuses in a single batch query instead of 2N queries per request — significant performance improvement for large source libraries. (#844)
+- Embedding status now correctly filters by `status = 'embedded'`, so sources with skipped or failed embeddings are no longer falsely reported as fully embedded. (#844)
+- Sources list gracefully degrades to `"unknown"` status if embedding tables are unavailable, instead of failing the entire request. (#844)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.107.1)
+
 ## March 8, 2026
 
 ### v1.107.0 — Knowledge Pipeline That Tells You What Went Wrong
