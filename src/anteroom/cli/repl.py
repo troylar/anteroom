@@ -1100,7 +1100,7 @@ async def run_cli(
         try:
             async with in_terminal():
                 renderer.write_raw(prompt_text)
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 answer = await loop.run_in_executor(None, sys.stdin.readline)
                 return answer.strip() if answer else None
         except (EOFError, KeyboardInterrupt):
@@ -1170,11 +1170,11 @@ async def run_cli(
         if options:
             for i, opt in enumerate(options, 1):
                 renderer.console.print(f"  [{MUTED}]{i}.[/{MUTED}] {opt}")
-            hint = "(enter number to select, or type a custom answer; esc to cancel)"
+            hint = "(enter number to select, or type a custom answer; ctrl-d to cancel)"
             renderer.console.print(f"  [{MUTED}]{hint}[/{MUTED}]")
             answer = await _sub_prompt_async("  Choice: ")
         else:
-            renderer.console.print(f"  [{MUTED}](esc to cancel)[/{MUTED}]")
+            renderer.console.print(f"  [{MUTED}](ctrl-d to cancel)[/{MUTED}]")
             answer = await _sub_prompt_async("  Answer: ")
 
         if answer is None:
