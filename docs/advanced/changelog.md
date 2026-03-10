@@ -7,6 +7,35 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 10, 2026
 
+### v1.110.2 — The Prompt Card Fix
+
+Fixes several rendering bugs in the web UI's approval and ask_user prompt cards, plus adds JavaScript unit testing infrastructure.
+
+#### Prompt Card Rendering
+
+Approval and ask_user prompt cards now render in the correct position — directly after the assistant message that triggered them, rather than at the bottom of the chat. Multiple concurrent prompts stack in FIFO order. Both the approval reason and ask_user question render as markdown. (#864)
+
+#### Reconnect Cleanup
+
+When the SSE connection drops and reconnects, pending prompt cards are cleaned up while resolved cards are preserved. A shared `prompt-cleanup.js` module ensures the same logic runs in production and tests. (#864)
+
+#### Enter Key & Race Condition
+
+The ask_user input field now correctly submits on Enter. Cards are marked as resolved immediately before the async API call, preventing a race condition where SSE reconnect could remove a card mid-submission. (#864)
+
+#### JavaScript Unit Testing
+
+Added Vitest + jsdom infrastructure with 13 tests and a `js-test` CI job. (#864)
+
+#### Bug Fixes
+
+- Prompt cards insert after the last assistant message instead of at the container bottom (#864)
+- Multiple prompt cards stack in FIFO order (#864)
+- Enter key in ask_user input now submits correctly (#864)
+- SSE reconnect no longer removes cards being submitted (#864)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.110.2)
+
 ### v1.110.1 — Better Error Messages
 
 When an LLM provider returns a 400-class error, Anteroom now surfaces the provider's actual error message instead of the generic "AI request error", sanitized for safety.
