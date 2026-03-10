@@ -2366,6 +2366,45 @@ class TestParseChatRequestJSON:
 
 
 # ---------------------------------------------------------------------------
+# Provider error → SSE regression
+# ---------------------------------------------------------------------------
+
+
+class TestProviderErrorSurfacing:
+    @pytest.mark.asyncio
+    async def test_provider_bad_request_emits_clean_sse_error(self) -> None:
+        """A provider 400 error must surface as a clean SSE error event, not a 500."""
+        ctx = _make_stream_context()
+        events = [
+            _make_agent_event(
+                "error",
+                {"message": "The model was unable to complete inference", "code": "bad_request", "retryable": False},
+            ),
+        ]
+
+        async def fake_agent_gen(*args, **kwargs):
+            for ev in events:
+                yield ev
+
+        with (
+            patch("anteroom.services.agent_loop.run_agent_loop", side_effect=fake_agent_gen),
+            patch("anteroom.routers.chat.storage") as mock_storage,
+        ):
+            mock_storage.get_conversation_token_total.return_value = 0
+            mock_storage.get_daily_token_total.return_value = 0
+            result = await _collect_events(_stream_chat_events(ctx))
+
+        sse_events = [e for e in result if isinstance(e, dict) and "event" in e]
+        error_events = [e for e in sse_events if e["event"] == "error"]
+        assert len(error_events) == 1
+        data = json.loads(error_events[0]["data"])
+        assert "unable to complete inference" in data["message"]
+        assert data.get("code") == "bad_request"
+        # Must NOT contain "An internal error occurred" (the 500-style fallback)
+        assert "internal error occurred" not in data["message"].lower()
+
+
+# ---------------------------------------------------------------------------
 # stream-status endpoint
 # ---------------------------------------------------------------------------
 

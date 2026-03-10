@@ -9,6 +9,7 @@ from typing import Any, AsyncGenerator
 
 from ..config import AIConfig
 from .egress_allowlist import check_egress_allowed
+from .error_sanitizer import sanitize_provider_error
 from .token_provider import TokenProvider, TokenProviderError
 
 logger = logging.getLogger(__name__)
@@ -256,15 +257,31 @@ class LiteLLMService:
                 }
                 return
 
-            except LiteLLMBadRequestError:
-                yield {
-                    "event": "error",
-                    "data": {
-                        "message": "AI request error",
-                        "code": "bad_request",
-                        "retryable": False,
-                    },
-                }
+            except LiteLLMBadRequestError as e:
+                err_msg = str(e).lower()
+                if "too many" in err_msg and "tool" in err_msg:
+                    yield {
+                        "event": "error",
+                        "data": {
+                            "message": (
+                                "Too many tools for this API provider."
+                                " Reduce MCP tools or set ai.max_tools in config."
+                            ),
+                            "code": "too_many_tools",
+                            "retryable": False,
+                        },
+                    }
+                else:
+                    user_msg = sanitize_provider_error(str(e))
+                    logger.warning("AI bad request error: %s", e)
+                    yield {
+                        "event": "error",
+                        "data": {
+                            "message": user_msg,
+                            "code": "bad_request",
+                            "retryable": False,
+                        },
+                    }
                 return
 
             except Exception as e:

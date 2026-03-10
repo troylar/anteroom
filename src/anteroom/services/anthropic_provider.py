@@ -10,6 +10,7 @@ from typing import Any, AsyncGenerator
 
 from ..config import AIConfig
 from .egress_allowlist import check_egress_allowed
+from .error_sanitizer import sanitize_provider_error
 from .token_provider import TokenProvider, TokenProviderError
 
 logger = logging.getLogger(__name__)
@@ -443,7 +444,12 @@ class AnthropicService:
                         },
                     }
                 else:
-                    yield {"event": "error", "data": {"message": "AI request error", "retryable": False}}
+                    user_msg = sanitize_provider_error(str(e))
+                    logger.warning("AI bad request error: %s", e)
+                    yield {
+                        "event": "error",
+                        "data": {"message": user_msg, "code": "bad_request", "retryable": False},
+                    }
                 return
             except AnthropicRateLimitError:
                 if cancel_event and cancel_event.is_set():

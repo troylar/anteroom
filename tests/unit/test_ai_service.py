@@ -329,16 +329,71 @@ class TestBadRequestErrorHandling:
         assert error_events[0]["data"]["code"] == "context_length_exceeded"
 
     @pytest.mark.asyncio
-    async def test_other_bad_request_yields_error_message(self):
-        """BadRequestError without context_length_exceeded must yield the error message."""
+    async def test_other_bad_request_surfaces_sanitized_message(self):
+        """BadRequestError without context_length_exceeded must yield sanitized provider message."""
         from openai import BadRequestError
 
         service = _make_service()
         service.client.chat.completions.create = AsyncMock(
             side_effect=BadRequestError(
-                message="Invalid request parameters",
+                message="The model was unable to complete inference due to an internal error",
                 response=MagicMock(status_code=400),
-                body={"error": {"code": "invalid_request"}},
+                body={
+                    "error": {
+                        "code": "invalid_request",
+                        "message": "The model was unable to complete inference due to an internal error",
+                    }
+                },
+            )
+        )
+
+        events = []
+        async for event in service.stream_chat([{"role": "user", "content": "hi"}]):
+            events.append(event)
+
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 1
+        assert "unable to complete inference" in error_events[0]["data"]["message"]
+        assert error_events[0]["data"]["code"] == "bad_request"
+
+    @pytest.mark.asyncio
+    async def test_bad_request_with_url_strips_url(self):
+        """Provider error messages containing URLs must have them stripped."""
+        from openai import BadRequestError
+
+        service = _make_service()
+        service.client.chat.completions.create = AsyncMock(
+            side_effect=BadRequestError(
+                message="Error at endpoint",
+                response=MagicMock(status_code=400),
+                body={
+                    "error": {
+                        "code": "invalid_request",
+                        "message": "Error at https://api.example.com/v1/chat - bad request",
+                    }
+                },
+            )
+        )
+
+        events = []
+        async for event in service.stream_chat([{"role": "user", "content": "hi"}]):
+            events.append(event)
+
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 1
+        assert "https://" not in error_events[0]["data"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_bad_request_with_json_body_returns_fallback(self):
+        """If provider error body message is JSON, fall back to generic."""
+        from openai import BadRequestError
+
+        service = _make_service()
+        service.client.chat.completions.create = AsyncMock(
+            side_effect=BadRequestError(
+                message='{"nested": "json"}',
+                response=MagicMock(status_code=400),
+                body={"error": {"code": "invalid_request", "message": '{"nested": "json"}'}},
             )
         )
 

@@ -21,6 +21,7 @@ from openai import (
 
 from ..config import AIConfig
 from .egress_allowlist import check_egress_allowed
+from .error_sanitizer import sanitize_provider_error
 from .token_provider import TokenProvider, TokenProviderError
 
 logger = logging.getLogger(__name__)
@@ -546,10 +547,16 @@ class AIService:
                         },
                     }
                 else:
-                    logger.exception("AI bad request error")
+                    raw_msg = ""
+                    if isinstance(body, dict):
+                        raw_msg = body.get("error", {}).get("message", "")
+                    if not raw_msg:
+                        raw_msg = str(e)
+                    user_msg = sanitize_provider_error(raw_msg)
+                    logger.warning("AI bad request error: %s", e)
                     yield {
                         "event": "error",
-                        "data": {"message": "AI request error", "retryable": False},
+                        "data": {"message": user_msg, "code": "bad_request", "retryable": False},
                     }
                 return
             except RateLimitError as e:
