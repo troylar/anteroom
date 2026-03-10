@@ -767,3 +767,124 @@ class TestErrorHandling:
 
             call_kwargs = svc.client.messages.stream.call_args[1]
             assert "Be concise." in call_kwargs["system"]
+
+    @pytest.mark.asyncio
+    async def test_bad_request_context_length(self):
+        """AnthropicBadRequestError with context-related message yields context_length_exceeded."""
+        import httpx
+        from anthropic import BadRequestError as RealBadRequestError
+
+        with (
+            patch("anteroom.services.anthropic_provider.anthropic"),
+            patch("anteroom.services.anthropic_provider.HAS_ANTHROPIC", True),
+            patch(
+                "anteroom.services.anthropic_provider.AnthropicBadRequestError",
+                RealBadRequestError,
+            ),
+        ):
+            config = _make_config()
+            from anteroom.services.anthropic_provider import AnthropicService
+
+            svc = AnthropicService(config)
+
+            exc = RealBadRequestError(
+                message="prompt is too long for the model context window",
+                response=httpx.Response(400, request=httpx.Request("POST", "https://test")),
+                body={"type": "error", "error": {"type": "invalid_request_error", "message": "prompt is too long"}},
+            )
+
+            mock_ctx = MagicMock()
+            mock_ctx.__aenter__ = AsyncMock(side_effect=exc)
+            mock_ctx.__aexit__ = AsyncMock(return_value=False)
+            svc.client.messages.stream = MagicMock(return_value=mock_ctx)
+
+            events = []
+            async for event in svc.stream_chat([{"role": "user", "content": "Hi"}]):
+                events.append(event)
+
+            error_events = [e for e in events if e["event"] == "error"]
+            assert len(error_events) == 1
+            assert error_events[0]["data"]["code"] == "context_length_exceeded"
+
+    @pytest.mark.asyncio
+    async def test_bad_request_too_many_tools(self):
+        """AnthropicBadRequestError with too-many-tools message yields too_many_tools."""
+        import httpx
+        from anthropic import BadRequestError as RealBadRequestError
+
+        with (
+            patch("anteroom.services.anthropic_provider.anthropic"),
+            patch("anteroom.services.anthropic_provider.HAS_ANTHROPIC", True),
+            patch(
+                "anteroom.services.anthropic_provider.AnthropicBadRequestError",
+                RealBadRequestError,
+            ),
+        ):
+            config = _make_config()
+            from anteroom.services.anthropic_provider import AnthropicService
+
+            svc = AnthropicService(config)
+
+            exc = RealBadRequestError(
+                message="too many tool definitions provided",
+                response=httpx.Response(400, request=httpx.Request("POST", "https://test")),
+                body={"type": "error", "error": {"type": "invalid_request_error", "message": "too many tools"}},
+            )
+
+            mock_ctx = MagicMock()
+            mock_ctx.__aenter__ = AsyncMock(side_effect=exc)
+            mock_ctx.__aexit__ = AsyncMock(return_value=False)
+            svc.client.messages.stream = MagicMock(return_value=mock_ctx)
+
+            events = []
+            async for event in svc.stream_chat([{"role": "user", "content": "Hi"}]):
+                events.append(event)
+
+            error_events = [e for e in events if e["event"] == "error"]
+            assert len(error_events) == 1
+            assert error_events[0]["data"]["code"] == "too_many_tools"
+
+    @pytest.mark.asyncio
+    async def test_bad_request_generic_surfaces_sanitized_message(self):
+        """Generic AnthropicBadRequestError must yield sanitized provider message."""
+        import httpx
+        from anthropic import BadRequestError as RealBadRequestError
+
+        with (
+            patch("anteroom.services.anthropic_provider.anthropic"),
+            patch("anteroom.services.anthropic_provider.HAS_ANTHROPIC", True),
+            patch(
+                "anteroom.services.anthropic_provider.AnthropicBadRequestError",
+                RealBadRequestError,
+            ),
+        ):
+            config = _make_config()
+            from anteroom.services.anthropic_provider import AnthropicService
+
+            svc = AnthropicService(config)
+
+            exc = RealBadRequestError(
+                message="The model was unable to complete inference due to an internal error",
+                response=httpx.Response(400, request=httpx.Request("POST", "https://test")),
+                body={
+                    "type": "error",
+                    "error": {
+                        "type": "server_error",
+                        "message": "The model was unable to complete inference due to an internal error",
+                    },
+                },
+            )
+
+            mock_ctx = MagicMock()
+            mock_ctx.__aenter__ = AsyncMock(side_effect=exc)
+            mock_ctx.__aexit__ = AsyncMock(return_value=False)
+            svc.client.messages.stream = MagicMock(return_value=mock_ctx)
+
+            events = []
+            async for event in svc.stream_chat([{"role": "user", "content": "Hi"}]):
+                events.append(event)
+
+            error_events = [e for e in events if e["event"] == "error"]
+            assert len(error_events) == 1
+            assert "unable to complete inference" in error_events[0]["data"]["message"]
+            assert error_events[0]["data"]["code"] == "bad_request"
