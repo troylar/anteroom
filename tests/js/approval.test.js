@@ -29,20 +29,22 @@ function insertPromptCard(container, el) {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: reproduces reconnect cleanup from app.js _connectEventSource
+// Load the actual reconnect cleanup logic from the production source (#864).
+// This is the same function used by chat.js and app.js — no duplication.
 // ---------------------------------------------------------------------------
-function reconnectCleanup(shownIds) {
-    document.querySelectorAll('.approval-prompt:not(.approval-allowed):not(.approval-denied)').forEach(el => {
-        const id = el.getAttribute('data-approval-id');
-        if (id) shownIds.delete(id);
-        el.remove();
-    });
-    document.querySelectorAll('.ask-user-prompt:not(.ask-user-answered):not(.ask-user-cancelled)').forEach(el => {
-        const id = el.getAttribute('data-ask-id');
-        if (id) shownIds.delete(id);
-        el.remove();
-    });
-}
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { resolve, dirname } from 'node:path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const cleanupSrc = readFileSync(
+    resolve(__dirname, '../../src/anteroom/static/js/prompt-cleanup.js'),
+    'utf-8',
+);
+// Evaluate the production script to define cleanupPendingPrompts as a global,
+// exactly as a browser <script> tag would.
+const _fn = new Function(cleanupSrc + '\nreturn cleanupPendingPrompts;');
+const reconnectCleanup = _fn();
 
 // ---------------------------------------------------------------------------
 // Factories

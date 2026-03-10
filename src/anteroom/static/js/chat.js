@@ -2353,11 +2353,14 @@ const Chat = (() => {
         }
     }
 
+    // Thin wrapper — actual logic lives in prompt-cleanup.js (loaded via <script>)
+    // so tests can import the same function without duplicating selectors (#864).
+
     return {
         init, sendMessage, loadMessages, stopGeneration, abortStream, setStreaming, escapeHtml,
         streamChatResponse, isRawMode, setRawMode, setConversationType,
         appendRemoteMessage, startRemoteStream, handleRemoteToken, finalizeRemoteStream,
         showApprovalPrompt, resolveApprovalCard, showAskUserPrompt, showThinkingFromEvent: showThinking,
-        renderMarkdown, highlightCode, showToast, sendPlanExecution,
+        renderMarkdown, highlightCode, showToast, sendPlanExecution, cleanupPendingPrompts,
     };
 })();

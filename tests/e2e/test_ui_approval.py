@@ -231,17 +231,8 @@ class TestReconnectCleanup:
         )
         assert page.locator(".approval-prompt").count() == 1
 
-        # Simulate reconnect cleanup (same logic as _connectEventSource)
-        page.evaluate(
-            """() => {
-                document.querySelectorAll(
-                    '.approval-prompt:not(.approval-allowed):not(.approval-denied)'
-                ).forEach(el => el.remove());
-                document.querySelectorAll(
-                    '.ask-user-prompt:not(.ask-user-answered):not(.ask-user-cancelled)'
-                ).forEach(el => el.remove());
-            }"""
-        )
+        # Call the actual shared cleanup function used by app.js (#864)
+        page.evaluate("() => Chat.cleanupPendingPrompts()")
 
         assert page.locator(".approval-prompt").count() == 0
 
@@ -254,20 +245,12 @@ class TestReconnectCleanup:
                     tool_name: 'bash',
                     reason: 'Will be resolved',
                 });
-                // Simulate resolution
                 const el = document.querySelector('[data-approval-id="test-reconnect-resolved"]');
                 el.classList.add('approval-allowed');
             }"""
         )
 
-        # Simulate reconnect cleanup
-        page.evaluate(
-            """() => {
-                document.querySelectorAll(
-                    '.approval-prompt:not(.approval-allowed):not(.approval-denied)'
-                ).forEach(el => el.remove());
-            }"""
-        )
+        page.evaluate("() => Chat.cleanupPendingPrompts()")
 
         assert page.locator(".approval-prompt.approval-allowed").count() == 1
 
@@ -284,14 +267,7 @@ class TestReconnectCleanup:
             }"""
         )
 
-        # Simulate reconnect cleanup
-        page.evaluate(
-            """() => {
-                document.querySelectorAll(
-                    '.ask-user-prompt:not(.ask-user-answered):not(.ask-user-cancelled)'
-                ).forEach(el => el.remove());
-            }"""
-        )
+        page.evaluate("() => Chat.cleanupPendingPrompts()")
 
         assert page.locator(".ask-user-prompt.ask-user-answered").count() == 1
 
@@ -332,17 +308,8 @@ class TestReconnectCleanup:
         assert page.locator(".approval-prompt").count() == 2
         assert page.locator(".ask-user-prompt").count() == 2
 
-        # Simulate reconnect cleanup
-        page.evaluate(
-            """() => {
-                document.querySelectorAll(
-                    '.approval-prompt:not(.approval-allowed):not(.approval-denied)'
-                ).forEach(el => el.remove());
-                document.querySelectorAll(
-                    '.ask-user-prompt:not(.ask-user-answered):not(.ask-user-cancelled)'
-                ).forEach(el => el.remove());
-            }"""
-        )
+        # Call the actual shared cleanup function used by app.js (#864)
+        page.evaluate("() => Chat.cleanupPendingPrompts()")
 
         assert page.locator(".approval-prompt").count() == 1
         assert page.locator(".ask-user-prompt").count() == 1
