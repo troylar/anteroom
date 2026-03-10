@@ -15,7 +15,16 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = [pytest.mark.e2e]
+try:
+    import playwright  # noqa: F401
+
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    HAS_PLAYWRIGHT = False
+
+requires_playwright = pytest.mark.skipif(not HAS_PLAYWRIGHT, reason="playwright not installed")
+
+pytestmark = [pytest.mark.e2e, requires_playwright]
 
 
 def _inject_messages(page, roles: list[str]) -> None:
