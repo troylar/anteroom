@@ -2205,13 +2205,16 @@ const Chat = (() => {
         const buttons = el.querySelectorAll('.approval-btn');
         buttons.forEach(b => { b.disabled = true; });
 
+        // Mark as resolved immediately so reconnect cleanup won't
+        // remove the card while the API call is in flight (#864)
+        const resolvedClass = approved ? 'approval-allowed' : 'approval-denied';
+        el.classList.add(resolvedClass);
         try {
             await App.api(`/api/approvals/${encodeURIComponent(approvalId)}/respond`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ approved, scope }),
             });
-            el.classList.add(approved ? 'approval-allowed' : 'approval-denied');
             const status = document.createElement('div');
             status.className = 'approval-status';
             const scopeLabels = { once: 'Allowed', session: 'Allowed for Session', always: 'Always Allowed' };
@@ -2219,6 +2222,7 @@ const Chat = (() => {
             const actionsEl = el.querySelector('.approval-actions');
             if (actionsEl) actionsEl.replaceWith(status);
         } catch (err) {
+            el.classList.remove(resolvedClass);
             buttons.forEach(b => { b.disabled = false; });
             showToast('Failed to respond: ' + err.message);
         }
@@ -2286,6 +2290,8 @@ const Chat = (() => {
             input.maxLength = 4096;
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && input.value.trim()) {
+                    e.preventDefault();
+                    e.stopPropagation();
                     _respondAskUser(data.ask_id, input.value.trim(), el);
                 }
             });
@@ -2323,6 +2329,10 @@ const Chat = (() => {
         if (input) input.disabled = true;
 
         const cancelled = answer === null;
+        // Mark as resolved immediately so reconnect cleanup won't
+        // remove the card while the API call is in flight (#864)
+        const resolvedClass = cancelled ? 'ask-user-cancelled' : 'ask-user-answered';
+        el.classList.add(resolvedClass);
         try {
             await App.api(`/api/approvals/${encodeURIComponent(askId)}/respond`, {
                 method: 'POST',
@@ -2332,13 +2342,13 @@ const Chat = (() => {
                     answer: cancelled ? '' : answer,
                 }),
             });
-            el.classList.add(cancelled ? 'ask-user-cancelled' : 'ask-user-answered');
             const status = document.createElement('div');
             status.className = 'ask-user-status';
             status.textContent = cancelled ? 'Cancelled' : answer;
             const actionsEl = el.querySelector('.ask-user-actions');
             if (actionsEl) actionsEl.replaceWith(status);
         } catch (err) {
+            el.classList.remove(resolvedClass);
             buttons.forEach(b => { b.disabled = false; });
             if (input) input.disabled = false;
             showToast('Failed to respond: ' + err.message);
