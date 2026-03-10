@@ -200,9 +200,9 @@ class TestRenderRagSourcesDicts:
         ]
         output = self._capture(sources)
         assert "Q3 Report" in output
-        assert "source" in output
+        assert "knowledge" in output
         assert "earlier chat" in output
-        assert "message" in output
+        assert "conversation" in output
 
     def test_deduplicates_dict_sources(self) -> None:
         sources = [
