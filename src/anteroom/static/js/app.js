@@ -666,9 +666,9 @@ const App = (() => {
             _eventSource = null;
         }
 
-        // Clear stale approval prompts from DOM and dedup set on reconnect
-        document.querySelectorAll('.approval-prompt').forEach(el => el.remove());
-        _shownApprovalIds.clear();
+        // Clear only pending (unresolved) approval/ask_user prompts on reconnect;
+        // preserve resolved cards so the user retains approval history (#864)
+        Chat.cleanupPendingPrompts(_shownApprovalIds);
 
         const db = state.currentDatabase || 'personal';
         const _safeParam = (v) => /^[a-zA-Z0-9_-]+$/.test(v);

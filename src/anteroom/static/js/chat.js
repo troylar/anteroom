@@ -2105,6 +2105,27 @@ const Chat = (() => {
         scrollToBottom();
     }
 
+    function _insertPromptCard(container, el) {
+        // Insert approval/ask_user cards after the last assistant message
+        // and after any existing prompt cards, so multiple cards appear in
+        // chronological (FIFO) order before any subsequent user reply.
+        const assistantMsgs = container.querySelectorAll('.message.assistant');
+        const lastAssistant = assistantMsgs.length > 0 ? assistantMsgs[assistantMsgs.length - 1] : null;
+        if (lastAssistant) {
+            let insertBefore = lastAssistant.nextSibling;
+            while (insertBefore && (insertBefore.classList?.contains('approval-prompt') || insertBefore.classList?.contains('ask-user-prompt'))) {
+                insertBefore = insertBefore.nextSibling;
+            }
+            if (insertBefore) {
+                container.insertBefore(el, insertBefore);
+            } else {
+                container.appendChild(el);
+            }
+        } else {
+            container.appendChild(el);
+        }
+    }
+
     function showApprovalPrompt(data) {
         const container = document.getElementById('messages-container');
         if (!container) return;
@@ -2127,7 +2148,8 @@ const Chat = (() => {
 
         const reason = document.createElement('div');
         reason.className = 'approval-reason';
-        reason.textContent = data.reason || 'A potentially destructive operation needs your confirmation.';
+        reason.innerHTML = renderMarkdown(data.reason || 'A potentially destructive operation needs your confirmation.');
+        renderMath(reason);
         body.appendChild(reason);
 
         if (data.details) {
@@ -2175,7 +2197,7 @@ const Chat = (() => {
         body.appendChild(actions);
         el.appendChild(icon);
         el.appendChild(body);
-        container.appendChild(el);
+        _insertPromptCard(container, el);
         scrollToBottom();
     }
 
@@ -2183,13 +2205,16 @@ const Chat = (() => {
         const buttons = el.querySelectorAll('.approval-btn');
         buttons.forEach(b => { b.disabled = true; });
 
+        // Mark as resolved immediately so reconnect cleanup won't
+        // remove the card while the API call is in flight (#864)
+        const resolvedClass = approved ? 'approval-allowed' : 'approval-denied';
+        el.classList.add(resolvedClass);
         try {
             await App.api(`/api/approvals/${encodeURIComponent(approvalId)}/respond`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ approved, scope }),
             });
-            el.classList.add(approved ? 'approval-allowed' : 'approval-denied');
             const status = document.createElement('div');
             status.className = 'approval-status';
             const scopeLabels = { once: 'Allowed', session: 'Allowed for Session', always: 'Always Allowed' };
@@ -2197,6 +2222,7 @@ const Chat = (() => {
             const actionsEl = el.querySelector('.approval-actions');
             if (actionsEl) actionsEl.replaceWith(status);
         } catch (err) {
+            el.classList.remove(resolvedClass);
             buttons.forEach(b => { b.disabled = false; });
             showToast('Failed to respond: ' + err.message);
         }
@@ -2239,7 +2265,8 @@ const Chat = (() => {
 
         const question = document.createElement('div');
         question.className = 'ask-user-question';
-        question.textContent = data.question;
+        question.innerHTML = renderMarkdown(data.question || '');
+        renderMath(question);
         body.appendChild(question);
 
         const actions = document.createElement('div');
@@ -2263,6 +2290,8 @@ const Chat = (() => {
             input.maxLength = 4096;
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && input.value.trim()) {
+                    e.preventDefault();
+                    e.stopPropagation();
                     _respondAskUser(data.ask_id, input.value.trim(), el);
                 }
             });
@@ -2289,7 +2318,7 @@ const Chat = (() => {
         body.appendChild(actions);
         el.appendChild(icon);
         el.appendChild(body);
-        container.appendChild(el);
+        _insertPromptCard(container, el);
         scrollToBottom();
     }
 
@@ -2300,6 +2329,10 @@ const Chat = (() => {
         if (input) input.disabled = true;
 
         const cancelled = answer === null;
+        // Mark as resolved immediately so reconnect cleanup won't
+        // remove the card while the API call is in flight (#864)
+        const resolvedClass = cancelled ? 'ask-user-cancelled' : 'ask-user-answered';
+        el.classList.add(resolvedClass);
         try {
             await App.api(`/api/approvals/${encodeURIComponent(askId)}/respond`, {
                 method: 'POST',
@@ -2309,13 +2342,13 @@ const Chat = (() => {
                     answer: cancelled ? '' : answer,
                 }),
             });
-            el.classList.add(cancelled ? 'ask-user-cancelled' : 'ask-user-answered');
             const status = document.createElement('div');
             status.className = 'ask-user-status';
             status.textContent = cancelled ? 'Cancelled' : answer;
             const actionsEl = el.querySelector('.ask-user-actions');
             if (actionsEl) actionsEl.replaceWith(status);
         } catch (err) {
+            el.classList.remove(resolvedClass);
             buttons.forEach(b => { b.disabled = false; });
             if (input) input.disabled = false;
             showToast('Failed to respond: ' + err.message);
@@ -2330,11 +2363,14 @@ const Chat = (() => {
         }
     }
 
+    // Thin wrapper — actual logic lives in prompt-cleanup.js (loaded via <script>)
+    // so tests can import the same function without duplicating selectors (#864).
+
     return {
         init, sendMessage, loadMessages, stopGeneration, abortStream, setStreaming, escapeHtml,
         streamChatResponse, isRawMode, setRawMode, setConversationType,
         appendRemoteMessage, startRemoteStream, handleRemoteToken, finalizeRemoteStream,
         showApprovalPrompt, resolveApprovalCard, showAskUserPrompt, showThinkingFromEvent: showThinking,
-        renderMarkdown, highlightCode, showToast, sendPlanExecution,
+        renderMarkdown, highlightCode, showToast, sendPlanExecution, cleanupPendingPrompts,
     };
 })();
