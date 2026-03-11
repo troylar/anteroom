@@ -20,11 +20,16 @@ _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 _SAFE_ID_RE = re.compile(r"^[a-f0-9-]{32,36}$")
 
 
-def _rebuild_config(request: Request, db: Any) -> bool:
+def _rebuild_config(request: Request, db: Any) -> tuple[bool, bool]:
     """Rebuild effective config after pack changes and update app state.
 
-    Fails closed: on error, keeps the previous config and logs a warning.
-    Returns ``True`` if config was successfully rebuilt, ``False`` otherwise.
+    Returns ``(success, compliance_failure)`` tuple:
+
+    - ``(True, False)`` — config rebuilt successfully.
+    - ``(False, True)`` — compliance violation; caller should rollback.
+    - ``(False, False)`` — infrastructure error; previous config kept,
+      but the pack mutation should NOT be rolled back (the pack itself
+      is fine, it's the rebuild machinery that failed).
     """
     from ..services.config_overlays import rebuild_effective_config
 
@@ -33,23 +38,22 @@ def _rebuild_config(request: Request, db: Any) -> bool:
         result = rebuild_effective_config(db, previous_config=previous_config)
         request.app.state.config = result.config
         request.app.state.enforced_fields = result.enforced_fields
-        # Refresh config-derived singletons
         _refresh_derived_state(request, result.config)
         for warning in result.warnings:
             logger.warning(warning)
-        return True
+        return True, False
     except ValueError:
         logger.warning(
             "Config rebuild blocked (compliance failure) — keeping previous config",
             exc_info=True,
         )
-        return False
+        return False, True
     except Exception:
         logger.warning(
             "Config rebuild failed — keeping previous config",
             exc_info=True,
         )
-        return False
+        return False, False
 
 
 def _refresh_derived_state(request: Request, config: Any) -> None:
@@ -197,9 +201,10 @@ async def refresh_sources(request: Request) -> list[dict[str, Any]]:
     worker = PackRefreshWorker(db=db, data_dir=data_dir, sources=sources)
     results = worker.refresh_all()
     if any(r.changed for r in results):
-        if _rebuild_config(request, db):
+        success, compliance_failure = _rebuild_config(request, db)
+        if success:
             _reload_registries_only(request, db)
-        else:
+        elif compliance_failure:
             # Quarantine: detach changed packs so DB and live config stay consistent
             from ..services.pack_attachments import detach_pack as _q_detach
 
@@ -213,6 +218,9 @@ async def refresh_sources(request: Request) -> list[dict[str, Any]]:
                         pass
             if quarantined:
                 logger.warning("Quarantined %d pack(s) after refresh rebuild failure", quarantined)
+        else:
+            # Infrastructure error — reload registries anyway, config stays previous
+            _reload_registries_only(request, db)
     return [
         {
             "url": r.url,
@@ -279,7 +287,8 @@ async def attach_pack(request: Request, namespace: str, name: str, body: AttachR
         result = do_attach(db, pack["id"], project_path=body.project_path)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    if not _rebuild_config(request, db):
+    success, compliance_failure = _rebuild_config(request, db)
+    if compliance_failure:
         _rollback_pack_mutation(db, pack["id"], body.project_path, "detach")
         raise HTTPException(
             status_code=409,
@@ -306,7 +315,8 @@ async def detach_pack(
     removed = do_detach(db, pack["id"], project_path=project_path)
     if not removed:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    if not _rebuild_config(request, db):
+    success, compliance_failure = _rebuild_config(request, db)
+    if compliance_failure:
         _rollback_pack_mutation(db, pack["id"], project_path, "attach")
         raise HTTPException(
             status_code=409,

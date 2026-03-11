@@ -273,9 +273,10 @@ class TestWebRebuildConfig:
             config=new_config, enforced_fields=["safety.approval_mode"], warnings=[]
         )
 
-        result = _rebuild_config(request, MagicMock())
+        success, compliance_failure = _rebuild_config(request, MagicMock())
 
-        assert result is True
+        assert success is True
+        assert compliance_failure is False
         assert request.app.state.config is new_config
         assert request.app.state.enforced_fields == ["safety.approval_mode"]
         mock_refresh.assert_called_once_with(request, new_config)
@@ -283,7 +284,7 @@ class TestWebRebuildConfig:
     @patch("anteroom.routers.packs._refresh_derived_state")
     @patch("anteroom.services.config_overlays.rebuild_effective_config")
     def test_rebuild_compliance_failure_keeps_previous(self, mock_rebuild: MagicMock, mock_refresh: MagicMock) -> None:
-        """ValueError (compliance failure) keeps previous config."""
+        """ValueError (compliance failure) keeps previous config and signals compliance_failure."""
         from anteroom.routers.packs import _rebuild_config
 
         request = MagicMock()
@@ -291,16 +292,19 @@ class TestWebRebuildConfig:
         request.app.state.config = old_config
         mock_rebuild.side_effect = ValueError("compliance failure")
 
-        result = _rebuild_config(request, MagicMock())
+        success, compliance_failure = _rebuild_config(request, MagicMock())
 
-        assert result is False
+        assert success is False
+        assert compliance_failure is True
         assert request.app.state.config is old_config
         mock_refresh.assert_not_called()
 
     @patch("anteroom.routers.packs._refresh_derived_state")
     @patch("anteroom.services.config_overlays.rebuild_effective_config")
-    def test_rebuild_exception_keeps_previous(self, mock_rebuild: MagicMock, mock_refresh: MagicMock) -> None:
-        """Generic exception keeps previous config."""
+    def test_rebuild_exception_keeps_previous_no_compliance(
+        self, mock_rebuild: MagicMock, mock_refresh: MagicMock
+    ) -> None:
+        """Generic exception keeps previous config but does NOT signal compliance failure."""
         from anteroom.routers.packs import _rebuild_config
 
         request = MagicMock()
@@ -308,9 +312,10 @@ class TestWebRebuildConfig:
         request.app.state.config = old_config
         mock_rebuild.side_effect = RuntimeError("db error")
 
-        result = _rebuild_config(request, MagicMock())
+        success, compliance_failure = _rebuild_config(request, MagicMock())
 
-        assert result is False
+        assert success is False
+        assert compliance_failure is False
         assert request.app.state.config is old_config
         mock_refresh.assert_not_called()
 
