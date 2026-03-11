@@ -34,11 +34,20 @@ def _rebuild_config(request: Request, db: Any) -> tuple[bool, bool]:
     from ..services.config_overlays import ComplianceError, rebuild_effective_config
 
     previous_config = getattr(request.app.state, "config", None)
+    previous_enforced = getattr(request.app.state, "enforced_fields", None)
     try:
         result = rebuild_effective_config(db, previous_config=previous_config)
+        # Stage new values before committing — if derived state fails,
+        # roll back both config and enforced_fields atomically.
         request.app.state.config = result.config
         request.app.state.enforced_fields = result.enforced_fields
-        _refresh_derived_state(request, result.config)
+        try:
+            _refresh_derived_state(request, result.config)
+        except Exception:
+            # Roll back — derived state reconstruction failed
+            request.app.state.config = previous_config
+            request.app.state.enforced_fields = previous_enforced
+            raise
         for warning in result.warnings:
             logger.warning(warning)
         return True, False
@@ -205,7 +214,7 @@ async def refresh_sources(request: Request) -> list[dict[str, Any]]:
         if success:
             _reload_registries_only(request, db)
         elif compliance_failure:
-            # Quarantine: detach changed packs so DB and live config stay consistent
+            # Quarantine: detach changed packs, then rebuild from the clean set
             from ..services.pack_attachments import detach_pack as _q_detach
 
             quarantined = 0
@@ -218,6 +227,9 @@ async def refresh_sources(request: Request) -> list[dict[str, Any]]:
                         pass
             if quarantined:
                 logger.warning("Quarantined %d pack(s) after refresh rebuild failure", quarantined)
+            # Second rebuild from the now-clean attachment set
+            _rebuild_config(request, db)
+            _reload_registries_only(request, db)
         else:
             # Infrastructure error — reload registries anyway, config stays previous
             _reload_registries_only(request, db)

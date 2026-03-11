@@ -4036,8 +4036,8 @@ async def _run_repl(
                                         skill_registry.load_from_artifacts(artifact_registry)
                                     _refresh_artifact_prompt()
                             else:
-                                # Quarantine: detach changed packs so DB and
-                                # live config stay consistent
+                                # Quarantine: detach changed packs, then rebuild
+                                # from the clean attachment set
                                 from ..services.pack_attachments import detach_pack as _q_detach
 
                                 for pid in changed_pack_ids:
@@ -4050,6 +4050,13 @@ async def _run_repl(
                                         f"[yellow]Quarantined {len(changed_pack_ids)} pack(s) "
                                         "— detached until config issue is resolved.[/yellow]"
                                     )
+                                # Second rebuild from the now-clean attachment set
+                                _rebuild_pack_config()
+                                if artifact_registry is not None:
+                                    artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
+                                    if skill_registry is not None:
+                                        skill_registry.load_from_artifacts(artifact_registry)
+                                    _refresh_artifact_prompt()
 
                     elif sub == "add-source":
                         url = parts[2].strip() if len(parts) >= 3 else ""
