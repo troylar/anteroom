@@ -42,6 +42,7 @@ function loadChat() {
       openSettings: () => {},
     },
     Sidebar: { refresh: () => {}, updateTitle: () => {} },
+    cleanupPendingPrompts: () => {},
     Canvas: {
       handleCanvasStreamStart: () => {},
       handleCanvasStreaming: () => {},

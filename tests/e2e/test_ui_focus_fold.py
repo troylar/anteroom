@@ -38,8 +38,15 @@ class TestFocusFoldWeb:
             page.wait_for_selector(".message.assistant .tool-batch", timeout=5000)
             page.wait_for_function(
                 """() => {
-                    const segments = document.querySelectorAll('.message.assistant:last-of-type .assistant-text-segment');
-                    return Array.from(segments).some((el) => (el.textContent || '').includes('Follow-up after the real tool batch.'));
+                    const selector =
+                        '.message.assistant:last-of-type .assistant-text-segment';
+                    const segments = document.querySelectorAll(selector);
+                    return Array.from(segments).some(
+                        (el) =>
+                            (el.textContent || '').includes(
+                                'Follow-up after the real tool batch.'
+                            )
+                    );
                 }""",
                 timeout=5000,
             )
@@ -262,8 +269,18 @@ class TestFocusFoldWeb:
             page.click("#btn-send")
             page.wait_for_function(
                 """() => {
-                    const content = document.querySelector('.message.assistant:last-of-type .message-content');
-                    return content && Array.from(content.children).some((el) => (el.textContent || '').includes('The tool failed, so I stopped there.'));
+                    const selector =
+                        '.message.assistant:last-of-type .message-content';
+                    const content = document.querySelector(selector);
+                    return (
+                        content &&
+                        Array.from(content.children).some(
+                            (el) =>
+                                (el.textContent || '').includes(
+                                    'The tool failed, so I stopped there.'
+                                )
+                        )
+                    );
                 }""",
                 timeout=5000,
             )
