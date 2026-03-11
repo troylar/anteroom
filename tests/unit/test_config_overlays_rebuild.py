@@ -257,6 +257,55 @@ class TestConfigToDict:
         assert result == {}
 
 
+class TestWebRebuildConfig:
+    """Tests for the web router _rebuild_config fail-closed behavior."""
+
+    @patch("anteroom.services.config_overlays.rebuild_effective_config")
+    def test_rebuild_success_updates_config(self, mock_rebuild: MagicMock) -> None:
+        """Successful rebuild updates app.state.config."""
+        from anteroom.routers.packs import _rebuild_config
+
+        request = MagicMock()
+        request.app.state.config = _FakeConfig(model="old")
+        new_config = _FakeConfig(model="new")
+        mock_rebuild.return_value = ConfigRebuildResult(config=new_config, enforced_fields=[], warnings=[])
+
+        result = _rebuild_config(request, MagicMock())
+
+        assert result is True
+        assert request.app.state.config is new_config
+
+    @patch("anteroom.services.config_overlays.rebuild_effective_config")
+    def test_rebuild_compliance_failure_keeps_previous(self, mock_rebuild: MagicMock) -> None:
+        """ValueError (compliance failure) keeps previous config."""
+        from anteroom.routers.packs import _rebuild_config
+
+        request = MagicMock()
+        old_config = _FakeConfig(model="old")
+        request.app.state.config = old_config
+        mock_rebuild.side_effect = ValueError("compliance failure")
+
+        result = _rebuild_config(request, MagicMock())
+
+        assert result is False
+        assert request.app.state.config is old_config
+
+    @patch("anteroom.services.config_overlays.rebuild_effective_config")
+    def test_rebuild_exception_keeps_previous(self, mock_rebuild: MagicMock) -> None:
+        """Generic exception keeps previous config."""
+        from anteroom.routers.packs import _rebuild_config
+
+        request = MagicMock()
+        old_config = _FakeConfig(model="old")
+        request.app.state.config = old_config
+        mock_rebuild.side_effect = RuntimeError("db error")
+
+        result = _rebuild_config(request, MagicMock())
+
+        assert result is False
+        assert request.app.state.config is old_config
+
+
 class TestRestartOnlyFields:
     """Verify _RESTART_ONLY_FIELDS is a frozenset with expected entries."""
 

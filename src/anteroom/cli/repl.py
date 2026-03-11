@@ -2780,23 +2780,36 @@ async def _run_repl(
                     tools_openai.append(invoke_def)
 
         def _rebuild_pack_config() -> None:
-            """Rebuild effective config after pack attach/detach/install/remove."""
+            """Rebuild effective config after pack attach/detach/install/remove.
+
+            Fails closed: on error, keeps the previous config and warns the user.
+            """
             nonlocal config
             from ..services.config_overlays import rebuild_effective_config
 
+            previous = config
             try:
                 _space_id = space["id"] if space else None
                 result = rebuild_effective_config(
                     db,
                     project_path=str(Path(working_dir)),
                     space_id=_space_id,
-                    previous_config=config,
+                    previous_config=previous,
                 )
                 config = result.config
                 for warning in result.warnings:
                     renderer.console.print(f"[yellow]{warning}[/yellow]")
-            except (ValueError, Exception):
-                logger.warning("Failed to rebuild config after pack change", exc_info=True)
+            except ValueError as exc:
+                config = previous
+                renderer.console.print(f"[red]Config rebuild blocked (compliance failure): {exc}[/red]")
+                renderer.console.print(
+                    "[yellow]Keeping previous config. Detach the offending pack to resolve.[/yellow]"
+                )
+                logger.warning("Config rebuild blocked after pack change", exc_info=True)
+            except Exception:
+                config = previous
+                renderer.console.print("[red]Config rebuild failed — keeping previous config.[/red]")
+                logger.warning("Config rebuild failed after pack change", exc_info=True)
 
         # Inject initial space instructions if space is active
         if _active_space[0] and space_instructions:
@@ -3968,6 +3981,13 @@ async def _run_repl(
                         renderer.console.print(
                             f"[green]Done:[/green] {total_installed} installed, {total_updated} updated\n"
                         )
+                        if total_installed > 0 or total_updated > 0:
+                            _rebuild_pack_config()
+                            if artifact_registry is not None:
+                                artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
+                                if skill_registry is not None:
+                                    skill_registry.load_from_artifacts(artifact_registry)
+                                _refresh_artifact_prompt()
 
                     elif sub == "add-source":
                         url = parts[2].strip() if len(parts) >= 3 else ""

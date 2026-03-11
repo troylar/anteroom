@@ -20,22 +20,40 @@ _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 _SAFE_ID_RE = re.compile(r"^[a-f0-9-]{32,36}$")
 
 
-def _rebuild_config(request: Request, db: Any) -> None:
-    """Rebuild effective config after pack changes and update app state."""
+def _rebuild_config(request: Request, db: Any) -> bool:
+    """Rebuild effective config after pack changes and update app state.
+
+    Fails closed: on error, keeps the previous config and logs a warning.
+    Returns ``True`` if config was successfully rebuilt, ``False`` otherwise.
+    """
     from ..services.config_overlays import rebuild_effective_config
 
+    previous_config = getattr(request.app.state, "config", None)
     try:
-        previous_config = getattr(request.app.state, "config", None)
         result = rebuild_effective_config(db, previous_config=previous_config)
         request.app.state.config = result.config
         for warning in result.warnings:
             logger.warning(warning)
-    except (ValueError, Exception):
-        logger.warning("Failed to rebuild config after pack change", exc_info=True)
+        return True
+    except ValueError:
+        logger.warning(
+            "Config rebuild blocked (compliance failure) — keeping previous config",
+            exc_info=True,
+        )
+        return False
+    except Exception:
+        logger.warning(
+            "Config rebuild failed — keeping previous config",
+            exc_info=True,
+        )
+        return False
 
 
 def _reload_registries(request: Request, db: Any) -> None:
-    """Reload artifact registry, rule enforcer, and skill registry after pack changes."""
+    """Reload artifact registry, rule enforcer, and skill registry after pack changes.
+
+    Rebuilds config first (fail-closed), then refreshes all derived runtime state.
+    """
     _rebuild_config(request, db)
     registry = getattr(request.app.state, "artifact_registry", None)
     if registry is not None:
