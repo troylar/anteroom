@@ -1403,7 +1403,7 @@ async def run_cli(
         from ..services.artifact_registry import ArtifactRegistry
 
         _artifact_registry = ArtifactRegistry()
-        _artifact_registry.load_from_db(db, space_id=space_id)
+        _artifact_registry.load_from_db(db, space_id=space_id, project_path=working_dir)
         if _artifact_registry.count:
             skill_registry.load_from_artifacts(_artifact_registry)
         # Load hard-enforced rules from the registry
@@ -2779,6 +2779,83 @@ async def _run_repl(
                 if invoke_def:
                     tools_openai.append(invoke_def)
 
+        def _rebuild_pack_config(
+            *,
+            rollback_pack_id: str | None = None,
+            rollback_project_path: str | None = None,
+            rollback_action: str | None = None,
+        ) -> bool:
+            """Rebuild effective config after pack attach/detach/install/remove.
+
+            Fails closed: on error, rolls back the DB mutation and keeps
+            the previous config.
+
+            Parameters
+            ----------
+            rollback_pack_id:
+                Pack ID to rollback on failure.
+            rollback_project_path:
+                Project path for rollback scope.
+            rollback_action:
+                ``"detach"`` to undo an attach, ``"attach"`` to undo a detach.
+
+            Returns ``True`` on success.
+            """
+            nonlocal config
+            from ..services.config_overlays import ComplianceError, rebuild_effective_config
+
+            previous = config
+            try:
+                _space_id = space["id"] if space else None
+                result = rebuild_effective_config(
+                    db,
+                    project_path=str(Path(working_dir)),
+                    space_id=_space_id,
+                    previous_config=previous,
+                )
+                config = result.config
+                for warning in result.warnings:
+                    renderer.console.print(f"[yellow]{warning}[/yellow]")
+                return True
+            except ComplianceError as exc:
+                config = previous
+                renderer.console.print(f"[red]Config rebuild blocked (compliance failure): {exc}[/red]")
+                logger.warning("Config rebuild failed after pack change", exc_info=True)
+                if rollback_pack_id and rollback_action:
+                    _rollback_pack_mutation(db, rollback_pack_id, rollback_project_path, rollback_action)
+                return False
+            except Exception:
+                config = previous
+                renderer.console.print("[red]Config rebuild failed — keeping previous config.[/red]")
+                logger.warning("Config rebuild failed after pack change", exc_info=True)
+                return False
+
+        def _rollback_pack_mutation(
+            db: Any,
+            pack_id: str,
+            project_path: str | None,
+            action: str,
+        ) -> None:
+            """Undo a pack attachment/detachment after config rebuild failure."""
+            from ..services.pack_attachments import attach_pack as _do_attach
+            from ..services.pack_attachments import detach_pack as _do_detach
+
+            try:
+                if action == "detach":
+                    _do_detach(db, pack_id, project_path=project_path)
+                    renderer.console.print("[yellow]Rolled back: pack detached to restore valid config.[/yellow]")
+                elif action == "attach":
+                    _do_attach(
+                        db,
+                        pack_id,
+                        project_path=project_path,
+                        check_overlay_conflicts=False,
+                    )
+                    renderer.console.print("[yellow]Rolled back: pack re-attached to restore valid config.[/yellow]")
+            except Exception:
+                logger.error("Rollback failed", exc_info=True)
+                renderer.console.print("[red]Rollback also failed. Manual intervention required.[/red]")
+
         # Inject initial space instructions if space is active
         if _active_space[0] and space_instructions:
             _inject_space_instructions(_active_space[0], space_instructions)
@@ -3859,8 +3936,13 @@ async def _run_repl(
                                 f"[green]{action_word}[/green] @{manifest.namespace}/{manifest.name}"
                                 f" v{manifest.version} ({install_result.get('artifact_count', 0)} artifacts)"
                             )
+                            _rebuild_pack_config()
                             if artifact_registry is not None:
-                                artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
+                                artifact_registry.load_from_db(
+                                    db,
+                                    space_id=space["id"] if space else None,
+                                    project_path=working_dir,
+                                )
                                 if skill_registry is not None:
                                     skill_registry.load_from_artifacts(artifact_registry)
                                 _refresh_artifact_prompt()
@@ -3884,8 +3966,13 @@ async def _run_repl(
                         removed = packs_service.remove_pack_by_id(db, _pm["id"])
                         if removed:
                             renderer.console.print(f"[green]Removed[/green] @{ns}/{name}\n")
+                            _rebuild_pack_config()
                             if artifact_registry is not None:
-                                artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
+                                artifact_registry.load_from_db(
+                                    db,
+                                    space_id=space["id"] if space else None,
+                                    project_path=working_dir,
+                                )
                                 if skill_registry is not None:
                                     skill_registry.load_from_artifacts(artifact_registry)
                                 _refresh_artifact_prompt()
@@ -3909,13 +3996,15 @@ async def _run_repl(
                         for psc in sources_cfg:
                             url = getattr(psc, "url", None) or "?"
                             branch = getattr(psc, "branch", "main") or "main"
+                            auto_attach = getattr(psc, "auto_attach", True)
                             cached_entry = cached_map.get(url)
                             status = (
                                 f"[green]cached[/green] ({cached_entry.ref[:8]})"
                                 if cached_entry
                                 else "[yellow]not cloned[/yellow]"
                             )
-                            renderer.console.print(f"  {url} ({branch}) — {status}")
+                            attach_label = "auto-attach" if auto_attach else "manual attach"
+                            renderer.console.print(f"  {url} ({branch}) — {status}, {attach_label}")
                         renderer.console.print()
 
                     elif sub == "refresh":
@@ -3930,6 +4019,8 @@ async def _run_repl(
                         data_dir = config.app.data_dir
                         total_installed = 0
                         total_updated = 0
+                        total_attached = 0
+                        changed_pack_ids: list[str] = []
                         for psc in sources_cfg:
                             url = getattr(psc, "url", None) or "?"
                             branch = getattr(psc, "branch", "main") or "main"
@@ -3941,12 +4032,53 @@ async def _run_repl(
                             if src_result.path:
                                 from ..services.pack_refresh import install_from_source
 
-                                i, u = install_from_source(db, src_result.path)
-                                total_installed += i
-                                total_updated += u
-                        renderer.console.print(
-                            f"[green]Done:[/green] {total_installed} installed, {total_updated} updated\n"
-                        )
+                                ifs_result = install_from_source(
+                                    db,
+                                    src_result.path,
+                                    auto_attach=getattr(psc, "auto_attach", True),
+                                    priority=getattr(psc, "priority", 50),
+                                )
+                                total_installed += ifs_result.installed
+                                total_updated += ifs_result.updated
+                                total_attached += ifs_result.attached
+                                changed_pack_ids.extend(ifs_result.changed_pack_ids)
+                        parts_msg = f"{total_installed} installed, {total_updated} updated"
+                        if total_attached:
+                            parts_msg += f", {total_attached} attached"
+                        renderer.console.print(f"[green]Done:[/green] {parts_msg}\n")
+                        if total_installed > 0 or total_updated > 0 or total_attached > 0:
+                            if _rebuild_pack_config():
+                                if artifact_registry is not None:
+                                    artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
+                                    if skill_registry is not None:
+                                        skill_registry.load_from_artifacts(artifact_registry)
+                                    _refresh_artifact_prompt()
+                            else:
+                                # Quarantine: detach changed packs, then rebuild
+                                # from the clean attachment set
+                                from ..services.pack_attachments import detach_pack as _q_detach
+
+                                for pid in changed_pack_ids:
+                                    try:
+                                        _q_detach(db, pid)
+                                    except Exception:
+                                        pass
+                                if changed_pack_ids:
+                                    renderer.console.print(
+                                        f"[yellow]Quarantined {len(changed_pack_ids)} pack(s) "
+                                        "— detached until config issue is resolved.[/yellow]"
+                                    )
+                                # Second rebuild from the now-clean attachment set
+                                _rebuild_pack_config()
+                                if artifact_registry is not None:
+                                    artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
+                                    if skill_registry is not None:
+                                        skill_registry.load_from_artifacts(artifact_registry)
+                                    _refresh_artifact_prompt()
+                        if total_installed > 0 and total_attached == 0:
+                            renderer.console.print(
+                                f"[{MUTED}]Packs installed but not attached. Use /pack attach to activate.[/{MUTED}]\n"
+                            )
 
                     elif sub == "add-source":
                         url = parts[2].strip() if len(parts) >= 3 else ""
@@ -4001,12 +4133,21 @@ async def _run_repl(
                         renderer.console.print(
                             f"[green]Attached[/green] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
                         )
-                        if artifact_registry is not None:
-                            artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
-                            if skill_registry is not None:
-                                skill_registry.load_from_artifacts(artifact_registry)
-                            _refresh_artifact_prompt()
-                            _refresh_skill_tools()
+                        if _rebuild_pack_config(
+                            rollback_pack_id=_pm["id"],
+                            rollback_project_path=project_path,
+                            rollback_action="detach",
+                        ):
+                            if artifact_registry is not None:
+                                artifact_registry.load_from_db(
+                                    db,
+                                    space_id=space["id"] if space else None,
+                                    project_path=working_dir,
+                                )
+                                if skill_registry is not None:
+                                    skill_registry.load_from_artifacts(artifact_registry)
+                                _refresh_artifact_prompt()
+                                _refresh_skill_tools()
 
                     elif sub == "detach":
                         _detach_rest = parts[2].strip() if len(parts) >= 3 else ""
@@ -4038,12 +4179,21 @@ async def _run_repl(
                             renderer.console.print(
                                 f"[green]Detached[/green] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
                             )
-                            if artifact_registry is not None:
-                                artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
-                                if skill_registry is not None:
-                                    skill_registry.load_from_artifacts(artifact_registry)
-                                _refresh_artifact_prompt()
-                                _refresh_skill_tools()
+                            if _rebuild_pack_config(
+                                rollback_pack_id=_pm["id"],
+                                rollback_project_path=project_path,
+                                rollback_action="attach",
+                            ):
+                                if artifact_registry is not None:
+                                    artifact_registry.load_from_db(
+                                        db,
+                                        space_id=space["id"] if space else None,
+                                        project_path=working_dir,
+                                    )
+                                    if skill_registry is not None:
+                                        skill_registry.load_from_artifacts(artifact_registry)
+                                    _refresh_artifact_prompt()
+                                    _refresh_skill_tools()
                         else:
                             renderer.console.print(
                                 f"[yellow]Not attached:[/yellow] @{rich_escape(ns)}/{rich_escape(name)}\n"

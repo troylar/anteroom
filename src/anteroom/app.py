@@ -259,12 +259,111 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Start pack refresh worker if configured
     app.state.pack_refresh_worker = None
     if config.pack_sources:
+        import asyncio
+
         from .services.pack_refresh import PackRefreshWorker
+
+        def _refresh_derived_singletons(cfg: object) -> None:
+            """Refresh config-derived singletons (rate limit, DLP, injection detector)."""
+            app.state.rate_limit_config = getattr(cfg, "rate_limit", None)
+            safety = getattr(cfg, "safety", None)
+            dlp_cfg = getattr(safety, "dlp", None) if safety else None
+            if dlp_cfg is not None and dlp_cfg.enabled:
+                from .services.dlp import DlpScanner
+
+                app.state.dlp_scanner = DlpScanner(dlp_cfg)
+            else:
+                app.state.dlp_scanner = None
+            inj_cfg = getattr(safety, "prompt_injection", None) if safety else None
+            if inj_cfg is not None and inj_cfg.enabled:
+                from .services.injection_detector import InjectionDetector
+
+                app.state.injection_detector = InjectionDetector(inj_cfg)
+            else:
+                app.state.injection_detector = None
+
+        def _reload_after_pack_refresh() -> None:
+            """Rebuild config overlays and registries after background pack refresh."""
+            try:
+                from .services.artifact_registry import ArtifactRegistry
+                from .services.artifacts import ArtifactType
+                from .services.config_overlays import ComplianceError, rebuild_effective_config
+                from .services.pack_attachments import detach_pack as _q_detach
+                from .services.rule_enforcer import RuleEnforcer
+
+                # 1. Rebuild config overlays so source-installed pack configs take effect
+                previous_config = getattr(app.state, "config", None)
+                previous_enforced = getattr(app.state, "enforced_fields", None)
+                config_ok = True
+                try:
+                    result = rebuild_effective_config(app.state.db, previous_config=previous_config)
+                    app.state.config = result.config
+                    app.state.enforced_fields = result.enforced_fields
+                    _refresh_derived_singletons(result.config)
+                    for warning in result.warnings:
+                        logger.warning(warning)
+                except ComplianceError:
+                    config_ok = False
+                    logger.warning(
+                        "Config rebuild blocked after pack refresh (compliance failure) — quarantining changed packs",
+                        exc_info=True,
+                    )
+                    # Quarantine: detach recently-changed packs that caused the failure
+                    worker = app.state.pack_refresh_worker
+                    if worker is not None:
+                        changed_ids = list(worker._last_changed_pack_ids)
+                        quarantined = 0
+                        for pid in changed_ids:
+                            try:
+                                _q_detach(app.state.db, pid)
+                                quarantined += 1
+                            except Exception:
+                                logger.warning("Failed to quarantine pack %s", pid, exc_info=True)
+                        if quarantined:
+                            logger.warning(
+                                "Quarantined %d pack(s) — detached until config issue is resolved",
+                                quarantined,
+                            )
+                    # Re-attempt rebuild from the now-clean attachment set
+                    try:
+                        result2 = rebuild_effective_config(app.state.db, previous_config=previous_config)
+                        app.state.config = result2.config
+                        app.state.enforced_fields = result2.enforced_fields
+                        _refresh_derived_singletons(result2.config)
+                    except Exception:
+                        app.state.config = previous_config
+                        app.state.enforced_fields = previous_enforced
+                except Exception:
+                    # Infrastructure error — keep previous config but still reload registries
+                    logger.warning("Config rebuild failed after pack refresh", exc_info=True)
+
+                # 2. Rebuild registries
+                registry = ArtifactRegistry()
+                registry.load_from_db(app.state.db)
+                app.state.artifact_registry = registry
+
+                enforcer = RuleEnforcer()
+                enforcer.load_rules(registry.list_all(artifact_type=ArtifactType.RULE))
+                app.state.rule_enforcer = enforcer
+
+                tool_reg = getattr(app.state, "tool_registry", None)
+                if tool_reg is not None:
+                    tool_reg.set_rule_enforcer(enforcer)
+
+                skill_reg = getattr(app.state, "skill_registry", None)
+                if skill_reg is not None:
+                    skill_reg.load_from_artifacts(registry)
+
+                logger.info("Config and registries reloaded after pack refresh (config_ok=%s)", config_ok)
+            except Exception:
+                logger.warning("Failed to reload after pack refresh", exc_info=True)
 
         pack_refresh_worker = PackRefreshWorker(
             db=app.state.db,
             data_dir=config.app.data_dir,
             sources=config.pack_sources,
+            on_packs_changed=_reload_after_pack_refresh,
+            event_loop=asyncio.get_running_loop(),
         )
         pack_refresh_worker.start()
         app.state.pack_refresh_worker = pack_refresh_worker
