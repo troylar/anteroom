@@ -174,15 +174,15 @@ def validate_manifest(manifest: PackManifest, pack_dir: Path) -> list[str]:
         if art.type == ArtifactType.RULE and art_path.suffix == ".md":
             try:
                 _body, meta = _extract_yaml_frontmatter(
-                    art_path.read_text(encoding="utf-8"), art_path,
+                    art_path.read_text(encoding="utf-8"),
+                    art_path,
                 )
             except ValueError as e:
                 errors.append(f"Malformed front matter in {art.type}/{art.name}: {e}")
                 continue
             if meta.get("enforce") == "hard" and not meta.get("matches"):
                 errors.append(
-                    f"Rule {art.type}/{art.name} declares enforce: hard "
-                    f"but has no 'matches' field in front matter"
+                    f"Rule {art.type}/{art.name} declares enforce: hard but has no 'matches' field in front matter"
                 )
 
     return errors
@@ -247,8 +247,8 @@ def _extract_yaml_frontmatter(text: str, path: Path) -> tuple[str, dict[str, Any
             msg = f"Unclosed front matter in {path}: opening '---' found but no closing '---'"
             raise ValueError(msg)
 
-    yaml_block = text[first_newline + 1:close_idx]
-    body = text[close_idx + close_len + 1:] if close_idx + close_len < len(text) else ""
+    yaml_block = text[first_newline + 1 : close_idx]
+    body = text[close_idx + close_len + 1 :] if close_idx + close_len < len(text) else ""
 
     try:
         data = yaml.safe_load(yaml_block)
@@ -267,7 +267,9 @@ def _extract_yaml_frontmatter(text: str, path: Path) -> tuple[str, dict[str, Any
 
 
 def _read_artifact_content(
-    path: Path, *, artifact_type: str = "",
+    path: Path,
+    *,
+    artifact_type: str = "",
 ) -> tuple[str, dict[str, Any]]:
     """Read artifact content from a file.
 
