@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from ..db import ThreadSafeConnection
@@ -38,6 +38,7 @@ class SourceRefreshResult:
     success: bool
     packs_updated: int = 0
     packs_installed: int = 0
+    packs_attached: int = 0
     error: str = ""
     changed: bool = False
     changed_pack_ids: list[str] = field(default_factory=list)
@@ -60,6 +61,8 @@ class PackRefreshWorker:
         db: ThreadSafeConnection,
         data_dir: Path,
         sources: list[PackSourceConfig],
+        on_packs_changed: Callable[[], None] | None = None,
+        event_loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         self._db = db
         self._data_dir = data_dir
@@ -70,6 +73,8 @@ class PackRefreshWorker:
         self._task: asyncio.Task[None] | None = None
         self._consecutive_failures = 0
         self._poll_interval = 60.0  # check every minute which sources are due
+        self._on_packs_changed = on_packs_changed
+        self._event_loop = event_loop
 
     @property
     def running(self) -> bool:
@@ -112,15 +117,21 @@ class PackRefreshWorker:
         if not cache_path.is_dir():
             return SourceRefreshResult(url=source.url, success=False, error="cache directory missing after ensure")
 
-        src_result = install_from_source(self._db, cache_path)
+        ifs = install_from_source(
+            self._db,
+            cache_path,
+            auto_attach=source.auto_attach,
+            priority=source.priority,
+        )
 
         return SourceRefreshResult(
             url=source.url,
             success=True,
-            packs_installed=src_result.installed,
-            packs_updated=src_result.updated,
-            changed=result.changed or src_result.installed > 0 or src_result.updated > 0,
-            changed_pack_ids=src_result.changed_pack_ids,
+            packs_installed=ifs.installed,
+            packs_updated=ifs.updated,
+            packs_attached=ifs.attached,
+            changed=result.changed or ifs.installed > 0 or ifs.updated > 0,
+            changed_pack_ids=ifs.changed_pack_ids,
         )
 
     def refresh_all(self) -> list[SourceRefreshResult]:
@@ -149,6 +160,14 @@ class PackRefreshWorker:
                 state.consecutive_failures += 1
                 logger.error("Pack source refresh error for %s: %s", state.config.url, e)
                 results.append(SourceRefreshResult(url=state.config.url, success=False, error=str(e)))
+
+        if self._on_packs_changed and any(
+            r.packs_installed > 0 or r.packs_updated > 0 or r.packs_attached > 0 for r in results
+        ):
+            if self._event_loop:
+                self._event_loop.call_soon_threadsafe(self._on_packs_changed)
+            else:
+                self._on_packs_changed()
 
         return results
 
@@ -202,19 +221,38 @@ class InstallFromSourceResult:
 
     installed: int = 0
     updated: int = 0
+    attached: int = 0
     changed_pack_ids: list[str] = field(default_factory=list)
 
 
-def install_from_source(db: ThreadSafeConnection, source_dir: Path) -> InstallFromSourceResult:
+def install_from_source(
+    db: ThreadSafeConnection,
+    source_dir: Path,
+    *,
+    auto_attach: bool = False,
+    priority: int = 50,
+) -> InstallFromSourceResult:
     """Scan a source directory for pack manifests and install/update.
 
     Walks *source_dir* looking for ``pack.yaml`` files.  For each manifest
     found, installs the pack if not present, or updates it if already
     installed and the content has changed.
 
+    When *auto_attach* is ``True``, newly installed packs are automatically
+    attached at global scope with the given *priority*.  Updates skip
+    attachment (attachment persists across updates).
+
     Returns an :class:`InstallFromSourceResult` with counts and changed pack IDs.
     """
+    from .pack_attachments import attach_pack, list_attachments
+
     result = InstallFromSourceResult()
+
+    # Pre-fetch attached pack IDs for idempotent attach checks
+    attached_ids: set[str] = set()
+    if auto_attach:
+        for att in list_attachments(db):
+            attached_ids.add(att["pack_id"])
 
     manifest_paths = list(source_dir.rglob("pack.yaml"))
     for manifest_path in manifest_paths:
@@ -253,6 +291,25 @@ def install_from_source(db: ThreadSafeConnection, source_dir: Path) -> InstallFr
                 result.installed += 1
                 result.changed_pack_ids.append(pack_result["id"])
                 logger.info("Installed pack %s/%s from source", manifest.namespace, manifest.name)
+                # Auto-attach newly installed packs
+                if auto_attach and pack_result["id"] not in attached_ids:
+                    try:
+                        attach_pack(db, pack_result["id"], priority=priority)
+                        result.attached += 1
+                        attached_ids.add(pack_result["id"])
+                        logger.info(
+                            "Auto-attached pack %s/%s at priority %d",
+                            manifest.namespace,
+                            manifest.name,
+                            priority,
+                        )
+                    except ValueError as attach_err:
+                        logger.warning(
+                            "Auto-attach failed for %s/%s: %s",
+                            manifest.namespace,
+                            manifest.name,
+                            attach_err,
+                        )
             except ValueError as e:
                 logger.warning("Failed to install pack %s/%s: %s", manifest.namespace, manifest.name, e)
 
