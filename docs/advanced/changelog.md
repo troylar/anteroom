@@ -7,6 +7,36 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 11, 2026
 
+### v1.111.0 — Packs That Actually Work
+
+This release stabilizes the entire pack lifecycle — from source refresh through config overlay application to runtime artifact loading. Four interconnected issues, developed and tested as a single integrated unit.
+
+#### Explicit Pack Source Activation
+
+Pack sources now follow clear, predictable semantics: `auto_attach` controls whether newly installed packs are automatically attached, and the refresh worker correctly propagates changed pack IDs through the callback chain. Quarantine on compliance violations detaches offending packs and recovers gracefully. (#872)
+
+See [Pack Sources](../packs/pack-sources.md) for full details.
+
+#### Markdown Rule Metadata Preserved
+
+Pack rules authored in Markdown now retain their YAML front-matter metadata (`enforce: hard`, custom fields) through the full install-attach-enforce pipeline. Previously, metadata was silently dropped during manifest parsing. (#873)
+
+#### Project-Scoped Packs Load at Runtime
+
+Packs attached with `--project` scope now correctly load their artifacts in both the CLI REPL and web UI. The artifact registry receives the resolved `space_id`, ensuring project-scoped pack artifacts appear in the active registry. (#874)
+
+#### Config Overlay Reload and Scoping
+
+Pack config overlays are rebuilt and re-merged on every pack attach, detach, and source refresh — not just at startup. The overlay collection respects attachment scope (global vs project). (#875)
+
+#### Bug Fixes
+
+- Fixed YAML boolean parsing for `auto_attach`: `bool("false")` is `True` in Python (#872)
+- Fixed `_reload_after_pack_refresh()` to refresh DLP scanner and injection detector alongside rate limiting (#872)
+- Fixed `collect_overlays()` docstring: raises `ComplianceError`, not `ValueError` (#875)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.111.0)
+
 ### v1.110.3
 
 **Fixed:**
