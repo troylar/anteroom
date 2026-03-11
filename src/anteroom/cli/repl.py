@@ -1403,7 +1403,7 @@ async def run_cli(
         from ..services.artifact_registry import ArtifactRegistry
 
         _artifact_registry = ArtifactRegistry()
-        _artifact_registry.load_from_db(db, space_id=space_id)
+        _artifact_registry.load_from_db(db, space_id=space_id, project_path=working_dir)
         if _artifact_registry.count:
             skill_registry.load_from_artifacts(_artifact_registry)
         # Load hard-enforced rules from the registry
@@ -3860,7 +3860,11 @@ async def _run_repl(
                                 f" v{manifest.version} ({install_result.get('artifact_count', 0)} artifacts)"
                             )
                             if artifact_registry is not None:
-                                artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
+                                artifact_registry.load_from_db(
+                                    db,
+                                    space_id=space["id"] if space else None,
+                                    project_path=working_dir,
+                                )
                                 if skill_registry is not None:
                                     skill_registry.load_from_artifacts(artifact_registry)
                                 _refresh_artifact_prompt()
@@ -3885,7 +3889,11 @@ async def _run_repl(
                         if removed:
                             renderer.console.print(f"[green]Removed[/green] @{ns}/{name}\n")
                             if artifact_registry is not None:
-                                artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
+                                artifact_registry.load_from_db(
+                                    db,
+                                    space_id=space["id"] if space else None,
+                                    project_path=working_dir,
+                                )
                                 if skill_registry is not None:
                                     skill_registry.load_from_artifacts(artifact_registry)
                                 _refresh_artifact_prompt()
@@ -4002,7 +4010,11 @@ async def _run_repl(
                             f"[green]Attached[/green] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
                         )
                         if artifact_registry is not None:
-                            artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
+                            artifact_registry.load_from_db(
+                                db,
+                                space_id=space["id"] if space else None,
+                                project_path=working_dir,
+                            )
                             if skill_registry is not None:
                                 skill_registry.load_from_artifacts(artifact_registry)
                             _refresh_artifact_prompt()
@@ -4039,7 +4051,11 @@ async def _run_repl(
                                 f"[green]Detached[/green] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
                             )
                             if artifact_registry is not None:
-                                artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
+                                artifact_registry.load_from_db(
+                                    db,
+                                    space_id=space["id"] if space else None,
+                                    project_path=working_dir,
+                                )
                                 if skill_registry is not None:
                                     skill_registry.load_from_artifacts(artifact_registry)
                                 _refresh_artifact_prompt()
