@@ -11,6 +11,7 @@ import yaml
 from anteroom.db import _SCHEMA, ThreadSafeConnection
 from anteroom.services.packs import (
     ManifestArtifact,
+    _extract_yaml_frontmatter,
     _read_artifact_content,
     _resolve_artifact_file,
     get_pack,
@@ -921,3 +922,199 @@ class TestUpdatePackPreservesAttachments:
             (pack_id,),
         ).fetchone()
         assert old_att is None
+
+
+# ---------------------------------------------------------------------------
+# #873 — YAML front matter for Markdown rule artifacts
+# ---------------------------------------------------------------------------
+
+
+class TestExtractYamlFrontmatter:
+    def test_valid_frontmatter(self, tmp_path: Path) -> None:
+        text = (
+            "---\nenforce: hard\nreason: Policy\nmatches:\n"
+            "  - tool: bash\n    pattern: danger\n---\n# Rule body\nDo not do this."
+        )
+        body, meta = _extract_yaml_frontmatter(text, tmp_path / "rule.md")
+        assert meta["enforce"] == "hard"
+        assert meta["reason"] == "Policy"
+        assert len(meta["matches"]) == 1
+        assert "Rule body" in body
+
+    def test_no_delimiters_returns_empty(self, tmp_path: Path) -> None:
+        text = "# Just markdown\nNo front matter here."
+        body, meta = _extract_yaml_frontmatter(text, tmp_path / "rule.md")
+        assert body == text
+        assert meta == {}
+
+    def test_invalid_yaml_raises(self, tmp_path: Path) -> None:
+        text = "---\n[invalid yaml {{{\n---\n# Body"
+        with pytest.raises(ValueError, match="Invalid YAML in front matter"):
+            _extract_yaml_frontmatter(text, tmp_path / "rule.md")
+
+    def test_non_dict_raises(self, tmp_path: Path) -> None:
+        text = "---\n- list\n- not mapping\n---\n# Body"
+        with pytest.raises(ValueError, match="must be a YAML mapping"):
+            _extract_yaml_frontmatter(text, tmp_path / "rule.md")
+
+    def test_unclosed_delimiter_raises(self, tmp_path: Path) -> None:
+        text = "---\nenforce: hard\n# No closing delimiter"
+        with pytest.raises(ValueError, match="Unclosed front matter"):
+            _extract_yaml_frontmatter(text, tmp_path / "rule.md")
+
+    def test_empty_frontmatter_returns_empty_meta(self, tmp_path: Path) -> None:
+        text = "---\n---\n# Body only"
+        body, meta = _extract_yaml_frontmatter(text, tmp_path / "rule.md")
+        assert meta == {}
+        assert "Body only" in body
+
+
+class TestReadArtifactContentMarkdownRules:
+    def test_markdown_rule_with_frontmatter(self, tmp_path: Path) -> None:
+        p = tmp_path / "no-eval.md"
+        p.write_text(
+            "---\nenforce: hard\nreason: No eval\nmatches:\n"
+            "  - tool: bash\n    pattern: eval\n---\n# No eval\nDo not use eval().",
+            encoding="utf-8",
+        )
+        content, metadata = _read_artifact_content(p, artifact_type="rule")
+        assert metadata["enforce"] == "hard"
+        assert "No eval" in content
+        assert "---" not in content
+
+    def test_markdown_rule_malformed_raises(self, tmp_path: Path) -> None:
+        p = tmp_path / "bad.md"
+        p.write_text("---\n[broken yaml\n---\n# Body", encoding="utf-8")
+        with pytest.raises(ValueError, match="Invalid YAML in front matter"):
+            _read_artifact_content(p, artifact_type="rule")
+
+    def test_markdown_non_rule_ignores_frontmatter(self, tmp_path: Path) -> None:
+        p = tmp_path / "instruction.md"
+        p.write_text("---\nenforce: hard\n---\n# Instruction", encoding="utf-8")
+        content, metadata = _read_artifact_content(p, artifact_type="instruction")
+        assert metadata == {}
+        assert "---" in content
+
+    def test_markdown_rule_no_frontmatter(self, tmp_path: Path) -> None:
+        p = tmp_path / "soft-rule.md"
+        p.write_text("# Soft rule\nJust a guideline.", encoding="utf-8")
+        content, metadata = _read_artifact_content(p, artifact_type="rule")
+        assert metadata == {}
+        assert "Soft rule" in content
+
+
+class TestInstallPackMarkdownRuleMetadata:
+    def test_install_preserves_frontmatter_metadata(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        pack_dir = tmp_path / "pack"
+        pack_dir.mkdir()
+        (pack_dir / "rules").mkdir()
+        (pack_dir / "rules" / "no-eval.md").write_text(
+            "---\nenforce: hard\nreason: No eval allowed\nmatches:\n"
+            "  - tool: bash\n    pattern: eval\n---\n# No eval\nDo not use eval().",
+            encoding="utf-8",
+        )
+        _write_manifest(
+            pack_dir,
+            {
+                "name": "sec-pack",
+                "namespace": "sec",
+                "version": "1.0.0",
+                "artifacts": [{"type": "rule", "name": "no-eval"}],
+            },
+        )
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        result = install_pack(db, manifest, pack_dir)
+        assert result["artifact_count"] == 1
+
+        import json
+
+        row = db.execute("SELECT metadata FROM artifacts WHERE fqn = '@sec/rule/no-eval'").fetchone()
+        meta = json.loads(row["metadata"])
+        assert meta["enforce"] == "hard"
+        assert meta["reason"] == "No eval allowed"
+        assert len(meta["matches"]) == 1
+
+    def test_install_fails_on_malformed_frontmatter(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        pack_dir = tmp_path / "pack"
+        pack_dir.mkdir()
+        (pack_dir / "rules").mkdir()
+        (pack_dir / "rules" / "bad.md").write_text(
+            "---\n[broken yaml {{{\n---\n# Body",
+            encoding="utf-8",
+        )
+        _write_manifest(
+            pack_dir,
+            {
+                "name": "bad-pack",
+                "namespace": "ns",
+                "version": "1.0.0",
+                "artifacts": [{"type": "rule", "name": "bad"}],
+            },
+        )
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        with pytest.raises(ValueError, match="Invalid YAML in front matter"):
+            install_pack(db, manifest, pack_dir)
+
+        assert db.execute("SELECT * FROM packs").fetchone() is None
+
+
+class TestValidateManifestRuleMetadata:
+    def test_hard_rule_missing_matches_fails(self, tmp_path: Path) -> None:
+        pack_dir = tmp_path / "pack"
+        pack_dir.mkdir()
+        (pack_dir / "rules").mkdir()
+        (pack_dir / "rules" / "no-eval.md").write_text(
+            "---\nenforce: hard\nreason: No eval\n---\n# No eval",
+            encoding="utf-8",
+        )
+        _write_manifest(
+            pack_dir,
+            {
+                "name": "p",
+                "namespace": "ns",
+                "artifacts": [{"type": "rule", "name": "no-eval"}],
+            },
+        )
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        errors = validate_manifest(manifest, pack_dir)
+        assert any("enforce: hard" in e and "matches" in e for e in errors)
+
+    def test_valid_hard_rule_passes(self, tmp_path: Path) -> None:
+        pack_dir = tmp_path / "pack"
+        pack_dir.mkdir()
+        (pack_dir / "rules").mkdir()
+        (pack_dir / "rules" / "no-eval.md").write_text(
+            "---\nenforce: hard\nmatches:\n  - tool: bash\n    pattern: eval\n---\n# No eval",
+            encoding="utf-8",
+        )
+        _write_manifest(
+            pack_dir,
+            {
+                "name": "p",
+                "namespace": "ns",
+                "artifacts": [{"type": "rule", "name": "no-eval"}],
+            },
+        )
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        errors = validate_manifest(manifest, pack_dir)
+        assert errors == []
+
+    def test_malformed_frontmatter_in_validation(self, tmp_path: Path) -> None:
+        pack_dir = tmp_path / "pack"
+        pack_dir.mkdir()
+        (pack_dir / "rules").mkdir()
+        (pack_dir / "rules" / "bad.md").write_text(
+            "---\n[broken yaml\n---\n# Body",
+            encoding="utf-8",
+        )
+        _write_manifest(
+            pack_dir,
+            {
+                "name": "p",
+                "namespace": "ns",
+                "artifacts": [{"type": "rule", "name": "bad"}],
+            },
+        )
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+        errors = validate_manifest(manifest, pack_dir)
+        assert any("Malformed front matter" in e for e in errors)
