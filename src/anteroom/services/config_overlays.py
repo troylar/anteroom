@@ -654,9 +654,12 @@ def rebuild_effective_config(
     """
     from ..config import load_config
     from .compliance import validate_compliance
-    from .pack_attachments import get_active_pack_ids, get_attachment_priorities
+    from .pack_attachments import get_active_pack_ids, get_active_pack_ids_for_space, get_attachment_priorities
 
-    active_ids = get_active_pack_ids(db, project_path=project_path)
+    if space_id is not None:
+        active_ids = get_active_pack_ids_for_space(db, space_id, project_path=project_path)
+    else:
+        active_ids = get_active_pack_ids(db, project_path=project_path)
     pack_config: dict[str, Any] | None = None
     if active_ids:
         overlays = collect_pack_overlays(db, active_ids)

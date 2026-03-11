@@ -2779,6 +2779,25 @@ async def _run_repl(
                 if invoke_def:
                     tools_openai.append(invoke_def)
 
+        def _rebuild_pack_config() -> None:
+            """Rebuild effective config after pack attach/detach/install/remove."""
+            nonlocal config
+            from ..services.config_overlays import rebuild_effective_config
+
+            try:
+                _space_id = space["id"] if space else None
+                result = rebuild_effective_config(
+                    db,
+                    project_path=str(Path(working_dir)),
+                    space_id=_space_id,
+                    previous_config=config,
+                )
+                config = result.config
+                for warning in result.warnings:
+                    renderer.console.print(f"[yellow]{warning}[/yellow]")
+            except (ValueError, Exception):
+                logger.warning("Failed to rebuild config after pack change", exc_info=True)
+
         # Inject initial space instructions if space is active
         if _active_space[0] and space_instructions:
             _inject_space_instructions(_active_space[0], space_instructions)
@@ -3859,6 +3878,7 @@ async def _run_repl(
                                 f"[green]{action_word}[/green] @{manifest.namespace}/{manifest.name}"
                                 f" v{manifest.version} ({install_result.get('artifact_count', 0)} artifacts)"
                             )
+                            _rebuild_pack_config()
                             if artifact_registry is not None:
                                 artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
                                 if skill_registry is not None:
@@ -3884,6 +3904,7 @@ async def _run_repl(
                         removed = packs_service.remove_pack_by_id(db, _pm["id"])
                         if removed:
                             renderer.console.print(f"[green]Removed[/green] @{ns}/{name}\n")
+                            _rebuild_pack_config()
                             if artifact_registry is not None:
                                 artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
                                 if skill_registry is not None:
@@ -4001,6 +4022,7 @@ async def _run_repl(
                         renderer.console.print(
                             f"[green]Attached[/green] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
                         )
+                        _rebuild_pack_config()
                         if artifact_registry is not None:
                             artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
                             if skill_registry is not None:
@@ -4038,6 +4060,7 @@ async def _run_repl(
                             renderer.console.print(
                                 f"[green]Detached[/green] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
                             )
+                            _rebuild_pack_config()
                             if artifact_registry is not None:
                                 artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
                                 if skill_registry is not None:

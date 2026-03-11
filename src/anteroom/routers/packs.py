@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -11,14 +12,31 @@ from pydantic import BaseModel
 from ..services import packs
 from ..services.pack_sources import list_cached_sources
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["packs"])
 
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 _SAFE_ID_RE = re.compile(r"^[a-f0-9-]{32,36}$")
 
 
+def _rebuild_config(request: Request, db: Any) -> None:
+    """Rebuild effective config after pack changes and update app state."""
+    from ..services.config_overlays import rebuild_effective_config
+
+    try:
+        previous_config = getattr(request.app.state, "config", None)
+        result = rebuild_effective_config(db, previous_config=previous_config)
+        request.app.state.config = result.config
+        for warning in result.warnings:
+            logger.warning(warning)
+    except (ValueError, Exception):
+        logger.warning("Failed to rebuild config after pack change", exc_info=True)
+
+
 def _reload_registries(request: Request, db: Any) -> None:
     """Reload artifact registry, rule enforcer, and skill registry after pack changes."""
+    _rebuild_config(request, db)
     registry = getattr(request.app.state, "artifact_registry", None)
     if registry is not None:
         registry.load_from_db(db)  # Web UI: reloads global attachments

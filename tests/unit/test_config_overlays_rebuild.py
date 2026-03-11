@@ -62,6 +62,64 @@ class TestRebuildEffectiveConfig:
 
     @patch("anteroom.services.compliance.validate_compliance")
     @patch("anteroom.config.load_config")
+    @patch("anteroom.services.pack_attachments.get_attachment_priorities")
+    @patch("anteroom.services.config_overlays.collect_pack_overlays")
+    @patch("anteroom.services.pack_attachments.get_active_pack_ids_for_space")
+    @patch("anteroom.services.pack_attachments.get_active_pack_ids")
+    def test_space_id_uses_space_aware_query(
+        self,
+        mock_active: MagicMock,
+        mock_active_space: MagicMock,
+        mock_collect: MagicMock,
+        mock_priorities: MagicMock,
+        mock_load: MagicMock,
+        mock_compliance: MagicMock,
+    ) -> None:
+        """When space_id is provided, get_active_pack_ids_for_space is used instead of get_active_pack_ids."""
+        db = MagicMock()
+        fake_config = _FakeConfig()
+        mock_active_space.return_value = ["pack-1"]
+        mock_collect.return_value = [("ns/p", {"ai": {"model": "gpt-4"}})]
+        mock_priorities.return_value = {"ns/p": 50}
+        mock_load.return_value = (fake_config, [])
+
+        mock_result = MagicMock()
+        mock_result.is_compliant = True
+        mock_compliance.return_value = mock_result
+
+        result = rebuild_effective_config(db, space_id="space-1", project_path="/proj")
+
+        assert result.config is fake_config
+        mock_active.assert_not_called()
+        mock_active_space.assert_called_once_with(db, "space-1", project_path="/proj")
+
+    @patch("anteroom.services.compliance.validate_compliance")
+    @patch("anteroom.config.load_config")
+    @patch("anteroom.services.pack_attachments.get_active_pack_ids_for_space")
+    @patch("anteroom.services.pack_attachments.get_active_pack_ids")
+    def test_no_space_id_uses_project_path_query(
+        self,
+        mock_active: MagicMock,
+        mock_active_space: MagicMock,
+        mock_load: MagicMock,
+        mock_compliance: MagicMock,
+    ) -> None:
+        """When space_id is None, get_active_pack_ids is used (not the space variant)."""
+        db = MagicMock()
+        mock_active.return_value = []
+        mock_load.return_value = (_FakeConfig(), [])
+
+        mock_result = MagicMock()
+        mock_result.is_compliant = True
+        mock_compliance.return_value = mock_result
+
+        rebuild_effective_config(db, project_path="/proj")
+
+        mock_active.assert_called_once_with(db, project_path="/proj")
+        mock_active_space.assert_not_called()
+
+    @patch("anteroom.services.compliance.validate_compliance")
+    @patch("anteroom.config.load_config")
     @patch("anteroom.services.pack_attachments.get_active_pack_ids")
     def test_compliance_failure_raises_value_error(
         self,
