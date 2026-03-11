@@ -197,7 +197,22 @@ async def refresh_sources(request: Request) -> list[dict[str, Any]]:
     worker = PackRefreshWorker(db=db, data_dir=data_dir, sources=sources)
     results = worker.refresh_all()
     if any(r.changed for r in results):
-        _reload_registries(request, db)
+        if _rebuild_config(request, db):
+            _reload_registries_only(request, db)
+        else:
+            # Quarantine: detach changed packs so DB and live config stay consistent
+            from ..services.pack_attachments import detach_pack as _q_detach
+
+            quarantined = 0
+            for r in results:
+                for pid in r.changed_pack_ids:
+                    try:
+                        _q_detach(db, pid)
+                        quarantined += 1
+                    except Exception:
+                        pass
+            if quarantined:
+                logger.warning("Quarantined %d pack(s) after refresh rebuild failure", quarantined)
     return [
         {
             "url": r.url,

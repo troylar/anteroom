@@ -56,9 +56,10 @@ class TestInstallFromSource:
         source_dir.mkdir()
         _create_pack_in_dir(source_dir)
 
-        installed, updated = install_from_source(db, source_dir)
-        assert installed == 1
-        assert updated == 0
+        result = install_from_source(db, source_dir)
+        assert result.installed == 1
+        assert result.updated == 0
+        assert len(result.changed_pack_ids) == 1
 
     def test_update_existing_pack(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
         source_dir = tmp_path / "source"
@@ -74,9 +75,10 @@ class TestInstallFromSource:
         with open(manifest_path, "w", encoding="utf-8") as f:
             yaml.dump(data, f)
         # Second run should update due to version change
-        installed, updated = install_from_source(db, source_dir)
-        assert installed == 0
-        assert updated == 1
+        result = install_from_source(db, source_dir)
+        assert result.installed == 0
+        assert result.updated == 1
+        assert len(result.changed_pack_ids) == 1
 
     def test_multiple_packs(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
         source_dir = tmp_path / "source"
@@ -84,9 +86,10 @@ class TestInstallFromSource:
         _create_pack_in_dir(source_dir, name="pack-a", namespace="ns")
         _create_pack_in_dir(source_dir, name="pack-b", namespace="ns")
 
-        installed, updated = install_from_source(db, source_dir)
-        assert installed == 2
-        assert updated == 0
+        result = install_from_source(db, source_dir)
+        assert result.installed == 2
+        assert result.updated == 0
+        assert len(result.changed_pack_ids) == 2
 
     def test_invalid_manifest_skipped(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
         source_dir = tmp_path / "source"
@@ -95,17 +98,19 @@ class TestInstallFromSource:
         bad_pack.mkdir()
         (bad_pack / "pack.yaml").write_text("not_valid: true\n", encoding="utf-8")
 
-        installed, updated = install_from_source(db, source_dir)
-        assert installed == 0
-        assert updated == 0
+        result = install_from_source(db, source_dir)
+        assert result.installed == 0
+        assert result.updated == 0
+        assert result.changed_pack_ids == []
 
     def test_empty_source_dir(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
         source_dir = tmp_path / "source"
         source_dir.mkdir()
 
-        installed, updated = install_from_source(db, source_dir)
-        assert installed == 0
-        assert updated == 0
+        result = install_from_source(db, source_dir)
+        assert result.installed == 0
+        assert result.updated == 0
+        assert result.changed_pack_ids == []
 
 
 class TestSourceRefreshResult:

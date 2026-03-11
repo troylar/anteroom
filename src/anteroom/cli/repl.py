@@ -4009,6 +4009,7 @@ async def _run_repl(
                         data_dir = config.app.data_dir
                         total_installed = 0
                         total_updated = 0
+                        changed_pack_ids: list[str] = []
                         for psc in sources_cfg:
                             url = getattr(psc, "url", None) or "?"
                             branch = getattr(psc, "branch", "main") or "main"
@@ -4020,19 +4021,35 @@ async def _run_repl(
                             if src_result.path:
                                 from ..services.pack_refresh import install_from_source
 
-                                i, u = install_from_source(db, src_result.path)
-                                total_installed += i
-                                total_updated += u
+                                ifs_result = install_from_source(db, src_result.path)
+                                total_installed += ifs_result.installed
+                                total_updated += ifs_result.updated
+                                changed_pack_ids.extend(ifs_result.changed_pack_ids)
                         renderer.console.print(
                             f"[green]Done:[/green] {total_installed} installed, {total_updated} updated\n"
                         )
                         if total_installed > 0 or total_updated > 0:
-                            _rebuild_pack_config()
-                            if artifact_registry is not None:
-                                artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
-                                if skill_registry is not None:
-                                    skill_registry.load_from_artifacts(artifact_registry)
-                                _refresh_artifact_prompt()
+                            if _rebuild_pack_config():
+                                if artifact_registry is not None:
+                                    artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
+                                    if skill_registry is not None:
+                                        skill_registry.load_from_artifacts(artifact_registry)
+                                    _refresh_artifact_prompt()
+                            else:
+                                # Quarantine: detach changed packs so DB and
+                                # live config stay consistent
+                                from ..services.pack_attachments import detach_pack as _q_detach
+
+                                for pid in changed_pack_ids:
+                                    try:
+                                        _q_detach(db, pid)
+                                    except Exception:
+                                        pass
+                                if changed_pack_ids:
+                                    renderer.console.print(
+                                        f"[yellow]Quarantined {len(changed_pack_ids)} pack(s) "
+                                        "— detached until config issue is resolved.[/yellow]"
+                                    )
 
                     elif sub == "add-source":
                         url = parts[2].strip() if len(parts) >= 3 else ""

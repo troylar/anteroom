@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..db import ThreadSafeConnection
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import PackSourceConfig
@@ -40,6 +40,7 @@ class SourceRefreshResult:
     packs_installed: int = 0
     error: str = ""
     changed: bool = False
+    changed_pack_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -111,14 +112,15 @@ class PackRefreshWorker:
         if not cache_path.is_dir():
             return SourceRefreshResult(url=source.url, success=False, error="cache directory missing after ensure")
 
-        installed, updated = install_from_source(self._db, cache_path)
+        src_result = install_from_source(self._db, cache_path)
 
         return SourceRefreshResult(
             url=source.url,
             success=True,
-            packs_installed=installed,
-            packs_updated=updated,
-            changed=result.changed or installed > 0 or updated > 0,
+            packs_installed=src_result.installed,
+            packs_updated=src_result.updated,
+            changed=result.changed or src_result.installed > 0 or src_result.updated > 0,
+            changed_pack_ids=src_result.changed_pack_ids,
         )
 
     def refresh_all(self) -> list[SourceRefreshResult]:
@@ -194,17 +196,25 @@ class PackRefreshWorker:
             self._task.cancel()
 
 
-def install_from_source(db: ThreadSafeConnection, source_dir: Path) -> tuple[int, int]:
+@dataclass
+class InstallFromSourceResult:
+    """Result of scanning a source directory for pack manifests."""
+
+    installed: int = 0
+    updated: int = 0
+    changed_pack_ids: list[str] = field(default_factory=list)
+
+
+def install_from_source(db: ThreadSafeConnection, source_dir: Path) -> InstallFromSourceResult:
     """Scan a source directory for pack manifests and install/update.
 
     Walks *source_dir* looking for ``pack.yaml`` files.  For each manifest
     found, installs the pack if not present, or updates it if already
     installed and the content has changed.
 
-    Returns ``(installed_count, updated_count)``.
+    Returns an :class:`InstallFromSourceResult` with counts and changed pack IDs.
     """
-    installed = 0
-    updated = 0
+    result = InstallFromSourceResult()
 
     manifest_paths = list(source_dir.rglob("pack.yaml"))
     for manifest_path in manifest_paths:
@@ -231,17 +241,19 @@ def install_from_source(db: ThreadSafeConnection, source_dir: Path) -> tuple[int
                 )
                 continue
             try:
-                packs.update_pack(db, manifest, pack_dir)
-                updated += 1
+                pack_result = packs.update_pack(db, manifest, pack_dir)
+                result.updated += 1
+                result.changed_pack_ids.append(pack_result["id"])
                 logger.info("Updated pack %s/%s from source", manifest.namespace, manifest.name)
             except ValueError as e:
                 logger.warning("Failed to update pack %s/%s: %s", manifest.namespace, manifest.name, e)
         else:
             try:
-                packs.install_pack(db, manifest, pack_dir)
-                installed += 1
+                pack_result = packs.install_pack(db, manifest, pack_dir)
+                result.installed += 1
+                result.changed_pack_ids.append(pack_result["id"])
                 logger.info("Installed pack %s/%s from source", manifest.namespace, manifest.name)
             except ValueError as e:
                 logger.warning("Failed to install pack %s/%s: %s", manifest.namespace, manifest.name, e)
 
-    return installed, updated
+    return result
