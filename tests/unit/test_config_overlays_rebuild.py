@@ -320,12 +320,9 @@ class TestWebRebuildConfig:
         assert request.app.state.config is old_config
         mock_refresh.assert_not_called()
 
-
     @patch("anteroom.routers.packs._refresh_derived_state")
     @patch("anteroom.services.config_overlays.rebuild_effective_config")
-    def test_derived_state_failure_rolls_back_config(
-        self, mock_rebuild: MagicMock, mock_refresh: MagicMock
-    ) -> None:
+    def test_derived_state_failure_rolls_back_config(self, mock_rebuild: MagicMock, mock_refresh: MagicMock) -> None:
         """If _refresh_derived_state raises, config and enforced_fields are rolled back."""
         from anteroom.routers.packs import _rebuild_config
 
@@ -335,9 +332,7 @@ class TestWebRebuildConfig:
         request.app.state.config = old_config
         request.app.state.enforced_fields = old_enforced
         new_config = _FakeConfig(model="new")
-        mock_rebuild.return_value = ConfigRebuildResult(
-            config=new_config, enforced_fields=["new.field"], warnings=[]
-        )
+        mock_rebuild.return_value = ConfigRebuildResult(config=new_config, enforced_fields=["new.field"], warnings=[])
         mock_refresh.side_effect = RuntimeError("DlpScanner init failed")
 
         success, compliance_failure = _rebuild_config(request, MagicMock())
