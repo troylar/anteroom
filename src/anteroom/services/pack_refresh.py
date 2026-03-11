@@ -159,7 +159,9 @@ class PackRefreshWorker:
                 logger.error("Pack source refresh error for %s: %s", state.config.url, e)
                 results.append(SourceRefreshResult(url=state.config.url, success=False, error=str(e)))
 
-        if self._on_packs_changed and any(r.packs_installed > 0 or r.packs_attached > 0 for r in results):
+        if self._on_packs_changed and any(
+            r.packs_installed > 0 or r.packs_updated > 0 or r.packs_attached > 0 for r in results
+        ):
             if self._event_loop:
                 self._event_loop.call_soon_threadsafe(self._on_packs_changed)
             else:

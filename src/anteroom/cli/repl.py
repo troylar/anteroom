@@ -3957,7 +3957,7 @@ async def _run_repl(
                         if total_attached:
                             parts_msg += f", {total_attached} attached"
                         renderer.console.print(f"[green]Done:[/green] {parts_msg}\n")
-                        if total_installed > 0 or total_attached > 0:
+                        if total_installed > 0 or total_updated > 0 or total_attached > 0:
                             if artifact_registry is not None:
                                 artifact_registry.load_from_db(db, space_id=space["id"] if space else None)
                                 if skill_registry is not None:

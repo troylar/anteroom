@@ -428,6 +428,50 @@ class TestPackRefreshWorkerCallback:
         cb.assert_called_once()
 
     @pytest.mark.asyncio()
+    async def test_callback_fires_on_packs_updated(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """Callback fires when existing packs are updated (version bump)."""
+        cb = MagicMock()
+        sources = [PackSourceConfig(url="https://a.com/repo.git", refresh_interval=5)]
+        worker = PackRefreshWorker(db=db, data_dir=tmp_path, sources=sources, on_packs_changed=cb)
+
+        cache_path = tmp_path / "cache" / "sources" / "abc123"
+        cache_path.mkdir(parents=True)
+        _create_pack_in_dir(cache_path)
+
+        with (
+            patch(
+                f"{_MODULE}.ensure_source",
+                return_value=PackSourceResult(success=True, path=cache_path, changed=True),
+            ),
+            patch(f"{_MODULE}.resolve_cache_path", return_value=cache_path),
+        ):
+            # First run installs
+            await worker.run_once()
+
+        cb.reset_mock()
+
+        # Bump version to trigger update
+        manifest_path = cache_path / "test-ns" / "test-pack" / "pack.yaml"
+        data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        data["version"] = "2.0.0"
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            yaml.dump(data, f)
+
+        # Reset last_refreshed so the source is due again
+        worker._sources[0].last_refreshed = 0.0
+
+        with (
+            patch(
+                f"{_MODULE}.ensure_source",
+                return_value=PackSourceResult(success=True, path=cache_path, changed=True),
+            ),
+            patch(f"{_MODULE}.resolve_cache_path", return_value=cache_path),
+        ):
+            await worker.run_once()
+
+        cb.assert_called_once()
+
+    @pytest.mark.asyncio()
     async def test_no_callback_when_unchanged(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
         """Callback does NOT fire when nothing changed."""
         cb = MagicMock()

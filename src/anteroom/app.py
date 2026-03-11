@@ -278,6 +278,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 enforcer.load_rules(registry.list_all(artifact_type=ArtifactType.RULE))
                 app.state.rule_enforcer = enforcer
 
+                tool_reg = getattr(app.state, "tool_registry", None)
+                if tool_reg is not None:
+                    tool_reg.set_rule_enforcer(enforcer)
+
                 skill_reg = getattr(app.state, "skill_registry", None)
                 if skill_reg is not None:
                     skill_reg.load_from_artifacts(registry)
