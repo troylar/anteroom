@@ -1386,6 +1386,43 @@ async def test_textual_backend_submit_turn_cancelled_skips_title_and_assistant_p
 
 
 @pytest.mark.asyncio
+async def test_textual_backend_load_history_restores_working_dir_and_active_space(tmp_path) -> None:
+    from anteroom.services.space_storage import create_space, update_conversation_space
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    db = init_db(tmp_path / "textual_load_history.db")
+    conv = storage.create_conversation(db, title="Saved", working_dir=str(project_dir))
+    storage.create_message(db, conv["id"], "user", "hello")
+    storage.create_message(db, conv["id"], "assistant", "world")
+    space = create_space(db, "Research", instructions="Follow the research workflow.")
+    update_conversation_space(db, conv["id"], space["id"])
+
+    tool_registry = SimpleNamespace(_working_dir=None)
+    backend = AgentLoopTextualBackend(
+        config=_backend_config(tmp_path),
+        db=db,
+        ai_service=SimpleNamespace(config=SimpleNamespace(model="gpt-5.2", narration_cadence="compact")),
+        tool_executor=None,
+        tools_openai=[],
+        extra_system_prompt="base prompt",
+        working_dir=str(tmp_path),
+        tool_registry=tool_registry,
+        resume_conversation_id=conv["id"],
+    )
+
+    history = await backend.load_history()
+
+    assert history == [("user", "hello"), ("assistant", "world")]
+    assert backend.working_dir == str(project_dir.resolve())
+    assert tool_registry._working_dir == str(project_dir.resolve())
+    assert backend._conversation is not None and backend._conversation["id"] == conv["id"]
+    assert backend._active_space is not None and backend._active_space["id"] == space["id"]
+    assert 'space="Research"' in backend.extra_system_prompt
+    assert "Follow the research workflow." in backend.extra_system_prompt
+
+
+@pytest.mark.asyncio
 async def test_textual_backend_renders_last_turn_tool_detail(tmp_path) -> None:
     backend = AgentLoopTextualBackend(
         config=_backend_config(tmp_path),
