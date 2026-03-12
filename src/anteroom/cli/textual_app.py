@@ -823,6 +823,7 @@ class TextualChatApp(App[None]):
             self.ui_bridge["confirm"] = self._confirm_dialog
         self._heartbeat = self.set_interval(0.5, self._on_stream_heartbeat)
         history = await self.backend.load_history()
+        self._sync_session_snapshot()
         for role, content in history:
             if role not in ("user", "assistant"):
                 continue
@@ -1565,6 +1566,9 @@ class TextualChatApp(App[None]):
         return True
 
     def _sync_session_snapshot(self) -> None:
+        self.session.model = getattr(getattr(self.backend, "ai_service", None), "config", self.session).model
+        self.session.working_dir = getattr(self.backend, "working_dir", self.session.working_dir)
+        self.session.tool_count = len(getattr(self.backend, "tools_openai", []) or [])
         self.session.plan_mode = bool(getattr(self.backend, "plan_mode_active", lambda: False)())
         self.query_one(".session-banner", SessionBanner).update_snapshot(self.session)
 

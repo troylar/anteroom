@@ -1603,6 +1603,38 @@ async def test_textual_app_syncs_plan_mode_into_session(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_textual_app_mount_syncs_resumed_plan_mode_into_session(tmp_path) -> None:
+    db = init_db(tmp_path / "textual_plan_resume_app.db")
+    conv = storage.create_conversation(db, title="Planned", working_dir=str(tmp_path))
+    storage.create_message(db, conv["id"], "user", "Investigate first.")
+    plan_file = get_plan_file_path(tmp_path / "data", conv["id"])
+    plan_file.parent.mkdir(parents=True, exist_ok=True)
+    plan_file.write_text("- gather context\n- avoid edits until plan is clear\n")
+
+    backend = AgentLoopTextualBackend(
+        config=_backend_config(tmp_path),
+        db=db,
+        ai_service=SimpleNamespace(config=SimpleNamespace(model="gpt-5.2")),
+        tool_executor=None,
+        tools_openai=[
+            {"function": {"name": "read_file"}},
+            {"function": {"name": "edit_file"}},
+            {"function": {"name": "bash"}},
+        ],
+        extra_system_prompt="base prompt",
+        working_dir=str(tmp_path),
+        resume_conversation_id=conv["id"],
+    )
+    app = TextualChatApp(backend=backend, session=_session())
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.session.plan_mode is True
+        transcript = app.query_one("#transcript-pane", TranscriptPane)
+        assert "Investigate first." in transcript.text
+
+
+@pytest.mark.asyncio
 async def test_textual_backend_mcp_commands(tmp_path) -> None:
     backend = AgentLoopTextualBackend(
         config=_backend_config(tmp_path),
