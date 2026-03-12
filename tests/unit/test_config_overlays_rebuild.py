@@ -274,7 +274,7 @@ class TestWebRebuildConfig:
             config=new_config, enforced_fields=["safety.approval_mode"], warnings=[]
         )
 
-        success, compliance_failure = _rebuild_config(request, MagicMock())
+        success, compliance_failure, _reason = _rebuild_config(request, MagicMock())
 
         assert success is True
         assert compliance_failure is False
@@ -293,7 +293,7 @@ class TestWebRebuildConfig:
         request.app.state.config = old_config
         mock_rebuild.side_effect = ComplianceError("compliance failure")
 
-        success, compliance_failure = _rebuild_config(request, MagicMock())
+        success, compliance_failure, _reason = _rebuild_config(request, MagicMock())
 
         assert success is False
         assert compliance_failure is True
@@ -313,7 +313,7 @@ class TestWebRebuildConfig:
         request.app.state.config = old_config
         mock_rebuild.side_effect = RuntimeError("db error")
 
-        success, compliance_failure = _rebuild_config(request, MagicMock())
+        success, compliance_failure, _reason = _rebuild_config(request, MagicMock())
 
         assert success is False
         assert compliance_failure is False
@@ -335,7 +335,7 @@ class TestWebRebuildConfig:
         mock_rebuild.return_value = ConfigRebuildResult(config=new_config, enforced_fields=["new.field"], warnings=[])
         mock_refresh.side_effect = RuntimeError("DlpScanner init failed")
 
-        success, compliance_failure = _rebuild_config(request, MagicMock())
+        success, compliance_failure, _reason = _rebuild_config(request, MagicMock())
 
         assert success is False
         assert compliance_failure is False
