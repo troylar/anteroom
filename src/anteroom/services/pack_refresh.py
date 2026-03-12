@@ -20,7 +20,9 @@ from pathlib import Path
 
 from ..config import PackSourceConfig
 from . import packs
+from .artifacts import content_hash
 from .pack_sources import ensure_source, resolve_cache_path
+from .packs import _read_artifact_content, _resolve_artifact_file
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +232,65 @@ class InstallFromSourceResult:
     changed_pack_ids: list[str] = field(default_factory=list)
 
 
+def _has_content_changed(
+    db: ThreadSafeConnection,
+    pack_id: str,
+    manifest: packs.PackManifest,
+    pack_dir: Path,
+) -> bool:
+    """Check if on-disk artifact content differs from what is stored in the DB.
+
+    Uses the same normalization pipeline (``_read_artifact_content``) and hash
+    function (``content_hash``) that ``install_pack``/``update_pack`` use, so
+    the comparison is apples-to-apples.
+
+    Returns ``True`` when an update is needed — any hash mismatch, added
+    artifact, or removed artifact counts as a change.
+    """
+    # Fetch existing artifact hashes from DB
+    rows = db.execute(
+        """SELECT a.fqn, a.content_hash
+           FROM artifacts a
+           JOIN pack_artifacts pa ON a.id = pa.artifact_id
+           WHERE pa.pack_id = ?""",
+        (pack_id,),
+    ).fetchall()
+    db_hashes: dict[str, str] = {}
+    for row in rows:
+        if isinstance(row, (tuple, list)):
+            db_hashes[row[0]] = row[1]
+        else:
+            db_hashes[row["fqn"]] = row["content_hash"]
+
+    # Build on-disk hashes using the same normalization as install/update
+    disk_fqns: set[str] = set()
+    for art in manifest.artifacts:
+        fqn = packs.build_fqn(manifest.namespace, art.type, art.name)
+        disk_fqns.add(fqn)
+
+        art_path = _resolve_artifact_file(art, pack_dir)
+        if art_path is None:
+            # File missing on disk — treat as changed so update_pack handles it
+            return True
+
+        try:
+            file_content, _ = _read_artifact_content(art_path, artifact_type=art.type)
+        except Exception:
+            # Corrupt/unreadable file — treat as changed
+            return True
+
+        file_hash = content_hash(file_content)
+        db_hash = db_hashes.get(fqn)
+        if db_hash is None or db_hash != file_hash:
+            return True
+
+    # Check for artifacts in DB that are no longer in the manifest
+    if set(db_hashes.keys()) != disk_fqns:
+        return True
+
+    return False
+
+
 def install_from_source(
     db: ThreadSafeConnection,
     source_dir: Path,
@@ -276,13 +337,20 @@ def install_from_source(
         existing = packs.get_pack_by_source_path(db, str(pack_dir))
         if existing:
             if existing.get("version") == manifest.version:
-                logger.debug(
-                    "Pack %s/%s already at v%s, skipping",
+                if not _has_content_changed(db, existing["id"], manifest, pack_dir):
+                    logger.debug(
+                        "Pack %s/%s already at v%s with unchanged content, skipping",
+                        manifest.namespace,
+                        manifest.name,
+                        manifest.version,
+                    )
+                    continue
+                logger.info(
+                    "Pack %s/%s at v%s has content changes, updating",
                     manifest.namespace,
                     manifest.name,
                     manifest.version,
                 )
-                continue
             try:
                 pack_result = packs.update_pack(db, manifest, pack_dir)
                 result.updated += 1

@@ -271,6 +271,79 @@ class TestProjectScopedAfterRefresh:
         assert any(a.get("project_path") == "/my/project" for a in project_atts)
 
 
+class TestSameVersionContentChange:
+    """Lifecycle test: same-version content changes propagate through refresh."""
+
+    @pytest.mark.asyncio()
+    async def test_same_version_content_change_triggers_callback(
+        self, tmp_path: Path, db: ThreadSafeConnection
+    ) -> None:
+        """Worker callback fires when artifact content changes without a version bump."""
+        callback_count = 0
+
+        def on_changed() -> None:
+            nonlocal callback_count
+            callback_count += 1
+
+        sources = [PackSourceConfig(url="https://a.com/repo.git", refresh_interval=5, auto_attach=True)]
+        worker = PackRefreshWorker(db=db, data_dir=tmp_path, sources=sources, on_packs_changed=on_changed)
+
+        cache_path = tmp_path / "cache" / "sources" / "abc123"
+        cache_path.mkdir(parents=True)
+        _create_pack_with_config_overlay(cache_path)
+
+        with (
+            patch(
+                f"{_MODULE}.ensure_source",
+                return_value=PackSourceResult(success=True, path=cache_path, changed=True),
+            ),
+            patch(f"{_MODULE}.resolve_cache_path", return_value=cache_path),
+        ):
+            # First run: install
+            results = await worker.run_once()
+            assert results[0].packs_installed == 1
+            assert callback_count == 1
+
+        # Change skill content without bumping version
+        skill_file = cache_path / "test-ns" / "test-pack" / "skills" / "greet.yaml"
+        skill_file.write_text("content: Updated greeting!\nmetadata:\n  tier: read\n", encoding="utf-8")
+
+        # Reset last_refreshed so the source is due again
+        worker._sources[0].last_refreshed = 0.0
+
+        with (
+            patch(
+                f"{_MODULE}.ensure_source",
+                return_value=PackSourceResult(success=True, path=cache_path, changed=True),
+            ),
+            patch(f"{_MODULE}.resolve_cache_path", return_value=cache_path),
+        ):
+            # Second run: should detect content change and update
+            results2 = await worker.run_once()
+
+        assert results2[0].packs_updated == 1
+        assert results2[0].packs_installed == 0
+        assert len(results2[0].changed_pack_ids) == 1
+        assert callback_count == 2  # Callback fired again
+
+    def test_same_version_unchanged_content_does_not_update(
+        self, tmp_path: Path, db: ThreadSafeConnection
+    ) -> None:
+        """Re-running install_from_source with identical content does not trigger an update."""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        _create_pack_with_config_overlay(source_dir)
+
+        r1 = install_from_source(db, source_dir, auto_attach=True)
+        assert r1.installed == 1
+
+        # Run again — same version, same content
+        r2 = install_from_source(db, source_dir, auto_attach=True)
+        assert r2.installed == 0
+        assert r2.updated == 0
+        assert r2.changed_pack_ids == []
+
+
 class TestCallbackWithConfigRebuild:
     """Test that the callback mechanism works with config rebuild context."""
 
