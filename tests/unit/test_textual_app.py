@@ -1665,6 +1665,27 @@ async def test_textual_app_mount_syncs_resumed_session_model_working_dir_and_too
 
 
 @pytest.mark.asyncio
+async def test_textual_app_model_command_updates_session_snapshot(tmp_path) -> None:
+    backend = AgentLoopTextualBackend(
+        config=_backend_config(tmp_path),
+        db=init_db(tmp_path / "textual_model_app.db"),
+        ai_service=SimpleNamespace(config=SimpleNamespace(model="gpt-5.2")),
+        tool_executor=None,
+        tools_openai=[{"function": {"name": "read_file"}}],
+        extra_system_prompt="base prompt",
+        working_dir=str(tmp_path),
+    )
+    app = TextualChatApp(backend=backend, session=_session())
+
+    async with app.run_test() as pilot:
+        await _submit(pilot, app, "/model gpt-5.4-mini")
+        assert app.session.model == "gpt-5.4-mini"
+        assert backend.ai_service.config.model == "gpt-5.4-mini"
+        transcript = app.query_one("#transcript-pane", TranscriptPane)
+        assert "Active model changed to `gpt-5.4-mini`." in transcript.text
+
+
+@pytest.mark.asyncio
 async def test_textual_backend_mcp_commands(tmp_path) -> None:
     backend = AgentLoopTextualBackend(
         config=_backend_config(tmp_path),
