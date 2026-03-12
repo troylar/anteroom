@@ -11,7 +11,7 @@ Twelve skills ship by default:
 | `/commit` | Runs `git diff`, stages relevant files, creates a conventional commit |
 | `/review` | Reviews `git diff` for bugs, security issues, performance, error handling, missing tests |
 | `/explain` | Reads referenced code and explains architecture, data flow, components, design patterns |
-| `/a-help` | Look up Anteroom documentation — config layers, CLI, tools, skills, architecture |
+| `/a-help` | Answer questions about Anteroom — config, CLI, tools, skills, architecture. Can inspect installed source code for implementation questions |
 | `/create-eval` | Create a promptfoo eval, shell test script, or VHS demo recording |
 | `/new-skill` | Interactive guide to create a new custom skill with best practices |
 | `/new-pack` | Scaffold a new pack with manifest and artifact files |

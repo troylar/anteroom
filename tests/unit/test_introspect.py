@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -104,7 +105,7 @@ class TestIntrospectDefinition:
 
     def test_valid_sections(self) -> None:
         sections = DEFINITION["parameters"]["properties"]["section"]["enum"]
-        assert set(sections) == {"config", "instructions", "tools", "safety", "skills", "budget", "spaces"}
+        assert set(sections) == {"config", "instructions", "tools", "safety", "skills", "budget", "spaces", "package"}
 
 
 # --- Registration tests ---
@@ -685,3 +686,33 @@ class TestGatherSpaces:
         assert result["data"]["available"] is True
         assert result["data"]["active"]["name"] == "test-space"
         assert result["data"]["total"] == 1
+
+
+class TestGatherPackage:
+    """Tests for _gather_package returning installed Anteroom source root and version."""
+
+    def test_returns_source_root_and_version(self) -> None:
+        from anteroom.tools.introspect import _gather_package
+
+        result = _gather_package()
+        assert "source_root" in result
+        assert "version" in result
+        assert Path(result["source_root"]).is_dir()
+        assert isinstance(result["version"], str)
+        assert result["version"] != "unknown"
+
+    @pytest.mark.asyncio
+    async def test_handle_package_section(self) -> None:
+        result = await handle(section="package")
+        assert result["section"] == "package"
+        data = result["data"]
+        assert "source_root" in data
+        assert "version" in data
+        assert Path(data["source_root"]).is_dir()
+
+    @pytest.mark.asyncio
+    async def test_package_in_summary(self) -> None:
+        result = await handle()
+        assert "package" in result
+        assert "source_root" in result["package"]
+        assert "version" in result["package"]

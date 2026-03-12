@@ -372,6 +372,49 @@ class TestExecuteWebToolInvokeSkill:
         finally:
             _message_queues.pop(conv_id, None)
 
+    @pytest.mark.asyncio
+    async def test_invoke_skill_resolves_a_help_with_real_registry(self) -> None:
+        """Web path: _execute_web_tool resolves a-help via skill_registry.get() and queues expanded prompt."""
+        from anteroom.cli.skills import SkillRegistry
+        from anteroom.routers.chat import ToolExecutorContext, WebConfirmContext, _execute_web_tool, _message_queues
+
+        reg = SkillRegistry()
+        reg.load()
+
+        queue: asyncio.Queue = asyncio.Queue()
+        conv_id = "a-help-web-test"
+
+        ctx = ToolExecutorContext(
+            tool_registry=MagicMock(),
+            mcp_manager=None,
+            confirm_ctx=MagicMock(spec=WebConfirmContext),
+            ai_service=MagicMock(),
+            cancel_event=asyncio.Event(),
+            db=MagicMock(),
+            uid=None,
+            uname=None,
+            conversation_id=conv_id,
+            tools_openai=[],
+            subagent_events={},
+            subagent_limiter=MagicMock(),
+            sa_config=MagicMock(),
+            request_config=MagicMock(),
+            skill_registry=reg,
+        )
+
+        _message_queues[conv_id] = queue
+        try:
+            result = await _execute_web_tool(
+                ctx, "invoke_skill", {"skill_name": "a-help", "args": "how does the agent loop work?"}
+            )
+            assert result == {"status": "skill_invoked", "skill": "a-help"}
+            assert not queue.empty()
+            msg = await queue.get()
+            assert "how does the agent loop work?" in msg["content"]
+            assert "Source Code Index" in msg["content"]
+        finally:
+            _message_queues.pop(conv_id, None)
+
 
 class TestGetRequestRegistries:
     """Verify per-request registries with space scoping."""
