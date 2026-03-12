@@ -1730,6 +1730,41 @@ async def test_textual_app_resume_command_updates_session_snapshot_from_backend_
 
 
 @pytest.mark.asyncio
+async def test_textual_app_new_command_clears_resumed_transcript_and_backend_state(tmp_path) -> None:
+    db = init_db(tmp_path / "textual_new_command_app.db")
+    conv = storage.create_conversation(db, title="Old Thread", working_dir=str(tmp_path))
+    storage.create_message(db, conv["id"], "user", "Old prompt.")
+    storage.create_message(db, conv["id"], "assistant", "Old answer.")
+
+    backend = AgentLoopTextualBackend(
+        config=_backend_config(tmp_path),
+        db=db,
+        ai_service=SimpleNamespace(config=SimpleNamespace(model="gpt-5.2")),
+        tool_executor=None,
+        tools_openai=[{"function": {"name": "read_file"}}],
+        extra_system_prompt="base prompt",
+        working_dir=str(tmp_path),
+        resume_conversation_id=conv["id"],
+    )
+    app = TextualChatApp(backend=backend, session=_session())
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        transcript = app.query_one("#transcript-pane", TranscriptPane)
+        assert "Old prompt." in transcript.text
+        assert "Old answer." in transcript.text
+
+        await _submit(pilot, app, "/new")
+
+        assert "Old prompt." not in transcript.text
+        assert "Old answer." not in transcript.text
+        assert "Started a new conversation." in transcript.text
+        assert backend._conversation is None
+        assert backend.resume_conversation_id is None
+        assert backend._messages == []
+
+
+@pytest.mark.asyncio
 async def test_textual_backend_mcp_commands(tmp_path) -> None:
     backend = AgentLoopTextualBackend(
         config=_backend_config(tmp_path),
