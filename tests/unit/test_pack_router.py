@@ -559,6 +559,7 @@ class TestAttachRebuildFailure:
             patch("anteroom.routers.packs.packs") as mock_packs,
             patch("anteroom.services.pack_attachments.attach_pack", return_value={"id": "att-1", "scope": "global"}),
             patch("anteroom.routers.packs._rebuild_config", return_value=(False, False, None)),
+            patch("anteroom.routers.packs._reload_registries_only") as mock_reload,
         ):
             mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
             client = TestClient(app)
@@ -566,6 +567,7 @@ class TestAttachRebuildFailure:
             assert resp.status_code == 200
             assert "warning" in resp.json()
             assert "next restart" in resp.json()["warning"]
+            mock_reload.assert_called_once()
 
     def test_attach_generic_rebuild_failure_does_not_rollback(self) -> None:
         app = _make_app()
@@ -586,6 +588,7 @@ class TestAttachRebuildFailure:
             patch("anteroom.routers.packs.packs") as mock_packs,
             patch("anteroom.services.pack_attachments.detach_pack", return_value=True),
             patch("anteroom.routers.packs._rebuild_config", return_value=(False, False, None)),
+            patch("anteroom.routers.packs._reload_registries_only") as mock_reload,
         ):
             mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
             client = TestClient(app)
@@ -593,6 +596,7 @@ class TestAttachRebuildFailure:
             assert resp.status_code == 200
             assert "warning" in resp.json()
             assert "next restart" in resp.json()["warning"]
+            mock_reload.assert_called_once()
 
     def test_detach_generic_rebuild_failure_does_not_rollback(self) -> None:
         app = _make_app()

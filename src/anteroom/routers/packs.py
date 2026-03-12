@@ -320,9 +320,8 @@ async def attach_pack(request: Request, namespace: str, name: str, body: AttachR
             status_code=409,
             detail="Pack attached but config rebuild failed (compliance violation). Attachment rolled back.",
         )
-    if success:
-        _reload_registries_only(request, db)
-    else:
+    _reload_registries_only(request, db)
+    if not success:
         logger.warning("Config rebuild failed after attach; will take effect on next restart")
         result["warning"] = "Config rebuild failed. The attachment will take effect on next restart."
     return result
@@ -353,9 +352,8 @@ async def detach_pack(
             detail="Pack detached but config rebuild failed (compliance violation). Detachment rolled back.",
         )
     result: dict[str, Any] = {"status": "detached"}
-    if success:
-        _reload_registries_only(request, db)
-    else:
+    _reload_registries_only(request, db)
+    if not success:
         logger.warning("Config rebuild failed after detach; will take effect on next restart")
         result["warning"] = "Config rebuild failed. The detachment will take effect on next restart."
     return result
