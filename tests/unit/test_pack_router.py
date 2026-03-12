@@ -233,7 +233,53 @@ class TestAttachPackEndpoint:
             client = TestClient(app)
             resp = client.post("/api/packs/test-ns/test-pack/attach", json={"project_path": "/my/proj"})
             assert resp.status_code == 200
-            mock_attach.assert_called_once_with(app.state.db, "pack-1", project_path="/my/proj")
+            mock_attach.assert_called_once_with(app.state.db, "pack-1", project_path="/my/proj", priority=50)
+
+    def test_attach_with_priority(self) -> None:
+        app = _make_app()
+        with (
+            patch("anteroom.routers.packs.packs") as mock_packs,
+            patch(
+                "anteroom.services.pack_attachments.attach_pack",
+                return_value={"id": "att-1", "scope": "global"},
+            ) as mock_attach,
+        ):
+            mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
+            client = TestClient(app)
+            resp = client.post("/api/packs/test-ns/test-pack/attach", json={"priority": 10})
+            assert resp.status_code == 200
+            mock_attach.assert_called_once_with(app.state.db, "pack-1", project_path=None, priority=10)
+
+    def test_attach_default_priority_is_50(self) -> None:
+        app = _make_app()
+        with (
+            patch("anteroom.routers.packs.packs") as mock_packs,
+            patch(
+                "anteroom.services.pack_attachments.attach_pack",
+                return_value={"id": "att-1", "scope": "global"},
+            ) as mock_attach,
+        ):
+            mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
+            client = TestClient(app)
+            resp = client.post("/api/packs/test-ns/test-pack/attach", json={})
+            assert resp.status_code == 200
+            mock_attach.assert_called_once_with(app.state.db, "pack-1", project_path=None, priority=50)
+
+    def test_attach_priority_below_1_returns_422(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.packs.packs") as mock_packs:
+            mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
+            client = TestClient(app)
+            resp = client.post("/api/packs/test-ns/test-pack/attach", json={"priority": 0})
+            assert resp.status_code == 422
+
+    def test_attach_priority_above_100_returns_422(self) -> None:
+        app = _make_app()
+        with patch("anteroom.routers.packs.packs") as mock_packs:
+            mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
+            client = TestClient(app)
+            resp = client.post("/api/packs/test-ns/test-pack/attach", json={"priority": 101})
+            assert resp.status_code == 422
 
 
 class TestDetachPackEndpoint:
@@ -504,21 +550,104 @@ class TestRemovePackByIdEndpoint:
         )
 
 
+class TestAttachRebuildFailure:
+    """Tests for #898: attach/detach endpoints must fail on generic rebuild failure."""
+
+    def test_attach_generic_rebuild_failure_returns_200_with_warning(self) -> None:
+        app = _make_app()
+        with (
+            patch("anteroom.routers.packs.packs") as mock_packs,
+            patch("anteroom.services.pack_attachments.attach_pack", return_value={"id": "att-1", "scope": "global"}),
+            patch("anteroom.routers.packs._rebuild_config", return_value=(False, False, None)),
+            patch("anteroom.routers.packs._reload_registries_only") as mock_reload,
+        ):
+            mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
+            client = TestClient(app)
+            resp = client.post("/api/packs/test-ns/test-pack/attach", json={})
+            assert resp.status_code == 200
+            assert "warning" in resp.json()
+            assert "next restart" in resp.json()["warning"]
+            mock_reload.assert_called_once()
+
+    def test_attach_generic_rebuild_failure_does_not_rollback(self) -> None:
+        app = _make_app()
+        with (
+            patch("anteroom.routers.packs.packs") as mock_packs,
+            patch("anteroom.services.pack_attachments.attach_pack", return_value={"id": "att-1", "scope": "global"}),
+            patch("anteroom.routers.packs._rebuild_config", return_value=(False, False, None)),
+            patch("anteroom.routers.packs._rollback_pack_mutation") as mock_rollback,
+        ):
+            mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
+            client = TestClient(app)
+            client.post("/api/packs/test-ns/test-pack/attach", json={})
+            mock_rollback.assert_not_called()
+
+    def test_detach_generic_rebuild_failure_returns_200_with_warning(self) -> None:
+        app = _make_app()
+        with (
+            patch("anteroom.routers.packs.packs") as mock_packs,
+            patch("anteroom.services.pack_attachments.detach_pack", return_value=True),
+            patch("anteroom.routers.packs._rebuild_config", return_value=(False, False, None)),
+            patch("anteroom.routers.packs._reload_registries_only") as mock_reload,
+        ):
+            mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
+            client = TestClient(app)
+            resp = client.delete("/api/packs/test-ns/test-pack/attach")
+            assert resp.status_code == 200
+            assert "warning" in resp.json()
+            assert "next restart" in resp.json()["warning"]
+            mock_reload.assert_called_once()
+
+    def test_detach_generic_rebuild_failure_does_not_rollback(self) -> None:
+        app = _make_app()
+        with (
+            patch("anteroom.routers.packs.packs") as mock_packs,
+            patch("anteroom.services.pack_attachments.detach_pack", return_value=True),
+            patch("anteroom.routers.packs._rebuild_config", return_value=(False, False, None)),
+            patch("anteroom.routers.packs._rollback_pack_mutation") as mock_rollback,
+        ):
+            mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
+            client = TestClient(app)
+            client.delete("/api/packs/test-ns/test-pack/attach")
+            mock_rollback.assert_not_called()
+
+    def test_attach_compliance_failure_still_rolls_back(self) -> None:
+        """Regression: compliance failure path is unchanged — rollback still occurs."""
+        app = _make_app()
+        with (
+            patch("anteroom.routers.packs.packs") as mock_packs,
+            patch("anteroom.services.pack_attachments.attach_pack", return_value={"id": "att-1", "scope": "global"}),
+            patch("anteroom.routers.packs._rebuild_config", return_value=(False, True, "compliance error")),
+            patch("anteroom.routers.packs._rollback_pack_mutation") as mock_rollback,
+        ):
+            mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
+            client = TestClient(app)
+            resp = client.post("/api/packs/test-ns/test-pack/attach", json={})
+            assert resp.status_code == 409
+            mock_rollback.assert_called_once_with(app.state.db, "pack-1", None, "detach")
+
+
 class TestRefreshSourcesEndpoint:
-    def test_refresh_no_sources(self) -> None:
+    def test_refresh_no_sources_returns_empty_envelope(self) -> None:
         app = _make_app()
         client = TestClient(app)
         resp = client.post("/api/packs/refresh")
         assert resp.status_code == 200
-        assert resp.json() == []
+        data = resp.json()
+        assert data == {"sources": [], "quarantined": [], "quarantine_reason": None}
 
-    def test_refresh_with_sources(self) -> None:
+    def test_refresh_response_is_object_envelope(self) -> None:
         sources = [PackSourceConfig(url="https://example.com/packs.git")]
         app = _make_app(pack_sources=sources)
 
         mock_worker = MagicMock()
         mock_worker.refresh_all.return_value = [
-            SourceRefreshResult(url="https://example.com/packs.git", success=True, packs_installed=2, changed=True),
+            SourceRefreshResult(
+                url="https://example.com/packs.git",
+                success=True,
+                packs_installed=2,
+                changed=True,
+            ),
         ]
 
         with patch("anteroom.services.pack_refresh.PackRefreshWorker", return_value=mock_worker):
@@ -527,7 +656,105 @@ class TestRefreshSourcesEndpoint:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data) == 1
-        assert data[0]["success"] is True
-        assert data[0]["packs_installed"] == 2
-        assert data[0]["changed"] is True
+        assert "sources" in data
+        assert "quarantined" in data
+        assert "quarantine_reason" in data
+        assert len(data["sources"]) == 1
+        assert data["sources"][0]["success"] is True
+        assert data["sources"][0]["packs_installed"] == 2
+        assert data["quarantined"] == []
+        assert data["quarantine_reason"] is None
+
+    def test_refresh_quarantine_reports_detached_packs(self) -> None:
+        sources = [PackSourceConfig(url="https://example.com/packs.git")]
+        app = _make_app(pack_sources=sources)
+
+        mock_worker = MagicMock()
+        mock_worker.refresh_all.return_value = [
+            SourceRefreshResult(
+                url="https://example.com/packs.git",
+                success=True,
+                packs_installed=1,
+                changed=True,
+                changed_pack_ids=["pack-bad-1"],
+            ),
+        ]
+
+        with (
+            patch("anteroom.services.pack_refresh.PackRefreshWorker", return_value=mock_worker),
+            patch(
+                "anteroom.routers.packs._rebuild_config",
+                side_effect=[
+                    (False, True, "field ai.temperature violates compliance"),
+                    (True, False, None),
+                ],
+            ),
+            patch("anteroom.services.pack_attachments.detach_pack", return_value=True),
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/packs/refresh")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["quarantined"] == ["pack-bad-1"]
+        assert data["quarantine_reason"] == "Compliance violation detected; see server logs for details"
+
+    def test_refresh_quarantine_detach_failure_logged(self) -> None:
+        sources = [PackSourceConfig(url="https://example.com/packs.git")]
+        app = _make_app(pack_sources=sources)
+
+        mock_worker = MagicMock()
+        mock_worker.refresh_all.return_value = [
+            SourceRefreshResult(
+                url="https://example.com/packs.git",
+                success=True,
+                packs_installed=1,
+                changed=True,
+                changed_pack_ids=["pack-bad-1"],
+            ),
+        ]
+
+        with (
+            patch("anteroom.services.pack_refresh.PackRefreshWorker", return_value=mock_worker),
+            patch(
+                "anteroom.routers.packs._rebuild_config",
+                side_effect=[
+                    (False, True, "compliance error"),
+                    (True, False, None),
+                ],
+            ),
+            patch(
+                "anteroom.services.pack_attachments.detach_pack",
+                side_effect=RuntimeError("DB locked"),
+            ),
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/packs/refresh")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["quarantined"] == []
+        assert data["quarantine_reason"] == "Compliance violation detected; see server logs for details"
+
+    def test_refresh_no_quarantine_on_success(self) -> None:
+        sources = [PackSourceConfig(url="https://example.com/packs.git")]
+        app = _make_app(pack_sources=sources)
+
+        mock_worker = MagicMock()
+        mock_worker.refresh_all.return_value = [
+            SourceRefreshResult(
+                url="https://example.com/packs.git",
+                success=True,
+                packs_installed=1,
+                changed=True,
+            ),
+        ]
+
+        with patch("anteroom.services.pack_refresh.PackRefreshWorker", return_value=mock_worker):
+            client = TestClient(app)
+            resp = client.post("/api/packs/refresh")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["quarantined"] == []
+        assert data["quarantine_reason"] is None

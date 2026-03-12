@@ -16,9 +16,11 @@ from anteroom.db import _SCHEMA, ThreadSafeConnection
 from anteroom.services.pack_refresh import (
     PackRefreshWorker,
     SourceRefreshResult,
+    _has_content_changed,
     install_from_source,
 )
 from anteroom.services.pack_sources import PackSourceResult
+from anteroom.services.packs import parse_manifest
 
 _MODULE = "anteroom.services.pack_refresh"
 
@@ -113,6 +115,161 @@ class TestInstallFromSource:
         assert result.installed == 0
         assert result.updated == 0
         assert result.changed_pack_ids == []
+
+    def test_update_pack_same_version_content_changed(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """Same version but changed artifact content triggers an update."""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        _create_pack_in_dir(source_dir)
+
+        # First install
+        r1 = install_from_source(db, source_dir)
+        assert r1.installed == 1
+
+        # Change artifact content without bumping version
+        skill_file = source_dir / "test-ns" / "test-pack" / "skills" / "greet.yaml"
+        skill_file.write_text("content: Goodbye!\nmetadata:\n  tier: read\n", encoding="utf-8")
+
+        # Second run should detect content change and update
+        r2 = install_from_source(db, source_dir)
+        assert r2.installed == 0
+        assert r2.updated == 1
+        assert len(r2.changed_pack_ids) == 1
+
+    def test_skip_pack_same_version_same_content(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """Same version and same content skips the pack."""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        _create_pack_in_dir(source_dir)
+
+        # First install
+        r1 = install_from_source(db, source_dir)
+        assert r1.installed == 1
+
+        # Second run — no changes at all
+        r2 = install_from_source(db, source_dir)
+        assert r2.installed == 0
+        assert r2.updated == 0
+        assert r2.changed_pack_ids == []
+
+
+class TestHasContentChanged:
+    """Tests for _has_content_changed() content-hash comparison."""
+
+    def test_unchanged_content_returns_false(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """Identical on-disk content returns False."""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        pack_dir = _create_pack_in_dir(source_dir)
+
+        r = install_from_source(db, source_dir)
+        pack_id = r.changed_pack_ids[0]
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+
+        assert not _has_content_changed(db, pack_id, manifest, pack_dir)
+
+    def test_changed_content_returns_true(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """Modified artifact content returns True."""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        pack_dir = _create_pack_in_dir(source_dir)
+
+        r = install_from_source(db, source_dir)
+        pack_id = r.changed_pack_ids[0]
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+
+        # Modify the skill content
+        (pack_dir / "skills" / "greet.yaml").write_text(
+            "content: Changed!\nmetadata:\n  tier: read\n", encoding="utf-8"
+        )
+        assert _has_content_changed(db, pack_id, manifest, pack_dir)
+
+    def test_metadata_only_change_returns_false(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """Changing only YAML metadata (not content) returns False.
+
+        _read_artifact_content extracts the 'content' field from YAML files,
+        so metadata-only changes should not trigger a content hash mismatch.
+        """
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        pack_dir = _create_pack_in_dir(source_dir)
+
+        r = install_from_source(db, source_dir)
+        pack_id = r.changed_pack_ids[0]
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+
+        # Change only metadata, keep content the same
+        (pack_dir / "skills" / "greet.yaml").write_text(
+            "content: Hello!\nmetadata:\n  tier: write\n  new_key: value\n", encoding="utf-8"
+        )
+        assert not _has_content_changed(db, pack_id, manifest, pack_dir)
+
+    def test_added_artifact_returns_true(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """Adding an artifact to the manifest returns True."""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        pack_dir = _create_pack_in_dir(source_dir)
+
+        r = install_from_source(db, source_dir)
+        pack_id = r.changed_pack_ids[0]
+
+        # Add a second artifact to the manifest
+        (pack_dir / "skills" / "farewell.yaml").write_text("content: Bye!\n", encoding="utf-8")
+        manifest_data = yaml.safe_load((pack_dir / "pack.yaml").read_text(encoding="utf-8"))
+        manifest_data["artifacts"].append({"type": "skill", "name": "farewell"})
+        with open(pack_dir / "pack.yaml", "w", encoding="utf-8") as f:
+            yaml.dump(manifest_data, f)
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+
+        assert _has_content_changed(db, pack_id, manifest, pack_dir)
+
+    def test_removed_artifact_returns_true(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """Removing an artifact from the manifest returns True."""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+
+        # Create pack with two artifacts
+        pack_dir = source_dir / "test-ns" / "test-pack"
+        pack_dir.mkdir(parents=True)
+        (pack_dir / "skills").mkdir()
+        (pack_dir / "skills" / "greet.yaml").write_text("content: Hello!\n", encoding="utf-8")
+        (pack_dir / "skills" / "farewell.yaml").write_text("content: Bye!\n", encoding="utf-8")
+        manifest_data = {
+            "name": "test-pack",
+            "namespace": "test-ns",
+            "version": "1.0.0",
+            "artifacts": [
+                {"type": "skill", "name": "greet"},
+                {"type": "skill", "name": "farewell"},
+            ],
+        }
+        with open(pack_dir / "pack.yaml", "w", encoding="utf-8") as f:
+            yaml.dump(manifest_data, f)
+
+        r = install_from_source(db, source_dir)
+        pack_id = r.changed_pack_ids[0]
+
+        # Remove one artifact from manifest
+        manifest_data["artifacts"] = [{"type": "skill", "name": "greet"}]
+        with open(pack_dir / "pack.yaml", "w", encoding="utf-8") as f:
+            yaml.dump(manifest_data, f)
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+
+        assert _has_content_changed(db, pack_id, manifest, pack_dir)
+
+    def test_missing_file_returns_true(self, tmp_path: Path, db: ThreadSafeConnection) -> None:
+        """Missing artifact file on disk returns True."""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        pack_dir = _create_pack_in_dir(source_dir)
+
+        r = install_from_source(db, source_dir)
+        pack_id = r.changed_pack_ids[0]
+        manifest = parse_manifest(pack_dir / "pack.yaml")
+
+        # Delete the artifact file
+        (pack_dir / "skills" / "greet.yaml").unlink()
+        assert _has_content_changed(db, pack_id, manifest, pack_dir)
 
 
 class TestInstallFromSourceAutoAttach:
