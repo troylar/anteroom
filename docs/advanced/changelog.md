@@ -5,6 +5,32 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## March 12, 2026
+
+### v1.112.0 — Ask the Source
+
+The `/a-help` skill gains source-code awareness — advanced developers can now ask implementation questions, trace call chains, and verify documentation accuracy against the actual running code.
+
+#### Source-Aware `/a-help`
+
+The built-in `/a-help` skill now falls back to inspecting Anteroom's installed source code when documentation doesn't fully answer a question. It uses the new `introspect section=package` capability to locate the source root, then searches and reads relevant code with file and line citations. When docs and source disagree, `/a-help` flags the discrepancy. (#902)
+
+```
+/a-help how does the agent loop handle tool call parallelism?
+```
+
+See [Skills](../cli/skills.md) for the full skill system documentation.
+
+#### `introspect section=package`
+
+The `introspect` tool gains a new `package` section returning the installed Anteroom source root path and version — a READ-tier building block for AI self-inspection. (#902)
+
+See [Tools](../cli/tools.md) for the introspect tool reference.
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.112.0)
+
+---
+
 ## March 11, 2026
 
 ### v1.111.0 — Packs That Actually Work
