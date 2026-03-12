@@ -1330,6 +1330,62 @@ async def test_textual_backend_submit_turn_non_retryable_error_persists_no_assis
 
 
 @pytest.mark.asyncio
+async def test_textual_backend_submit_turn_cancelled_skips_title_and_assistant_persistence(tmp_path) -> None:
+    db = init_db(tmp_path / "textual_submit_turn_cancel.db")
+    title_called = False
+
+    async def _fake_generate_title(_prompt: str) -> str:
+        nonlocal title_called
+        title_called = True
+        return "Should not happen"
+
+    ai_service = SimpleNamespace(
+        config=SimpleNamespace(model="gpt-5.2", narration_cadence="compact"),
+        generate_title=_fake_generate_title,
+    )
+    backend = AgentLoopTextualBackend(
+        config=_backend_config(tmp_path),
+        db=db,
+        ai_service=ai_service,
+        tool_executor=None,
+        tools_openai=[],
+        extra_system_prompt="base prompt",
+        working_dir=str(tmp_path),
+    )
+
+    async def _fake_run_agent_loop(**kwargs: Any):
+        cancel_event = kwargs["cancel_event"]
+        yield AgentEvent(
+            kind="tool_call_start",
+            data={"tool_name": "grep", "arguments": {"path": "src/", "pattern": "FoldGroup"}},
+        )
+        backend.cancel_current_turn()
+        assert cancel_event.is_set()
+        yield AgentEvent(kind="done", data={})
+
+    with patch("anteroom.cli.textual_app.run_agent_loop", new=_fake_run_agent_loop):
+        events = [event async for event in backend.submit_turn("Find FoldGroup references")]
+
+    assert [event.kind for event in events] == [
+        "tool_call_start",
+        "done",
+    ]
+    assert title_called is False
+    assert len(backend._last_turn_tools) == 1
+    tool_entry = backend._last_turn_tools[0]
+    assert tool_entry["tool_name"] == "grep"
+    assert tool_entry["arguments"] == {"path": "src/", "pattern": "FoldGroup"}
+    assert tool_entry["status"] == "active"
+    assert tool_entry["output"] is None
+
+    conversations = storage.list_conversations(db, limit=5)
+    assert conversations
+    conv = conversations[0]
+    messages = storage.list_messages(db, conv["id"])
+    assert [msg["role"] for msg in messages if msg["role"] in {"user", "assistant"}] == ["user"]
+
+
+@pytest.mark.asyncio
 async def test_textual_backend_renders_last_turn_tool_detail(tmp_path) -> None:
     backend = AgentLoopTextualBackend(
         config=_backend_config(tmp_path),
