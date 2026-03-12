@@ -529,6 +529,11 @@ SCENARIOS: dict[str, TextualScenario] = {
         size=(160, 42),
         driver=drive_multiturn_review,
     ),
+    "multiturn_review_narrow": TextualScenario(
+        name="multiturn_review_narrow",
+        size=(118, 34),
+        driver=drive_multiturn_review,
+    ),
     "interrupted_retry": TextualScenario(
         name="interrupted_retry",
         size=(140, 32),

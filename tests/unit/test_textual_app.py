@@ -15,6 +15,7 @@ from anteroom.cli.commands import CommandResult, ParsedSlashCommand
 from anteroom.cli.textual_app import (
     AgentLoopTextualBackend,
     BoardWidget,
+    Composer,
     SessionSnapshot,
     TextualChatApp,
     TranscriptPane,
@@ -1662,6 +1663,41 @@ async def test_textual_app_keeps_transcript_scrolled_to_bottom() -> None:
 
 
 @pytest.mark.asyncio
+async def test_textual_app_preserves_manual_transcript_scroll_position() -> None:
+    backend = ScriptedBackend()
+    turn = backend.add_turn()
+    app = TextualChatApp(backend=backend, session=_session())
+
+    async with app.run_test() as pilot:
+        await _submit(pilot, app, "Stream a very long answer")
+
+        await turn.put(AgentEvent(kind="thinking", data={}))
+        long_lines = [f"Line {i}: detailed transcript content" for i in range(1, 80)]
+        for line in long_lines[:60]:
+            await turn.put(AgentEvent(kind="token", data={"content": line + "\n"}))
+        await pilot.pause(0.2)
+
+        transcript_scroll = app.query_one("#transcript-scroll", VerticalScroll)
+        transcript_scroll.scroll_to(y=0, animate=False, immediate=True, force=True)
+        app._transcript_auto_follow = False
+        await pilot.pause()
+
+        manual_scroll_y = transcript_scroll.scroll_y
+        assert manual_scroll_y == 0
+
+        for line in long_lines[60:]:
+            await turn.put(AgentEvent(kind="token", data={"content": line + "\n"}))
+        await turn.put(AgentEvent(kind="assistant_message", data={"content": "\n".join(long_lines)}))
+        await turn.put(AgentEvent(kind="done", data={}))
+        await turn.put(None)
+        await pilot.pause(0.2)
+
+        transcript_scroll = app.query_one("#transcript-scroll", VerticalScroll)
+        assert transcript_scroll.max_scroll_y > 0
+        assert transcript_scroll.scroll_y == manual_scroll_y
+
+
+@pytest.mark.asyncio
 async def test_textual_app_meta_c_copies_selected_transcript_text(monkeypatch) -> None:
     backend = ScriptedBackend(history=[("assistant", "Copy this exact answer.")])
     app = TextualChatApp(backend=backend, session=_session())
@@ -1719,3 +1755,61 @@ async def test_textual_app_warp_mouse_selection_auto_copies_transcript_text(monk
         )
 
         assert copied == [needle]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_submit_shortcut_works_when_transcript_has_focus() -> None:
+    backend = ScriptedBackend()
+    turn = backend.add_turn()
+    app = TextualChatApp(backend=backend, session=_session(), initial_prompt="Initial history")
+
+    async with app.run_test() as pilot:
+        await turn.put(AgentEvent(kind="assistant_message", data={"content": "Initial response"}))
+        await turn.put(AgentEvent(kind="done", data={}))
+        await turn.put(None)
+        await pilot.pause(0.2)
+
+        composer = app.query_one("#composer", Composer)
+        composer.load_text("Send from transcript focus")
+        app.action_focus_transcript()
+        await pilot.pause()
+        await pilot.press("ctrl+enter")
+        await pilot.pause()
+
+        assert backend.prompts[-1] == "Send from transcript focus"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_tools_panel_stays_visible_with_empty_state() -> None:
+    backend = ScriptedBackend()
+    app = TextualChatApp(backend=backend, session=_session())
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tool_board = app.query_one("#tool-board", BoardWidget)
+        assert tool_board.plain_text == "The instruments will appear when the agent reaches for them."
+
+
+@pytest.mark.asyncio
+async def test_textual_app_focus_shortcuts_reach_side_surfaces_and_return_to_composer() -> None:
+    backend = ScriptedBackend(history=[("assistant", "Focus map.")])
+    app = TextualChatApp(backend=backend, session=_session())
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        await pilot.press("ctrl+2")
+        await pilot.pause()
+        assert app.screen.focused is app.query_one("#procedure-board", BoardWidget)
+
+        await pilot.press("ctrl+3")
+        await pilot.pause()
+        assert app.screen.focused is app.query_one("#tool-board", BoardWidget)
+
+        await pilot.press("ctrl+4")
+        await pilot.pause()
+        assert app.screen.focused is app.query_one("#trace-board", BoardWidget)
+
+        await pilot.press("ctrl+l")
+        await pilot.pause()
+        assert app.screen.focused is app.query_one("#composer", Composer)

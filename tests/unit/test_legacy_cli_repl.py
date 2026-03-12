@@ -16,6 +16,7 @@ from anteroom.config import AIConfig, AppConfig, AppSettings, EmbeddingsConfig
 from anteroom.db import get_db, init_db
 from anteroom.services import storage
 from anteroom.services.ai_service import AIService
+from anteroom.tools.safety import SafetyVerdict
 
 
 class _BufferEvents(list):
@@ -431,9 +432,9 @@ async def test_legacy_cli_tool_turn_shows_working_story_and_answer(tmp_path: Pat
         stream_factory=_tool_then_answer_stream(),
     )
 
-    assert "WORKING" in output
-    assert "I searched for toggle_last_fold." in output
-    assert "[grep]" in output
+    assert "Searching for 'toggle_last_fold'" in output
+    assert "✓" in output
+    assert "AI:" in output
     assert "Found the symbol in renderer.py." in output
 
 
@@ -526,3 +527,81 @@ async def test_legacy_cli_ask_user_flow_renders_question_and_selected_option(tmp
     assert "fast" in output
     assert "balanced" in output
     assert "Using the selected mode now." in output
+
+
+async def test_textual_cli_handoff_wires_ui_bridge_into_backend(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    config = AppConfig(
+        ai=AIConfig(base_url="http://localhost:1/v1", api_key="test-key", model="gpt-5.2"),
+        app=AppSettings(data_dir=data_dir),
+        embeddings=EmbeddingsConfig(enabled=False),
+    )
+
+    observed: dict[str, Any] = {}
+
+    async def _fake_run_textual_chat(
+        *,
+        backend: Any,
+        session: Any,
+        initial_prompt: str | None,
+        ui_bridge: dict[str, Any],
+    ):
+        observed["initial_prompt"] = initial_prompt
+        observed["session_model"] = session.model
+        observed["working_dir"] = session.working_dir
+        observed["confirm_before"] = ui_bridge.get("confirm")
+        observed["ask_before"] = ui_bridge.get("ask")
+
+        async def _confirm(verdict: SafetyVerdict) -> str:
+            observed["confirm_verdict"] = verdict
+            return "session"
+
+        async def _ask(question: str, options: list[str] | None) -> str:
+            observed["ask_question"] = question
+            observed["ask_options"] = options
+            return "balanced"
+
+        ui_bridge["confirm"] = _confirm
+        ui_bridge["ask"] = _ask
+
+        verdict = SafetyVerdict(
+            needs_approval=True,
+            reason="test confirmation",
+            tool_name="bash",
+            details={"command": "echo hi"},
+        )
+        observed["confirm_result"] = await backend.tool_registry._confirm_callback(verdict)
+        observed["session_allowed"] = "bash" in backend.tool_registry._session_allowed
+
+        ask_result = await backend.tool_executor(
+            "ask_user",
+            {"question": "Which mode should I use?", "options": ["safe", "fast", "balanced"]},
+        )
+        observed["ask_result"] = ask_result
+
+    with (
+        patch.object(
+            AIService,
+            "validate_connection",
+            new=lambda self, _token_refreshed=False: asyncio.sleep(0, result=(True, "ok", ["gpt-5.2"])),
+        ),
+        patch("anteroom.cli.repl._check_for_update", new=lambda current: asyncio.sleep(0, result=None)),
+        patch("anteroom.cli.textual_app.run_textual_chat", new=_fake_run_textual_chat),
+    ):
+        await run_cli(
+            config,
+            prompt="Explain the CLI state machine",
+            ui="textual",
+            no_project_context=True,
+        )
+
+    assert observed["initial_prompt"] == "Explain the CLI state machine"
+    assert observed["session_model"] == "gpt-5.2"
+    assert observed["confirm_before"] is None
+    assert observed["ask_before"] is None
+    assert observed["confirm_result"] is True
+    assert observed["session_allowed"] is True
+    assert observed["ask_question"] == "Which mode should I use?"
+    assert observed["ask_options"] == ["safe", "fast", "balanced"]
+    assert observed["ask_result"]["answer"] == "balanced"

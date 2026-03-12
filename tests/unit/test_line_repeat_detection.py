@@ -300,3 +300,63 @@ class TestLineRepeatDetection:
         # Inline detection breaks before tool call event arrives
         repetition_errors = [e for e in events if e.kind == "error" and "Repetitive" in e.data.get("message", "")]
         assert len(repetition_errors) == 1
+
+    @pytest.mark.asyncio
+    async def test_stops_on_identical_tool_batches(self) -> None:
+        """Repeated identical tool-call batches are blocked before runaway looping."""
+        tool_call = {
+            "id": "call-1",
+            "function_name": "read_file",
+            "arguments": {"path": "README.md"},
+        }
+        ai = _mock_ai_service(
+            _make_stream_events(tool_calls=[tool_call]),
+            _make_stream_events(tool_calls=[tool_call]),
+            _make_stream_events(tool_calls=[tool_call]),
+        )
+        messages: list[dict[str, Any]] = [{"role": "user", "content": "start"}]
+
+        events = await _collect_events(
+            run_agent_loop(
+                ai_service=ai,
+                messages=messages,
+                tool_executor=_executor,
+                tools_openai=[{"type": "function", "function": {"name": "read_file"}}],
+                max_consecutive_text_only=0,
+                max_line_repeats=0,
+                max_identical_tool_repeats=2,
+            )
+        )
+
+        error_events = [e for e in events if e.kind == "error"]
+        assert len(error_events) == 1
+        assert "same tool call batch" in error_events[0].data["message"]
+
+    @pytest.mark.asyncio
+    async def test_identical_tool_repeat_guard_disabled_with_zero(self) -> None:
+        tool_call = {
+            "id": "call-1",
+            "function_name": "read_file",
+            "arguments": {"path": "README.md"},
+        }
+        ai = _mock_ai_service(
+            _make_stream_events(tool_calls=[tool_call]),
+            _make_stream_events(tool_calls=[tool_call]),
+            _make_stream_events(content="Completed without blocking."),
+        )
+        messages: list[dict[str, Any]] = [{"role": "user", "content": "start"}]
+
+        events = await _collect_events(
+            run_agent_loop(
+                ai_service=ai,
+                messages=messages,
+                tool_executor=_executor,
+                tools_openai=[{"type": "function", "function": {"name": "read_file"}}],
+                max_consecutive_text_only=0,
+                max_line_repeats=0,
+                max_identical_tool_repeats=0,
+            )
+        )
+
+        error_events = [e for e in events if e.kind == "error"]
+        assert error_events == []

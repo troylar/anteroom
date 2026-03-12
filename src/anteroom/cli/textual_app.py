@@ -583,7 +583,7 @@ class TextualChatApp(App[None]):
     }
 
     #sidebar {
-        width: 44;
+        width: 52;
         height: 1fr;
         min-height: 0;
     }
@@ -734,6 +734,11 @@ class TextualChatApp(App[None]):
         ("meta+enter", "submit_composer", "Send"),
         ("meta+c", "copy_selection", "Copy"),
         ("ctrl+shift+c", "copy_selection", "Copy"),
+        ("ctrl+l", "focus_composer", "Composer"),
+        ("ctrl+1", "focus_transcript", "Transcript"),
+        ("ctrl+2", "focus_working", "Working"),
+        ("ctrl+3", "focus_tools", "Tools"),
+        ("ctrl+4", "focus_trace", "Trace"),
         ("ctrl+q", "quit_app", "Quit"),
         ("ctrl+t", "toggle_trace", "Trace"),
     ]
@@ -775,6 +780,7 @@ class TextualChatApp(App[None]):
         self._history_index: int | None = None
         self._history_draft = ""
         self._last_auto_copied_selection: str | None = None
+        self._transcript_auto_follow = True
         self._heartbeat = None
         self._initial_prompt_task: asyncio.Task[None] | None = None
         self.title = "Anteroom"
@@ -831,9 +837,24 @@ class TextualChatApp(App[None]):
             await self._submit_from_input()
 
     async def action_submit_composer(self) -> None:
-        composer = self.query_one("#composer", Composer)
-        if composer.has_focus:
-            await self._submit_from_input()
+        await self._submit_from_input()
+
+    def action_focus_composer(self) -> None:
+        self._focus_composer()
+
+    def action_focus_transcript(self) -> None:
+        self.query_one("#transcript-pane", TranscriptPane).focus()
+
+    def action_focus_working(self) -> None:
+        self.query_one("#procedure-board", BoardWidget).focus()
+
+    def action_focus_tools(self) -> None:
+        self.query_one("#tool-board", BoardWidget).focus()
+
+    def action_focus_trace(self) -> None:
+        trace = self.query_one("#trace-collapsible", Collapsible)
+        trace.collapsed = False
+        self.query_one("#trace-board", BoardWidget).focus()
 
     async def action_history_previous(self) -> None:
         self._browse_history(1)
@@ -927,6 +948,14 @@ class TextualChatApp(App[None]):
             return
         self.copy_to_clipboard(selected_text)
         self._last_auto_copied_selection = selected_text
+
+    async def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        if self._event_targets_transcript(event):
+            self._transcript_auto_follow = False
+
+    async def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        if self._event_targets_transcript(event):
+            self.call_after_refresh(self._maybe_resume_transcript_follow)
 
     @staticmethod
     def _selected_text_for_widget(widget: Widget) -> str | None:
@@ -1268,13 +1297,11 @@ class TextualChatApp(App[None]):
         procedure_board = self.query_one("#procedure-board", BoardWidget)
         tool_board = self.query_one("#tool-board", BoardWidget)
         trace_board = self.query_one("#trace-board", BoardWidget)
-        tools_panel = self.query_one("#tools-panel", Container)
 
         ordered_rows = [self._procedure_rows[key] for key in self._procedure_order if key in self._procedure_rows]
         procedure_board.set_rows(ordered_rows[-5:], spinner_index=self._spinner_index)
 
         tool_rows = [BoardRow(status=row.status, text=row.text, badges=[row.badge]) for row in self._tool_rows[-6:]]
-        tools_panel.display = bool(tool_rows)
         tool_board.set_rows(tool_rows, spinner_index=self._spinner_index)
         trace_rows: list[BoardRow] = []
         stream_row = self._stream_summary_row()
@@ -1383,22 +1410,37 @@ class TextualChatApp(App[None]):
     async def _refresh_transcript(self) -> None:
         try:
             pane = self.query_one("#transcript-pane", TranscriptPane)
+            scroll = self.query_one("#transcript-scroll", VerticalScroll)
         except NoMatches:
             return
+        previous_scroll_y = scroll.scroll_y
         rendered = self._render_transcript_entries()
         await pane.set_markdown_text(rendered if rendered else pane.empty_message)
-        pane.call_after_refresh(self._scroll_transcript_to_end)
-        self.call_after_refresh(self._scroll_transcript_to_end)
-        self.set_timer(0.01, self._scroll_transcript_to_end)
+        pane.call_after_refresh(lambda: self._restore_transcript_scroll(previous_scroll_y))
+        self.call_after_refresh(lambda: self._restore_transcript_scroll(previous_scroll_y))
+        self.set_timer(0.01, lambda: self._restore_transcript_scroll(previous_scroll_y))
 
-    def _scroll_transcript_to_end(self) -> None:
+    def _restore_transcript_scroll(self, previous_scroll_y: float) -> None:
         if not self.is_mounted:
             return
         try:
             scroll = self.query_one("#transcript-scroll", VerticalScroll)
         except NoMatches:
             return
-        scroll.scroll_end(animate=False)
+        if self._transcript_auto_follow:
+            scroll.scroll_end(animate=False, immediate=True)
+            return
+        scroll.scroll_to(y=previous_scroll_y, animate=False, immediate=True, force=True)
+
+    def _maybe_resume_transcript_follow(self) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            scroll = self.query_one("#transcript-scroll", VerticalScroll)
+        except NoMatches:
+            return
+        if (scroll.max_scroll_y - scroll.scroll_y) <= 1:
+            self._transcript_auto_follow = True
 
     async def _confirm_dialog(self, verdict: Any) -> str | None:
         return await self._await_modal(ApprovalScreen(verdict))
@@ -1474,6 +1516,35 @@ class TextualChatApp(App[None]):
         composer.load_text(self._prompt_history[self._history_index])
         lines = composer.text.split("\n") if composer.text else [""]
         composer.move_cursor((len(lines) - 1, len(lines[-1])))
+
+    def on_key(self, event: events.Key) -> None:
+        if self._transcript_surface_focused():
+            if event.key in {"up", "pageup", "home"}:
+                self._transcript_auto_follow = False
+            elif event.key in {"down", "pagedown", "end"}:
+                self.call_after_refresh(self._maybe_resume_transcript_follow)
+
+    def _transcript_surface_focused(self) -> bool:
+        try:
+            transcript = self.query_one("#transcript-pane", TranscriptPane)
+            scroll = self.query_one("#transcript-scroll", VerticalScroll)
+        except NoMatches:
+            return False
+        focused = self.screen.focused
+        return focused in {transcript, scroll}
+
+    def _event_targets_transcript(self, event: events.MouseEvent) -> bool:
+        try:
+            transcript = self.query_one("#transcript-pane", TranscriptPane)
+            scroll = self.query_one("#transcript-scroll", VerticalScroll)
+        except NoMatches:
+            return False
+        widget = event.widget
+        while widget is not None:
+            if widget in {transcript, scroll}:
+                return True
+            widget = widget.parent
+        return False
 
     async def _maybe_handle_slash_command(self, prompt: str) -> bool:
         if not prompt.startswith("/"):

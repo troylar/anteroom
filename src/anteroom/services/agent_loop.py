@@ -236,6 +236,7 @@ async def run_agent_loop(
     output_filter: Any | None = None,
     max_consecutive_text_only: int = 3,
     max_line_repeats: int = 5,
+    max_identical_tool_repeats: int = 3,
 ) -> AsyncGenerator[AgentEvent, None]:
     """Run the agentic tool-call loop, yielding events.
 
@@ -250,6 +251,8 @@ async def run_agent_loop(
     auto_plan_suggested = False
     request_tokens = 0  # tokens accumulated in this run_agent_loop invocation
     consecutive_text_only = 0
+    previous_tool_batch_signature: str | None = None
+    consecutive_identical_tool_batches = 0
 
     _loop_start = time.monotonic()
 
@@ -502,6 +505,8 @@ async def run_agent_loop(
             return
 
         if not tool_calls_pending:
+            previous_tool_batch_signature = None
+            consecutive_identical_tool_batches = 0
             consecutive_text_only += 1
             if max_consecutive_text_only > 0 and consecutive_text_only > max_consecutive_text_only:
                 yield AgentEvent(
@@ -632,6 +637,31 @@ async def run_agent_loop(
         )
 
         # Execute tool calls in parallel
+        if max_identical_tool_repeats > 0:
+            tool_batch_signature = json.dumps(
+                [
+                    {"name": tc["function_name"], "arguments": tc["arguments"]}
+                    for tc in tool_calls_pending
+                ],
+                sort_keys=True,
+                default=str,
+            )
+            if tool_batch_signature == previous_tool_batch_signature:
+                consecutive_identical_tool_batches += 1
+            else:
+                previous_tool_batch_signature = tool_batch_signature
+                consecutive_identical_tool_batches = 1
+            if consecutive_identical_tool_batches > max_identical_tool_repeats:
+                yield AgentEvent(
+                    kind="error",
+                    data={
+                        "message": (
+                            "Agent repeated the same tool call batch too many times "
+                            f"({consecutive_identical_tool_batches} consecutive identical runs)."
+                        )
+                    },
+                )
+                return
         _tools_start = time.monotonic()
         logger.debug(
             "agent_loop tool_exec_start iteration=%d count=%d tools=%s",
