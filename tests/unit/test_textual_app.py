@@ -1207,6 +1207,78 @@ async def test_textual_backend_submit_turn_persists_messages_and_tool_history(tm
 
 
 @pytest.mark.asyncio
+async def test_textual_backend_submit_turn_retries_and_only_persists_final_answer(tmp_path) -> None:
+    db = init_db(tmp_path / "textual_submit_turn_retry.db")
+    ai_service = SimpleNamespace(
+        config=SimpleNamespace(model="gpt-5.2", narration_cadence="compact"),
+        generate_title=lambda prompt: asyncio.sleep(0, result=f"Title: {prompt[:20]}"),
+    )
+    backend = AgentLoopTextualBackend(
+        config=_backend_config(tmp_path),
+        db=db,
+        ai_service=ai_service,
+        tool_executor=None,
+        tools_openai=[],
+        extra_system_prompt="base prompt",
+        working_dir=str(tmp_path),
+    )
+
+    attempts = 0
+
+    async def _fake_run_agent_loop(**_: Any):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            yield AgentEvent(
+                kind="tool_call_start",
+                data={"tool_name": "grep", "arguments": {"path": "src/", "pattern": "FoldGroup"}},
+            )
+            yield AgentEvent(
+                kind="tool_call_end",
+                data={"tool_name": "grep", "status": "error", "output": {"error": "timeout"}},
+            )
+            yield AgentEvent(
+                kind="error",
+                data={"message": "Stream ended unexpectedly", "retryable": True},
+            )
+            return
+
+        yield AgentEvent(
+            kind="tool_call_start",
+            data={"tool_name": "grep", "arguments": {"path": "src/", "pattern": "FoldGroup"}},
+        )
+        yield AgentEvent(kind="tool_call_end", data={"tool_name": "grep", "status": "success", "output": {}})
+        yield AgentEvent(kind="assistant_message", data={"content": "Found FoldGroup after retry."})
+        yield AgentEvent(kind="done", data={})
+
+    with patch("anteroom.cli.textual_app.run_agent_loop", new=_fake_run_agent_loop):
+        events = [event async for event in backend.submit_turn("Find FoldGroup references")]
+
+    assert [event.kind for event in events] == [
+        "tool_call_start",
+        "tool_call_end",
+        "error",
+        "retrying",
+        "tool_call_start",
+        "tool_call_end",
+        "assistant_message",
+        "done",
+    ]
+    assert attempts == 2
+    assert len(backend._last_turn_tools) == 1
+    tool_entry = backend._last_turn_tools[0]
+    assert tool_entry["status"] == "success"
+    assert tool_entry["output"] == {}
+
+    conversations = storage.list_conversations(db, limit=5)
+    assert conversations
+    conv = conversations[0]
+    messages = storage.list_messages(db, conv["id"])
+    assert [msg["role"] for msg in messages if msg["role"] in {"user", "assistant"}] == ["user", "assistant"]
+    assert messages[-1]["content"] == "Found FoldGroup after retry."
+
+
+@pytest.mark.asyncio
 async def test_textual_backend_renders_last_turn_tool_detail(tmp_path) -> None:
     backend = AgentLoopTextualBackend(
         config=_backend_config(tmp_path),
