@@ -7,6 +7,36 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 12, 2026
 
+### v1.113.0 — Pack Lifecycle Hardening
+
+This release strengthens the pack management system with better failure handling, content change detection, quarantine reporting, and attachment priority support.
+
+#### Content Change Detection for Source Packs
+
+Source-installed packs now detect content changes even when the manifest version hasn't been bumped. The refresh pipeline compares artifact content hashes using the same normalization and hashing as `pack install`, ensuring upstream changes always propagate. (#899)
+
+See [Packs](../packs/how-packs-work.md) for details on pack sources and refresh behavior.
+
+#### Config Rebuild Failure Handling
+
+Pack attach and detach endpoints now handle config rebuild failures correctly: compliance violations roll back the mutation (409), infrastructure errors preserve the mutation and reload registries from DB (200 with warning). Previously, infrastructure errors returned 500 and left registries stale. (#898)
+
+See [Pack API](../api/packs.md) for the full endpoint reference.
+
+#### Quarantine Reporting in Refresh API
+
+The refresh endpoint now returns a structured envelope reporting which packs were quarantined due to compliance violations. Compliance error details are kept server-side to prevent information disclosure. CLI shows matching quarantine warnings. (#900)
+
+See [Packs](../packs/how-packs-work.md) for quarantine behavior.
+
+#### Attachment Priority in Web API
+
+The pack attach endpoint now accepts an optional `priority` field (1-100, default 50), matching the CLI's `--priority` flag. Lower values win for overlapping config overlays. (#901)
+
+See [Packs](../packs/how-packs-work.md) for priority-based conflict resolution.
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.113.0)
+
 ### v1.112.0 — Ask the Source
 
 The `/a-help` skill gains source-code awareness — advanced developers can now ask implementation questions, trace call chains, and verify documentation accuracy against the actual running code.
