@@ -320,13 +320,11 @@ async def attach_pack(request: Request, namespace: str, name: str, body: AttachR
             status_code=409,
             detail="Pack attached but config rebuild failed (compliance violation). Attachment rolled back.",
         )
-    if not success:
-        raise HTTPException(
-            status_code=500,
-            detail="Pack attached but config rebuild failed."
-            " The attachment is saved and will take effect on next restart.",
-        )
-    _reload_registries_only(request, db)
+    if success:
+        _reload_registries_only(request, db)
+    else:
+        logger.warning("Config rebuild failed after attach; will take effect on next restart")
+        result["warning"] = "Config rebuild failed. The attachment will take effect on next restart."
     return result
 
 
@@ -354,14 +352,13 @@ async def detach_pack(
             status_code=409,
             detail="Pack detached but config rebuild failed (compliance violation). Detachment rolled back.",
         )
-    if not success:
-        raise HTTPException(
-            status_code=500,
-            detail="Pack detached but config rebuild failed."
-            " The detachment is saved and will take effect on next restart.",
-        )
-    _reload_registries_only(request, db)
-    return {"status": "detached"}
+    result: dict[str, Any] = {"status": "detached"}
+    if success:
+        _reload_registries_only(request, db)
+    else:
+        logger.warning("Config rebuild failed after detach; will take effect on next restart")
+        result["warning"] = "Config rebuild failed. The detachment will take effect on next restart."
+    return result
 
 
 @router.get("/packs/{namespace}/{name}/attachments")

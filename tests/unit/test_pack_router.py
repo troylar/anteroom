@@ -553,7 +553,7 @@ class TestRemovePackByIdEndpoint:
 class TestAttachRebuildFailure:
     """Tests for #898: attach/detach endpoints must fail on generic rebuild failure."""
 
-    def test_attach_generic_rebuild_failure_returns_500(self) -> None:
+    def test_attach_generic_rebuild_failure_returns_200_with_warning(self) -> None:
         app = _make_app()
         with (
             patch("anteroom.routers.packs.packs") as mock_packs,
@@ -563,9 +563,9 @@ class TestAttachRebuildFailure:
             mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
             client = TestClient(app)
             resp = client.post("/api/packs/test-ns/test-pack/attach", json={})
-            assert resp.status_code == 500
-            assert "config rebuild failed" in resp.json()["detail"]
-            assert "next restart" in resp.json()["detail"]
+            assert resp.status_code == 200
+            assert "warning" in resp.json()
+            assert "next restart" in resp.json()["warning"]
 
     def test_attach_generic_rebuild_failure_does_not_rollback(self) -> None:
         app = _make_app()
@@ -580,7 +580,7 @@ class TestAttachRebuildFailure:
             client.post("/api/packs/test-ns/test-pack/attach", json={})
             mock_rollback.assert_not_called()
 
-    def test_detach_generic_rebuild_failure_returns_500(self) -> None:
+    def test_detach_generic_rebuild_failure_returns_200_with_warning(self) -> None:
         app = _make_app()
         with (
             patch("anteroom.routers.packs.packs") as mock_packs,
@@ -590,9 +590,9 @@ class TestAttachRebuildFailure:
             mock_packs.resolve_pack.return_value = ({"id": "pack-1"}, [])
             client = TestClient(app)
             resp = client.delete("/api/packs/test-ns/test-pack/attach")
-            assert resp.status_code == 500
-            assert "config rebuild failed" in resp.json()["detail"]
-            assert "next restart" in resp.json()["detail"]
+            assert resp.status_code == 200
+            assert "warning" in resp.json()
+            assert "next restart" in resp.json()["warning"]
 
     def test_detach_generic_rebuild_failure_does_not_rollback(self) -> None:
         app = _make_app()
