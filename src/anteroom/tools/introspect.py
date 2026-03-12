@@ -29,10 +29,11 @@ DEFINITION: dict[str, Any] = {
         "properties": {
             "section": {
                 "type": "string",
-                "enum": ["config", "instructions", "tools", "safety", "skills", "budget", "spaces"],
+                "enum": ["config", "instructions", "tools", "safety", "skills", "budget", "spaces", "package"],
                 "description": (
                     "Which section to inspect. 'budget' shows context window usage and token counts. "
                     "'spaces' shows active space and loaded spaces. "
+                    "'package' shows the installed Anteroom source root and version. "
                     "Omit to get a summary of all sections."
                 ),
             },
@@ -323,6 +324,21 @@ def _gather_spaces(
     return result
 
 
+def _gather_package() -> dict[str, Any]:
+    """Return the installed Anteroom package root and version."""
+    from pathlib import Path
+
+    try:
+        import anteroom
+
+        source_root = str(Path(anteroom.__file__).resolve().parent)
+        version = getattr(anteroom, "__version__", "unknown")
+    except Exception:
+        source_root = "unknown"
+        version = "unknown"
+    return {"source_root": source_root, "version": version}
+
+
 async def handle(
     section: str | None = None,
     _config: Any | None = None,
@@ -345,6 +361,7 @@ async def handle(
         "skills": lambda: _gather_skills(_skill_registry),
         "budget": lambda: _gather_budget(_tools_openai, _instructions_info, _config),
         "spaces": lambda: _gather_spaces(_active_space, _db),
+        "package": _gather_package,
     }
 
     if section:
