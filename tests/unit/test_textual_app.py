@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -114,7 +115,14 @@ def _backend_config(tmp_path):
         app=SimpleNamespace(data_dir=data_dir),
         cli=SimpleNamespace(
             file_reference_max_chars=100_000,
-            usage=SimpleNamespace(week_days=7, month_days=30),
+            tool_output_max_chars=24_000,
+            usage=SimpleNamespace(week_days=7, month_days=30, budgets=None),
+            skills=SimpleNamespace(auto_invoke=False),
+            max_tool_iterations=12,
+            max_consecutive_text_only=3,
+            max_line_repeats=3,
+            max_identical_tool_repeats=3,
+            max_retries=2,
         ),
         identity=None,
     )
@@ -1144,6 +1152,58 @@ async def test_textual_backend_cycles_verbosity(tmp_path) -> None:
     assert first is not None and first.message == "Verbosity: **detailed**"
     assert second is not None and second.message == "Verbosity: **verbose**"
     assert third is not None and third.message == "Verbosity: **compact**"
+
+
+@pytest.mark.asyncio
+async def test_textual_backend_submit_turn_persists_messages_and_tool_history(tmp_path) -> None:
+    db = init_db(tmp_path / "textual_submit_turn.db")
+    ai_service = SimpleNamespace(
+        config=SimpleNamespace(model="gpt-5.2", narration_cadence="compact"),
+        generate_title=lambda prompt: asyncio.sleep(0, result=f"Title: {prompt[:20]}"),
+    )
+    backend = AgentLoopTextualBackend(
+        config=_backend_config(tmp_path),
+        db=db,
+        ai_service=ai_service,
+        tool_executor=None,
+        tools_openai=[],
+        extra_system_prompt="base prompt",
+        working_dir=str(tmp_path),
+    )
+
+    async def _fake_run_agent_loop(**_: Any):
+        yield AgentEvent(
+            kind="tool_call_start",
+            data={"tool_name": "grep", "arguments": {"path": "src/", "pattern": "FoldGroup"}},
+        )
+        yield AgentEvent(kind="tool_call_end", data={"tool_name": "grep", "status": "success", "output": {}})
+        yield AgentEvent(kind="assistant_message", data={"content": "Found FoldGroup in the renderer tests."})
+        yield AgentEvent(kind="done", data={})
+
+    with patch("anteroom.cli.textual_app.run_agent_loop", new=_fake_run_agent_loop):
+        events = [event async for event in backend.submit_turn("Find FoldGroup references")]
+
+    assert [event.kind for event in events] == [
+        "tool_call_start",
+        "tool_call_end",
+        "assistant_message",
+        "done",
+    ]
+    assert len(backend._last_turn_tools) == 1
+    tool_entry = backend._last_turn_tools[0]
+    assert tool_entry["tool_name"] == "grep"
+    assert tool_entry["arguments"] == {"path": "src/", "pattern": "FoldGroup"}
+    assert tool_entry["status"] == "success"
+    assert tool_entry["output"] == {}
+    assert "started_at" in tool_entry
+    assert "elapsed" in tool_entry
+
+    conversations = storage.list_conversations(db, limit=5)
+    assert conversations
+    conv = conversations[0]
+    messages = storage.list_messages(db, conv["id"])
+    assert [msg["role"] for msg in messages if msg["role"] in {"user", "assistant"}] == ["user", "assistant"]
+    assert messages[-1]["content"] == "Found FoldGroup in the renderer tests."
 
 
 @pytest.mark.asyncio
