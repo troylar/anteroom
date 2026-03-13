@@ -275,7 +275,7 @@ async def set_config_field(body: ConfigFieldSetBody, request: Request) -> dict[s
         }
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to set config field %s", body.dot_path)
         raise HTTPException(status_code=500, detail="Failed to update config field")
 
@@ -317,7 +317,7 @@ async def reset_config_field(body: ConfigFieldResetBody, request: Request) -> di
         return {"dot_path": body.dot_path, "scope": body.scope, "deleted": deleted}
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to reset config field %s", body.dot_path)
         raise HTTPException(status_code=500, detail="Failed to reset config field")
 
@@ -350,7 +350,8 @@ def _get_active_space(request: Request) -> dict[str, Any] | None:
 
 def _build_api_context(request: Request) -> tuple[dict[str, str], list[str]]:
     """Build source map and enforced fields for API requests."""
-    from ..services.config_editor import build_full_source_map, collect_env_overrides
+    from ..services.config_editor import _read_yaml, build_full_source_map, collect_env_overrides
+    from ..services.project_config import discover_project_config
 
     enforced: list[str] = getattr(request.app.state, "enforced_fields", [])
     team_raw: dict[str, Any] = getattr(request.app.state, "team_raw", {})
@@ -369,6 +370,11 @@ def _build_api_context(request: Request) -> tuple[dict[str, str], list[str]]:
                 space_raw = sc.config or {}
             except Exception:
                 pass
+
+    proj_path = discover_project_config()
+    if proj_path:
+        project_raw = _read_yaml(proj_path)
+        project_raw.pop("required", None)
 
     source_map = build_full_source_map(
         team_raw=team_raw,
