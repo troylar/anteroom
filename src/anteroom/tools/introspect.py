@@ -30,8 +30,15 @@ DEFINITION: dict[str, Any] = {
             "section": {
                 "type": "string",
                 "enum": [
-                    "config", "instructions", "tools", "safety", "skills",
-                    "budget", "spaces", "package", "runtime",
+                    "config",
+                    "instructions",
+                    "tools",
+                    "safety",
+                    "skills",
+                    "budget",
+                    "spaces",
+                    "package",
+                    "runtime",
                 ],
                 "description": (
                     "Which section to inspect. 'budget' shows context window usage and token counts. "

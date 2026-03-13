@@ -1358,6 +1358,7 @@ async def run_cli(
                     _rt_sid = _rt_conv.get("space_id")
                     if _rt_sid:
                         from ..services.space_storage import get_space as _get_sp
+
                         _rt_space = _get_sp(db, _rt_sid)
             if _rt_space:
                 _rt_info["active_space"] = {

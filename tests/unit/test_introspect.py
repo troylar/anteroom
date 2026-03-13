@@ -107,8 +107,15 @@ class TestIntrospectDefinition:
     def test_valid_sections(self) -> None:
         sections = DEFINITION["parameters"]["properties"]["section"]["enum"]
         expected = {
-            "config", "instructions", "tools", "safety", "skills",
-            "budget", "spaces", "package", "runtime",
+            "config",
+            "instructions",
+            "tools",
+            "safety",
+            "skills",
+            "budget",
+            "spaces",
+            "package",
+            "runtime",
         }
         assert set(sections) == expected
 

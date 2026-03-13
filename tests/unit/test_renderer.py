@@ -3672,6 +3672,7 @@ class TestRenderError:
             printed = str(mock_console.print.call_args_list[0])
             assert "Connection timed out" in printed
             import anteroom.cli.renderer as r
+
             assert f"{r._theme.error} bold" in printed
 
     def test_render_error_escapes_markup(self) -> None:
@@ -3686,6 +3687,7 @@ class TestRenderError:
             printed = str(mock_console.print.call_args_list[0])
             assert "Rate limited by API" in printed
             import anteroom.cli.renderer as r
+
             assert f"{r._theme.warning} bold" in printed
 
     def test_render_warning_escapes_markup(self) -> None:
