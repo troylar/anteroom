@@ -140,6 +140,246 @@ def _persist_config(config: Any) -> None:
         logger.exception("Failed to persist config to %s", config_path)
 
 
+# ---------------------------------------------------------------------------
+# Scoped config editing API (#933)
+# ---------------------------------------------------------------------------
+
+
+class ConfigFieldSetBody(BaseModel):
+    """Request body for setting a scoped config field."""
+
+    dot_path: str
+    value: str
+    scope: str = "personal"  # personal | space | project
+
+
+class ConfigFieldResetBody(BaseModel):
+    """Request body for resetting a scoped config field."""
+
+    dot_path: str
+    scope: str = "personal"
+
+
+@router.get("/config/fields")
+async def list_config_fields(request: Request) -> list[dict[str, Any]]:
+    """List all settable config fields with type info."""
+    from ..services.config_editor import list_settable_fields
+
+    fields = list_settable_fields(include_sensitive=False)
+    return [
+        {
+            "dot_path": f.dot_path,
+            "field_type": f.field_type,
+            "default": f.default,
+            "allowed_values": list(f.allowed_values) if f.allowed_values else None,
+            "min_val": f.min_val,
+            "max_val": f.max_val,
+        }
+        for f in fields
+    ]
+
+
+@router.get("/config/fields/{dot_path:path}")
+async def get_config_field(dot_path: str, request: Request) -> dict[str, Any]:
+    """Get a single config field with source attribution."""
+    from dataclasses import asdict
+
+    from ..services.config_editor import (
+        _SENSITIVE_FIELDS,
+        get_field,
+    )
+
+    if dot_path in _SENSITIVE_FIELDS:
+        raise HTTPException(status_code=403, detail="Sensitive field cannot be read via API")
+
+    config = request.app.state.config
+    enforced: list[str] = getattr(request.app.state, "enforced_fields", [])
+
+    source_map, _ = _build_api_context(request)
+
+    try:
+        result = get_field(config, dot_path, source_map, enforced)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "dot_path": result.dot_path,
+        "effective_value": result.effective_value,
+        "source_layer": result.source_layer,
+        "is_enforced": result.is_enforced,
+        "field_info": asdict(result.field_info) if result.field_info else None,
+    }
+
+
+@router.put("/config/fields")
+async def set_config_field(body: ConfigFieldSetBody, request: Request) -> dict[str, Any]:
+    """Set a config field in a specific scope."""
+    from ..services.config_editor import (
+        _SENSITIVE_FIELDS,
+        apply_field_to_config,
+        check_write_allowed,
+        validate_field_value,
+        write_personal_field,
+        write_project_field,
+        write_space_field,
+    )
+
+    if body.dot_path in _SENSITIVE_FIELDS:
+        raise HTTPException(status_code=403, detail="Sensitive field cannot be set via API")
+
+    config = request.app.state.config
+    enforced: list[str] = getattr(request.app.state, "enforced_fields", [])
+
+    allowed, reason = check_write_allowed(body.dot_path, enforced)
+    if not allowed:
+        raise HTTPException(status_code=403, detail=reason)
+
+    parsed, errors = validate_field_value(body.dot_path, body.value)
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
+
+    if body.scope not in ("personal", "space", "project"):
+        raise HTTPException(status_code=400, detail="scope must be personal, space, or project")
+
+    try:
+        if body.scope == "personal":
+            path = write_personal_field(body.dot_path, parsed)
+        elif body.scope == "space":
+            space = _get_active_space(request)
+            if not space or not space.get("source_file"):
+                raise HTTPException(status_code=400, detail="No active space with YAML file")
+            db = request.app.state.db
+            path = write_space_field(
+                body.dot_path,
+                parsed,
+                Path(space["source_file"]),
+                db=db,
+                space_id=space["id"],
+            )
+        elif body.scope == "project":
+            path = write_project_field(body.dot_path, parsed)
+        else:
+            raise HTTPException(status_code=400, detail="Invalid scope")
+
+        # Apply to live config
+        try:
+            apply_field_to_config(config, body.dot_path, parsed)
+        except AttributeError:
+            pass  # field doesn't map 1:1 to AppConfig attrs — restart needed
+
+        return {
+            "dot_path": body.dot_path,
+            "value": parsed,
+            "scope": body.scope,
+            "path": str(path),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to set config field %s", body.dot_path)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/config/fields")
+async def reset_config_field(body: ConfigFieldResetBody, request: Request) -> dict[str, Any]:
+    """Reset (remove) a config field from a specific scope."""
+    from ..services.config_editor import (
+        _SENSITIVE_FIELDS,
+        reset_personal_field,
+        reset_project_field,
+        reset_space_field,
+    )
+
+    if body.dot_path in _SENSITIVE_FIELDS:
+        raise HTTPException(status_code=403, detail="Sensitive field cannot be reset via API")
+
+    if body.scope not in ("personal", "space", "project"):
+        raise HTTPException(status_code=400, detail="scope must be personal, space, or project")
+
+    try:
+        deleted = False
+        if body.scope == "personal":
+            deleted = reset_personal_field(body.dot_path)
+        elif body.scope == "space":
+            space = _get_active_space(request)
+            if not space or not space.get("source_file"):
+                raise HTTPException(status_code=400, detail="No active space with YAML file")
+            db = request.app.state.db
+            deleted = reset_space_field(
+                body.dot_path,
+                Path(space["source_file"]),
+                db=db,
+                space_id=space["id"],
+            )
+        elif body.scope == "project":
+            deleted = reset_project_field(body.dot_path)
+
+        return {"dot_path": body.dot_path, "scope": body.scope, "deleted": deleted}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to reset config field %s", body.dot_path)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/config/scopes")
+async def get_available_scopes(request: Request) -> list[dict[str, Any]]:
+    """Return which config scopes are available for the current session."""
+    scopes = [{"name": "personal", "available": True, "label": "Personal"}]
+
+    space = _get_active_space(request)
+    if space and space.get("source_file"):
+        scopes.append(
+            {
+                "name": "space",
+                "available": True,
+                "label": "Space (%s)" % space["name"],
+            }
+        )
+    else:
+        scopes.append({"name": "space", "available": False, "label": "Space (none active)"})
+
+    scopes.append({"name": "project", "available": True, "label": "Project"})
+    return scopes
+
+
+def _get_active_space(request: Request) -> dict[str, Any] | None:
+    """Get the active space from app state, if any."""
+    return getattr(request.app.state, "active_space", None)
+
+
+def _build_api_context(request: Request) -> tuple[dict[str, str], list[str]]:
+    """Build source map and enforced fields for API requests."""
+    from ..services.config_editor import build_full_source_map, collect_env_overrides
+
+    enforced: list[str] = getattr(request.app.state, "enforced_fields", [])
+    team_raw: dict[str, Any] = getattr(request.app.state, "team_raw", {})
+    personal_raw: dict[str, Any] = getattr(request.app.state, "personal_raw", {})
+    space_raw: dict[str, Any] = {}
+    project_raw: dict[str, Any] = {}
+
+    space = _get_active_space(request)
+    if space and space.get("source_file"):
+        sp_path = Path(space["source_file"])
+        if sp_path.exists():
+            try:
+                from ..services.spaces import parse_space_file
+
+                sc = parse_space_file(sp_path)
+                space_raw = sc.config or {}
+            except Exception:
+                pass
+
+    source_map = build_full_source_map(
+        team_raw=team_raw,
+        personal_raw=personal_raw,
+        space_raw=space_raw,
+        project_raw=project_raw,
+        env_overrides=collect_env_overrides(),
+    )
+    return source_map, enforced
+
+
 @router.post("/config/validate")
 async def validate_connection(request: Request) -> ConnectionValidation:
     config = request.app.state.config
