@@ -833,6 +833,17 @@ async def _web_ask_user_callback(ctx: WebConfirmContext, question: str, options:
                 elapsed += poll_interval
     except asyncio.TimeoutError:
         logger.warning("ask_user timed out (id=%s)", ask_id)
+        if ctx.event_bus:
+            await ctx.event_bus.publish(
+                f"global:{ctx.db_name}",
+                {
+                    "type": "ask_user_resolved",
+                    "data": {
+                        "ask_id": ask_id,
+                        "reason": "timed_out",
+                    },
+                },
+            )
         return ""
     finally:
         ctx.pending_approvals.pop(ask_id, None)
@@ -936,6 +947,27 @@ async def _execute_web_tool(ctx: ToolExecutorContext, tool_name: str, arguments:
     elif tool_name == "ask_user":
         arguments = {**arguments, "_ask_callback": _ask_user}
     elif tool_name == "introspect":
+        _rt_info: dict[str, Any] = {"interface": "web"}
+        try:
+            _rt_conv = storage.get_conversation(ctx.db, ctx.conversation_id)
+        except Exception:
+            _rt_conv = None
+        if _rt_conv:
+            _rt_info["conversation_id"] = ctx.conversation_id
+            _rt_info["conversation_title"] = _rt_conv.get("title")
+            _rt_info["slug"] = _rt_conv.get("slug")
+            _rt_info["message_count"] = _rt_conv.get("message_count", 0)
+        _rt_space: dict[str, Any] | None = None
+        _rt_space_id = _rt_conv.get("space_id") if _rt_conv else None
+        if _rt_space_id:
+            from ..services.space_storage import get_space as _get_space_by_id
+
+            _rt_space = _get_space_by_id(ctx.db, _rt_space_id)
+            if _rt_space:
+                _rt_info["active_space"] = {
+                    "name": _rt_space.get("name"),
+                    "id": _rt_space.get("id"),
+                }
         arguments = {
             **arguments,
             "_config": ctx.request_config,
@@ -945,6 +977,9 @@ async def _execute_web_tool(ctx: ToolExecutorContext, tool_name: str, arguments:
             "_instructions_info": None,
             "_tools_openai": ctx.tools_openai,
             "_working_dir": None,
+            "_active_space": _rt_space,
+            "_db": ctx.db,
+            "_runtime_info": _rt_info,
         }
 
     if ctx.tool_registry.has_tool(tool_name):

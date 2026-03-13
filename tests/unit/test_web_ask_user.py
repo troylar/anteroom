@@ -193,6 +193,24 @@ class TestWebAskUserCallback:
         assert result == "ok"
         await task
 
+    async def test_timeout_emits_ask_user_resolved_event(self) -> None:
+        event_bus = AsyncMock()
+        ctx = _make_ctx(event_bus=event_bus, approval_timeout=0)
+        result = await _web_ask_user_callback(ctx, "Which DB?")
+        assert result == ""
+        # First call is ask_user_required, second is ask_user_resolved
+        assert event_bus.publish.call_count == 2
+        resolved_call = event_bus.publish.call_args_list[1]
+        payload = resolved_call.args[1]
+        assert payload["type"] == "ask_user_resolved"
+        assert payload["data"]["reason"] == "timed_out"
+        assert "ask_id" in payload["data"]
+
+    async def test_timeout_no_resolved_event_without_bus(self) -> None:
+        ctx = _make_ctx(event_bus=None, approval_timeout=0)
+        result = await _web_ask_user_callback(ctx, "Which DB?")
+        assert result == ""
+
     async def test_concurrent_ask_user_and_approval(self) -> None:
         pending: dict[str, Any] = {}
         approval_event = asyncio.Event()
