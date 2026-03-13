@@ -79,6 +79,7 @@ Works on macOS, Linux, and Windows:
 | Token tracking & compact | [Context Management](context-management.md) |
 | All /commands (chat mode) | [Commands](commands.md) |
 | ANTEROOM.md project context | [Project Instructions](project-instructions.md) |
+| Color themes | Config: `cli.theme` (midnight/dawn/high-contrast/accessible) |
 
 ## Exec Mode
 
