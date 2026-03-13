@@ -13,6 +13,7 @@ from anteroom.db import (
     _create_indexes,
     _eradicate_projects,
     _run_migrations,
+    _safe_rename_spaces_column,
     has_vec_support,
     init_db,
 )
@@ -845,6 +846,87 @@ class TestMigrationPaths:
         migrated_indexes = self._get_all_indexes(migrated)
         missing_indexes = fresh_indexes - migrated_indexes
         assert not missing_indexes, f"Indexes missing after migration: {missing_indexes}"
+
+    def test_v1945_file_path_column_migrated_to_source_file(self) -> None:
+        """DB stuck at v1.94.5 with file_path column must migrate to source_file (#769)."""
+        conn = self._make_pre_spaces_db()
+        # Simulate v1.94.5 state: spaces table has file_path instead of source_file
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS spaces (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                file_path TEXT NOT NULL DEFAULT '',
+                file_hash TEXT NOT NULL DEFAULT '',
+                last_loaded_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+        """)
+        conn.commit()
+        # Verify baseline has file_path
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(spaces)").fetchall()}
+        assert "file_path" in cols
+        assert "source_file" not in cols
+
+        self._run_full_init(conn)
+
+        # After migration, column must be source_file
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(spaces)").fetchall()}
+        assert "source_file" in cols
+        assert "file_path" not in cols
+
+    def test_no_double_rename_on_fresh_db(self) -> None:
+        """Fresh DB with source_file must NOT be renamed to file_path then back (#769)."""
+        fresh = _init_in_memory()
+        cols = {r["name"] for r in fresh.execute("PRAGMA table_info(spaces)").fetchall()}
+        assert "source_file" in cols
+        assert "file_path" not in cols
+
+    def test_safe_rename_spaces_column_reraises_unrelated_failure(self) -> None:
+        """Migration must not swallow non-race rename failures."""
+
+        class _FakeResult:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return self._rows
+
+        class _FakeConn:
+            def execute(self, sql: str):
+                if sql.startswith("ALTER TABLE spaces RENAME COLUMN"):
+                    raise sqlite3.OperationalError("database is locked")
+                if sql == "PRAGMA table_info(spaces)":
+                    return _FakeResult([(0, "file_path"), (1, "source_hash")])
+                raise AssertionError(sql)
+
+        conn = _FakeConn()
+        try:
+            _safe_rename_spaces_column(conn, "file_path", "source_file")
+        except sqlite3.OperationalError as exc:
+            assert "locked" in str(exc)
+        else:
+            raise AssertionError("expected sqlite3.OperationalError")
+
+    def test_safe_rename_spaces_column_tolerates_completed_race(self) -> None:
+        """Migration should ignore the expected concurrent-rename race."""
+
+        class _FakeResult:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return self._rows
+
+        class _FakeConn:
+            def execute(self, sql: str):
+                if sql.startswith("ALTER TABLE spaces RENAME COLUMN"):
+                    raise sqlite3.OperationalError("duplicate column name: source_file")
+                if sql == "PRAGMA table_info(spaces)":
+                    return _FakeResult([(0, "source_file"), (1, "source_hash")])
+                raise AssertionError(sql)
+
+        _safe_rename_spaces_column(_FakeConn(), "file_path", "source_file")
 
 
 class TestPacksUniqueConstraint:
