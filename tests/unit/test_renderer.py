@@ -549,7 +549,7 @@ class TestToolCallDimming:
             render_tool_call_end("bash", "error", {"error": "command failed"})
             first_call = str(mock_console.print.call_args_list[0])
             assert r.MUTED not in first_call
-            assert "[red]" in first_call
+            assert r._theme.error in first_call
 
     def test_verbose_mode_unchanged(self) -> None:
         import anteroom.cli.renderer as r
@@ -3671,7 +3671,8 @@ class TestRenderError:
             render_error("Connection timed out")
             printed = str(mock_console.print.call_args_list[0])
             assert "Connection timed out" in printed
-            assert "red bold" in printed
+            import anteroom.cli.renderer as r
+            assert f"{r._theme.error} bold" in printed
 
     def test_render_error_escapes_markup(self) -> None:
         with patch("anteroom.cli.renderer.console") as mock_console:
@@ -3684,7 +3685,8 @@ class TestRenderError:
             render_warning("Rate limited by API")
             printed = str(mock_console.print.call_args_list[0])
             assert "Rate limited by API" in printed
-            assert "yellow bold" in printed
+            import anteroom.cli.renderer as r
+            assert f"{r._theme.warning} bold" in printed
 
     def test_render_warning_escapes_markup(self) -> None:
         with patch("anteroom.cli.renderer.console") as mock_console:
