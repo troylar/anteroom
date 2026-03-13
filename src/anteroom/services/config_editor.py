@@ -429,16 +429,25 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 
 def _write_yaml(path: Path, data: dict[str, Any]) -> None:
-    """Write a YAML file with 0600 permissions."""
+    """Write a YAML file atomically with 0600 permissions.
+
+    Writes to a temporary sibling file first, then atomically replaces the
+    target.  This prevents config corruption if the process crashes mid-write.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.dump(data, default_flow_style=False, sort_keys=False),
-        encoding="utf-8",
-    )
+    content = yaml.dump(data, default_flow_style=False, sort_keys=False)
+    tmp = path.with_suffix(".yaml.tmp")
     try:
-        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    except OSError:
-        pass
+        tmp.write_text(content, encoding="utf-8")
+        try:
+            tmp.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
+        os.replace(str(tmp), str(path))
+    except BaseException:
+        # Clean up the temp file on any failure
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def write_personal_field(dot_path: str, value: Any, config_path: Path | None = None) -> Path:
@@ -446,6 +455,8 @@ def write_personal_field(dot_path: str, value: Any, config_path: Path | None = N
 
     Returns the path that was written to.
     """
+    if not _SAFE_DOT_PATH.match(dot_path):
+        raise ValueError(f"Invalid dot-path: {dot_path!r}")
     if config_path is None:
         from ..config import _get_config_path
 
@@ -471,6 +482,8 @@ def write_space_field(
 
     Returns the space YAML path.
     """
+    if not _SAFE_DOT_PATH.match(dot_path):
+        raise ValueError(f"Invalid dot-path: {dot_path!r}")
     from .spaces import parse_space_file, write_space_file
     from .trust import compute_content_hash, save_trust_decision
 
@@ -521,6 +534,8 @@ def write_project_field(
 
     Returns the path that was written to.
     """
+    if not _SAFE_DOT_PATH.match(dot_path):
+        raise ValueError(f"Invalid dot-path: {dot_path!r}")
     from .project_config import discover_project_config
     from .trust import compute_content_hash, save_trust_decision
 

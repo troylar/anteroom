@@ -257,7 +257,8 @@ async def set_config_field(body: ConfigFieldSetBody, request: Request) -> dict[s
                 space_id=space["id"],
             )
         elif body.scope == "project":
-            path = write_project_field(body.dot_path, parsed)
+            project_dir = _resolve_project_dir(request)
+            path = write_project_field(body.dot_path, parsed, working_dir=project_dir)
         else:
             raise HTTPException(status_code=400, detail="Invalid scope")
 
@@ -312,7 +313,8 @@ async def reset_config_field(body: ConfigFieldResetBody, request: Request) -> di
                 space_id=space["id"],
             )
         elif body.scope == "project":
-            deleted = reset_project_field(body.dot_path)
+            project_dir = _resolve_project_dir(request)
+            deleted = reset_project_field(body.dot_path, working_dir=project_dir)
 
         return {"dot_path": body.dot_path, "scope": body.scope, "deleted": deleted}
     except HTTPException:
@@ -339,13 +341,43 @@ async def get_available_scopes(request: Request) -> list[dict[str, Any]]:
     else:
         scopes.append({"name": "space", "available": False, "label": "Space (none active)"})
 
-    scopes.append({"name": "project", "available": True, "label": "Project"})
+    # Project scope requires a discoverable project directory
+    try:
+        _resolve_project_dir(request)
+        scopes.append({"name": "project", "available": True, "label": "Project"})
+    except HTTPException:
+        scopes.append({"name": "project", "available": False, "label": "Project (no context)"})
+
     return scopes
 
 
 def _get_active_space(request: Request) -> dict[str, Any] | None:
     """Get the active space from app state, if any."""
     return getattr(request.app.state, "active_space", None)
+
+
+def _resolve_project_dir(request: Request) -> Path:
+    """Resolve the project directory for project-scoped config writes.
+
+    Uses the active space's source file parent directory as the project root.
+    Falls back to Path.cwd() only as a last resort (CLI-originated requests).
+    Raises HTTPException if no project context can be determined.
+    """
+    space = _get_active_space(request)
+    if space and space.get("source_file"):
+        return Path(space["source_file"]).parent
+
+    # Check if a project config already exists from cwd (best effort)
+    from ..services.project_config import discover_project_config
+
+    proj = discover_project_config()
+    if proj:
+        return proj.parent.parent  # e.g. .anteroom/config.yaml -> project root
+
+    raise HTTPException(
+        status_code=400,
+        detail="Cannot determine project directory. Load a space or use the CLI.",
+    )
 
 
 def _build_api_context(request: Request) -> tuple[dict[str, str], list[str]]:
