@@ -73,8 +73,10 @@ class CliTheme:
         """Return ANSI escape for a theme color slot, or empty if NO_COLOR.
 
         Converts ``#RRGGBB`` hex to ``\\033[38;2;R;G;Bm``.
-        Returns empty string for empty slot values (NO_COLOR mode).
+        Returns empty string when ``NO_COLOR`` env var is set or slot is empty.
         """
+        if os.environ.get("NO_COLOR"):
+            return ""
         value = getattr(self, slot, "")
         if not value:
             return ""
@@ -83,7 +85,7 @@ class CliTheme:
     @property
     def ansi_reset(self) -> str:
         """ANSI reset sequence, empty when NO_COLOR."""
-        if not self.accent:
+        if os.environ.get("NO_COLOR"):
             return ""
         return "\033[0m"
 
@@ -208,8 +210,10 @@ _ACCESSIBLE = CliTheme(
     logo_blue="#648FFF",
 )
 
-# NO_COLOR: all slots empty, ANSI helpers return empty strings.
-_NO_COLOR_THEME = CliTheme()
+# NO_COLOR: reuse midnight colors so Rich markup tags remain valid.
+# Rich Console automatically strips colors when NO_COLOR is set;
+# ANSI helpers check the env var directly and return empty strings.
+_NO_COLOR_THEME = _MIDNIGHT
 
 _BUILTIN_THEMES: dict[str, CliTheme] = {
     "midnight": _MIDNIGHT,

@@ -34,13 +34,19 @@ class TestCliThemeLoad:
         theme = CliTheme.load("nonexistent-theme")
         assert theme == CliTheme.load("midnight")
 
-    def test_no_color_returns_empty_theme(self) -> None:
+    def test_no_color_returns_theme_with_valid_colors(self) -> None:
+        """NO_COLOR theme must have valid color slots so Rich markup doesn't crash.
+
+        Rich Console strips colors when NO_COLOR is set; ANSI helpers check the
+        env var directly.
+        """
         with patch.dict(os.environ, {"NO_COLOR": "1"}):
             theme = CliTheme.load("midnight")
-            assert theme.accent == ""
-            assert theme.success == ""
-            assert theme.error == ""
-            assert theme.bg_dark == ""
+            # Slots must be non-empty for Rich markup safety
+            assert theme.accent != ""
+            assert theme.success != ""
+            assert theme.error != ""
+            assert theme.bg_dark != ""
 
     def test_no_color_empty_string_triggers(self) -> None:
         with patch.dict(os.environ, {"NO_COLOR": ""}):
@@ -112,16 +118,19 @@ class TestAnsiHelpers:
         assert theme.ansi_reset == "\033[0m"
 
     def test_ansi_reset_empty_on_no_color(self) -> None:
-        theme = CliTheme()  # all empty
-        assert theme.ansi_reset == ""
+        with patch.dict(os.environ, {"NO_COLOR": "1"}):
+            theme = CliTheme.load("midnight")
+            assert theme.ansi_reset == ""
 
 
 class TestNoColorTheme:
-    def test_all_slots_empty(self) -> None:
+    def test_slots_have_valid_colors(self) -> None:
+        """NO_COLOR theme keeps valid color values for Rich markup safety."""
         with patch.dict(os.environ, {"NO_COLOR": "1"}):
             theme = CliTheme.load("midnight")
             for f in fields(theme):
-                assert getattr(theme, f.name) == "", f"NO_COLOR theme slot '{f.name}' should be empty"
+                value = getattr(theme, f.name)
+                assert value != "", f"NO_COLOR theme slot '{f.name}' must not be empty (Rich markup crash)"
 
     def test_ansi_fg_returns_empty(self) -> None:
         with patch.dict(os.environ, {"NO_COLOR": "1"}):
@@ -132,6 +141,24 @@ class TestNoColorTheme:
         with patch.dict(os.environ, {"NO_COLOR": "1"}):
             theme = CliTheme.load("midnight")
             assert theme.ansi_reset == ""
+
+    def test_rich_markup_does_not_crash(self) -> None:
+        """Verify that theme colors produce valid Rich markup even in NO_COLOR mode."""
+        from io import StringIO
+
+        from rich.console import Console
+
+        with patch.dict(os.environ, {"NO_COLOR": "1"}):
+            theme = CliTheme.load("midnight")
+            buf = StringIO()
+            c = Console(file=buf, no_color=True)
+            # These would raise MarkupError if colors were empty strings
+            c.print(f"[{theme.success}]ok[/{theme.success}]")
+            c.print(f"[{theme.error}]err[/{theme.error}]")
+            c.print(f"[{theme.danger}]warn[/{theme.danger}]")
+            output = buf.getvalue()
+            assert "ok" in output
+            assert "err" in output
 
 
 class TestThemeImmutability:
