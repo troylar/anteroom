@@ -7,6 +7,35 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 13, 2026
 
+### v1.114.0 — Themes, Timeouts, and Runtime Introspection
+
+This release brings CLI color theming, clearer timeout UX for safety gates, runtime session introspection for the AI, and a terminology cleanup for pack directory scoping.
+
+#### CLI Color Themes
+
+The CLI now supports configurable color themes via `cli.theme` in `config.yaml`. Four built-in themes: **midnight** (default), **dawn** (warm light), **high-contrast** (maximum readability), and **accessible** (CVD-safe blue/orange per IBM). All 22 semantic color slots flow through a `CliTheme` frozen dataclass, replacing previously hardcoded hex values. The `NO_COLOR` environment variable is respected. (#116)
+
+```yaml
+cli:
+  theme: "accessible"   # midnight | dawn | high-contrast | accessible
+```
+
+See [CLI Features](../cli/index.md) for the theme list and [Configuration](../configuration/config-file.md) for the config key.
+
+#### Approval & Ask-User Timeout UX
+
+When an approval gate or `ask_user` prompt times out, both the web UI and CLI now show a clear expiry message instead of silently failing. The web UI renders `approval-expired` / `ask-user-expired` CSS classes with status text, and SSE events include `reason: "timed_out"`. (#870)
+
+#### Runtime Introspection
+
+The `introspect` tool now supports `section=runtime`, exposing bounded session metadata: `conversation_id`, `conversation_title`, `slug`, `message_count`, `token_totals`, `active_space`, and `interface`. The `/a-help` skill includes a complete reference of all 9 valid introspect sections. (#908)
+
+#### Terminology Cleanup
+
+Pack `project_path` renamed to `directory` scoping throughout codebase and documentation, aligning with Spaces vocabulary. Non-breaking internal rename. (#881)
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.114.0)
+
 ### v1.113.1
 
 **Fixed:**
