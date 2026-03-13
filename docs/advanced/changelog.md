@@ -5,6 +5,25 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## March 13, 2026
+
+### v1.113.1
+
+**Fixed:**
+
+- Pack source docs no longer list `http://` as an accepted URL scheme — it is rejected to prevent MITM attacks (#914)
+- `POST /api/packs/refresh` response docs updated from flat list to current envelope format `{sources, quarantined, quarantine_reason}` (#914)
+- Added quarantine lifecycle documentation across pack-sources, troubleshooting, pack-commands, and automatic-updates docs (#914)
+- Refresh failure docs corrected: 10 consecutive failures disable the entire background worker, not individual sources (#914)
+- Config precedence in troubleshooting docs now includes the `packs`, `space`, and `project` layers (#914)
+- Fixed broken changelog link to pack API reference (#914)
+
+See [Pack Sources](../packs/pack-sources.md) for the corrected lifecycle and [Troubleshooting](../packs/troubleshooting.md) for quarantine recovery steps.
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.113.1)
+
+---
+
 ## March 12, 2026
 
 ### v1.113.0 — Pack Lifecycle Hardening
