@@ -360,17 +360,18 @@ def _resolve_project_dir(request: Request) -> Path:
     """Resolve the project directory for project-scoped config writes.
 
     Uses the active space's source file parent directory as the project root.
-    Falls back to Path.cwd() only as a last resort (CLI-originated requests).
+    Falls back to discovery from the space root (not process cwd).
     Raises HTTPException if no project context can be determined.
     """
     space = _get_active_space(request)
     if space and space.get("source_file"):
         return Path(space["source_file"]).parent
 
-    # Check if a project config already exists from cwd (best effort)
+    # Discover from space root, not process cwd
     from ..services.project_config import discover_project_config
 
-    proj = discover_project_config()
+    start = _get_working_dir(request)
+    proj = discover_project_config(start)
     if proj:
         return proj.parent.parent  # e.g. .anteroom/config.yaml -> project root
 
@@ -378,6 +379,18 @@ def _resolve_project_dir(request: Request) -> Path:
         status_code=400,
         detail="Cannot determine project directory. Load a space or use the CLI.",
     )
+
+
+def _get_working_dir(request: Request) -> str:
+    """Derive the effective working directory from the active space.
+
+    The web server's process cwd is meaningless for context discovery —
+    use the space source file's parent directory instead.
+    """
+    space = _get_active_space(request)
+    if space and space.get("source_file"):
+        return str(Path(space["source_file"]).parent)
+    return os.getcwd()
 
 
 def _build_api_context(request: Request) -> tuple[dict[str, str], list[str]]:
@@ -388,11 +401,12 @@ def _build_api_context(request: Request) -> tuple[dict[str, str], list[str]]:
     from ..services.team_config import discover_team_config
 
     enforced: list[str] = getattr(request.app.state, "enforced_fields", [])
+    working_dir = _get_working_dir(request)
     team_raw: dict[str, Any] = {}
 
-    # Read team config from disk (app.state doesn't carry raw layer dicts)
+    # Read team config from disk — rooted at the space dir, not process cwd
     try:
-        team_path = discover_team_config()
+        team_path = discover_team_config(cwd=working_dir)
         if team_path:
             from ..services.team_config import load_team_config
 
@@ -403,7 +417,7 @@ def _build_api_context(request: Request) -> tuple[dict[str, str], list[str]]:
     # Read personal config from disk
     personal_raw: dict[str, Any] = _read_yaml(_get_config_path())
 
-    # Pack overlays from DB
+    # Pack overlays from DB — pass project_path for directory-scoped attachments
     pack_raw: dict[str, Any] = {}
     db = getattr(request.app.state, "db", None)
     space = _get_active_space(request)
@@ -418,9 +432,9 @@ def _build_api_context(request: Request) -> tuple[dict[str, str], list[str]]:
 
             space_id = space["id"] if space else None
             if space_id:
-                active_ids = get_active_pack_ids_for_space(db, space_id)
+                active_ids = get_active_pack_ids_for_space(db, space_id, project_path=working_dir)
             else:
-                active_ids = get_active_pack_ids(db)
+                active_ids = get_active_pack_ids(db, project_path=working_dir)
             if active_ids:
                 overlays = collect_pack_overlays(db, active_ids)
                 if overlays:
@@ -443,7 +457,7 @@ def _build_api_context(request: Request) -> tuple[dict[str, str], list[str]]:
             except Exception:
                 pass
 
-    proj_path = discover_project_config()
+    proj_path = discover_project_config(working_dir)
     if proj_path:
         project_raw = _read_yaml(proj_path)
         project_raw.pop("required", None)
