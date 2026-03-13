@@ -7,6 +7,35 @@ Release highlights for every Anteroom version. For full details including develo
 
 ## March 13, 2026
 
+### v1.115.0 — Config Gets a Cockpit
+
+Anteroom's configuration system has always been powerful — 7 layers of precedence, team enforcement, pack overlays. But editing it meant hand-editing YAML files. This release gives config a proper cockpit.
+
+#### Interactive Config TUI
+
+Type `/config` in the CLI REPL and you get a full-screen, two-panel editor. The left panel shows every settable field grouped by section, color-coded by which layer currently controls it. The right panel shows the selected field's effective value, source attribution, type constraints, and a layer-by-layer breakdown. (#933)
+
+Navigate with arrow keys or `j`/`k`. Press Enter to edit — booleans toggle inline, enums cycle through allowed values, and strings/numbers get an inline text prompt. Tab cycles through scopes (personal, space, project). Press `s` to save, `r` to reset, `/` to filter.
+
+```
+/config              # Launch the TUI
+/config list         # Quick field listing
+/config get ai.model # Show one field with source
+/config set ai.model gpt-4o --scope personal
+```
+
+See [Configuration](../configuration/) for the full config reference.
+
+#### Scoped Config Editing (CLI + API)
+
+The new `config_editor` service provides scoped read/write for all config layers. `/config set` and `/config reset` accept `--scope personal|space|project` to target exactly the right YAML file. The web API gets matching endpoints for programmatic access. Source attribution is fully pack-aware. (#933)
+
+Sensitive fields (`api_key`, identity keys, `encryption_kdf`) are blocked at the CLI and API boundary.
+
+See [Configuration](../configuration/) for scope precedence details.
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.115.0)
+
 ### v1.114.1
 
 **Fixed:**
