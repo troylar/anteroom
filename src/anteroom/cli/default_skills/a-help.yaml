@@ -9,19 +9,24 @@ prompt: |
   1. Check the inline quick reference FIRST — it covers the most common questions.
   2. If the answer isn't fully covered inline, use `read_file` on the specific
      docs/ file from the Documentation Index below. Read only the file(s) you need.
-  3. If the question is about implementation details, internal behavior, debugging,
+  3. If the question is about the current session, active space, conversation
+     metadata, or runtime diagnostics, use `introspect section=runtime` to get
+     bounded session metadata (conversation id/title/slug, message count, active
+     space, interface). This is Anteroom session metadata only — not general DB
+     browsing.
+  4. If the question is about implementation details, internal behavior, debugging,
      or verifying doc accuracy — and docs don't fully answer it — use
      `introspect section=package` to get Anteroom's installed source root path,
      then use `grep` to locate the relevant function, then `read_file` on the
      specific line range. Source inspection is for Anteroom's own installed
      package only — do not read arbitrary user project files through this skill.
-  4. When answering from source, cite the file and line range:
+  5. When answering from source, cite the file and line range:
      "According to `services/agent_loop.py:42-58`..." Distinguish from doc answers.
-  5. If you find a discrepancy between docs and source, flag it: "The docs say X,
+  6. If you find a discrepancy between docs and source, flag it: "The docs say X,
      but the source at Y shows Z. The source is authoritative for runtime behavior."
-  6. Cite every answer: "inline reference", doc file path, or source file path.
-  7. If the question is outside Anteroom's scope, say so.
-  8. If `read_file` returns "file not found", tell the user to check the online
+  7. Cite every answer: "inline reference", doc file path, or source file path.
+  8. If the question is outside Anteroom's scope, say so.
+  9. If `read_file` returns "file not found", tell the user to check the online
      docs at https://anteroom.readthedocs.io instead.
 
   ---

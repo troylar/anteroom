@@ -29,11 +29,15 @@ DEFINITION: dict[str, Any] = {
         "properties": {
             "section": {
                 "type": "string",
-                "enum": ["config", "instructions", "tools", "safety", "skills", "budget", "spaces", "package"],
+                "enum": [
+                    "config", "instructions", "tools", "safety", "skills",
+                    "budget", "spaces", "package", "runtime",
+                ],
                 "description": (
                     "Which section to inspect. 'budget' shows context window usage and token counts. "
                     "'spaces' shows active space and loaded spaces. "
                     "'package' shows the installed Anteroom source root and version. "
+                    "'runtime' shows current session metadata: conversation, tokens, active space, interface. "
                     "Omit to get a summary of all sections."
                 ),
             },
@@ -339,6 +343,13 @@ def _gather_package() -> dict[str, Any]:
     return {"source_root": source_root, "version": version}
 
 
+def _gather_runtime(runtime_info: dict[str, Any] | None) -> dict[str, Any]:
+    """Return bounded session metadata — conversation, tokens, space, interface."""
+    if runtime_info is None:
+        return {"available": False}
+    return {k: v for k, v in runtime_info.items() if v is not None}
+
+
 async def handle(
     section: str | None = None,
     _config: Any | None = None,
@@ -350,6 +361,7 @@ async def handle(
     _working_dir: str | None = None,
     _active_space: dict[str, Any] | None = None,
     _db: Any | None = None,
+    _runtime_info: dict[str, Any] | None = None,
     **_: Any,
 ) -> dict[str, Any]:
     """Inspect the current session's runtime context."""
@@ -362,6 +374,7 @@ async def handle(
         "budget": lambda: _gather_budget(_tools_openai, _instructions_info, _config),
         "spaces": lambda: _gather_spaces(_active_space, _db),
         "package": _gather_package,
+        "runtime": lambda: _gather_runtime(_runtime_info),
     }
 
     if section:
