@@ -14,6 +14,7 @@ import sqlite3 as _sqlite3
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -497,6 +498,48 @@ def _show_usage_stats(db: Any, config: Any) -> None:
 
 
 _EXIT_COMMANDS = frozenset({"/quit", "/exit"})
+
+
+def _route_cancel_signal(
+    agent_busy: asyncio.Event,
+    current_cancel_event: list[asyncio.Event | None],
+) -> bool:
+    """Route a cancel signal (Ctrl-C or Escape) to the active cancel event.
+
+    Returns True if cancel was routed (agent was busy), False otherwise.
+    Called from prompt_toolkit keybinding handlers.
+    """
+    if agent_busy.is_set() and current_cancel_event[0] is not None:
+        current_cancel_event[0].set()
+        return True
+    return False
+
+
+def _cleanup_after_turn(
+    cancel_event: asyncio.Event,
+    agent_busy: asyncio.Event,
+    msg_queue: asyncio.Queue[dict[str, Any]],
+    ai_messages: list[dict[str, Any]],
+    has_pending_work: Callable[[], bool],
+) -> None:
+    """Clean up state after an agent turn completes or is cancelled.
+
+    On cancel: backfills msg_queue items into ai_messages (they are already
+    persisted in the DB by _drain_input_to_msg_queue but not yet in the live
+    session context) and unconditionally clears agent_busy.
+
+    On normal completion: clears agent_busy only if no pending work remains.
+    """
+    if cancel_event.is_set():
+        while not msg_queue.empty():
+            try:
+                leftover = msg_queue.get_nowait()
+                ai_messages.append(leftover)
+            except asyncio.QueueEmpty:
+                break
+        agent_busy.clear()
+    elif not has_pending_work():
+        agent_busy.clear()
 
 
 async def _drain_input_to_msg_queue(
@@ -2217,6 +2260,12 @@ async def _run_repl(
     def _handle_ctrl_c(event: Any) -> None:
         import time
 
+        # When agent is busy, route Ctrl-C to cancel the active run (#937).
+        # On Windows, loop.add_signal_handler(SIGINT) is a no-op, so this
+        # prompt_toolkit keybinding is the only cancel path.
+        if _route_cancel_signal(agent_busy, _current_cancel_event):
+            return
+
         buf = event.current_buffer
         now = time.monotonic()
         if buf.text:
@@ -2230,6 +2279,14 @@ async def _run_repl(
             # First Ctrl+C with empty buffer — show hint, don't exit
             _last_ctrl_c[0] = now
             renderer.console.print(f"[{CHROME}]Press Ctrl+C again to exit[/{CHROME}]")
+
+    @kb.add("escape")
+    def _handle_escape(event: Any) -> None:
+        # When agent is busy, Escape cancels the active run (#937).
+        # When idle, this is a no-op because _route_cancel_signal returns
+        # False (agent_busy is not set). Escape+Enter chord for newline
+        # is unaffected — prompt_toolkit distinguishes via flush timeout.
+        _route_cancel_signal(agent_busy, _current_cancel_event)
 
     # Styled prompt — dim while agent is working to signal "you can type to queue"
     _prompt_text = HTML(f"<style fg='{renderer._theme.accent}'>❯</style> ") if renderer._theme.accent else HTML("❯ ")
@@ -5108,8 +5165,7 @@ async def _run_repl(
                 if thinking:
                     renderer.stop_thinking_sync()
                     thinking = False
-                if not _has_pending_work():
-                    agent_busy.clear()
+                _cleanup_after_turn(cancel_event, agent_busy, msg_queue, ai_messages, _has_pending_work)
                 _current_cancel_event[0] = None
                 if cancel_event_ref is not None:
                     cancel_event_ref[0] = None
@@ -5173,6 +5229,12 @@ async def _run_repl(
         runner_task = asyncio.create_task(_agent_runner())
 
         done_tasks, pending_tasks = await asyncio.wait({input_task, runner_task}, return_when=asyncio.FIRST_COMPLETED)
+        # Surface exceptions from completed tasks so they aren't silently lost (#937)
+        for t in done_tasks:
+            try:
+                t.result()
+            except Exception:
+                logger.exception("REPL task failed")
         exit_flag.set()
         for t in pending_tasks:
             t.cancel()
