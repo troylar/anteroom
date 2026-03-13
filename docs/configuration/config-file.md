@@ -58,6 +58,7 @@ session:
   log_session_events: false            # Log session lifecycle events (default: false)
 
 cli:
+  theme: "midnight"                # CLI color theme: midnight | dawn | high-contrast | accessible (default: midnight)
   builtin_tools: true              # Enable built-in tools (default: true)
   max_tool_iterations: 50          # Max tool calls per response (default: 50)
   max_consecutive_text_only: 3     # Stop after N text-only responses with no tool calls; 0 to disable (default: 3)

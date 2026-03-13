@@ -352,6 +352,7 @@ class SkillsConfig:
 
 @dataclass
 class CliConfig:
+    theme: str = "midnight"
     builtin_tools: bool = True
     max_tool_iterations: int = 50
     max_consecutive_text_only: int = 3  # stop after N text-only responses with no tool calls (0 = disabled)

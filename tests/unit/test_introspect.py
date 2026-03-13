@@ -14,6 +14,7 @@ from anteroom.tools.introspect import (
     _gather_budget,
     _gather_config,
     _gather_instructions,
+    _gather_runtime,
     _gather_safety,
     _gather_skills,
     _gather_spaces,
@@ -105,7 +106,18 @@ class TestIntrospectDefinition:
 
     def test_valid_sections(self) -> None:
         sections = DEFINITION["parameters"]["properties"]["section"]["enum"]
-        assert set(sections) == {"config", "instructions", "tools", "safety", "skills", "budget", "spaces", "package"}
+        expected = {
+            "config",
+            "instructions",
+            "tools",
+            "safety",
+            "skills",
+            "budget",
+            "spaces",
+            "package",
+            "runtime",
+        }
+        assert set(sections) == expected
 
 
 # --- Registration tests ---
@@ -716,3 +728,93 @@ class TestGatherPackage:
         assert "package" in result
         assert "source_root" in result["package"]
         assert "version" in result["package"]
+
+
+class TestGatherRuntime:
+    """Tests for _gather_runtime returning bounded session metadata."""
+
+    def test_returns_available_false_when_none(self) -> None:
+        result = _gather_runtime(None)
+        assert result == {"available": False}
+
+    def test_returns_full_info(self) -> None:
+        info = {
+            "interface": "cli",
+            "conversation_id": "conv-1",
+            "conversation_title": "Test Chat",
+            "slug": "bright-fox",
+            "message_count": 5,
+            "active_space": {"name": "my-space", "id": "sp-1"},
+        }
+        result = _gather_runtime(info)
+        assert result["interface"] == "cli"
+        assert result["conversation_id"] == "conv-1"
+        assert result["slug"] == "bright-fox"
+        assert result["message_count"] == 5
+        assert result["active_space"]["name"] == "my-space"
+
+    def test_strips_none_values(self) -> None:
+        info = {
+            "interface": "web",
+            "conversation_id": "conv-2",
+            "slug": None,
+            "message_count": 0,
+        }
+        result = _gather_runtime(info)
+        assert "slug" not in result
+        assert result["interface"] == "web"
+        assert result["message_count"] == 0
+
+    def test_empty_dict_returns_empty(self) -> None:
+        result = _gather_runtime({})
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_handle_runtime_section(self) -> None:
+        info = {"interface": "cli", "conversation_id": "c1"}
+        result = await handle(section="runtime", _runtime_info=info)
+        assert result["section"] == "runtime"
+        assert result["data"]["interface"] == "cli"
+
+    @pytest.mark.asyncio
+    async def test_handle_runtime_section_no_info(self) -> None:
+        result = await handle(section="runtime")
+        assert result["data"] == {"available": False}
+
+    @pytest.mark.asyncio
+    async def test_runtime_in_summary(self) -> None:
+        info = {"interface": "web", "conversation_id": "c1"}
+        result = await handle(_runtime_info=info)
+        assert "runtime" in result
+        assert result["runtime"]["interface"] == "web"
+
+    @pytest.mark.asyncio
+    async def test_handle_runtime_with_full_payload(self) -> None:
+        """Verify runtime passes through all expected fields including token_totals."""
+        info = {
+            "interface": "cli",
+            "conversation_id": "c1",
+            "conversation_title": "Test Chat",
+            "slug": "happy-penguin",
+            "message_count": 5,
+            "token_totals": 12345,
+            "active_space": {"name": "dev", "id": "s1"},
+        }
+        result = await handle(section="runtime", _runtime_info=info)
+        data = result["data"]
+        assert data["interface"] == "cli"
+        assert data["conversation_id"] == "c1"
+        assert data["conversation_title"] == "Test Chat"
+        assert data["slug"] == "happy-penguin"
+        assert data["message_count"] == 5
+        assert data["token_totals"] == 12345
+        assert data["active_space"] == {"name": "dev", "id": "s1"}
+
+    @pytest.mark.asyncio
+    async def test_handle_runtime_zero_values_preserved(self) -> None:
+        """Verify 0-value fields are not stripped (only None is filtered)."""
+        info = {"interface": "web", "message_count": 0, "token_totals": 0}
+        result = await handle(section="runtime", _runtime_info=info)
+        data = result["data"]
+        assert data["message_count"] == 0
+        assert data["token_totals"] == 0

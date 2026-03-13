@@ -2230,16 +2230,31 @@ const Chat = (() => {
 
     function resolveApprovalCard(approvalId, approved, reason) {
         const el = document.querySelector(`[data-approval-id="${CSS.escape(approvalId)}"]`);
-        if (!el || el.classList.contains('approval-allowed') || el.classList.contains('approval-denied')) return;
-        el.classList.add(approved ? 'approval-allowed' : 'approval-denied');
+        if (!el || el.classList.contains('approval-allowed') || el.classList.contains('approval-denied') || el.classList.contains('approval-expired')) return;
+        if (reason === 'timed_out') {
+            el.classList.add('approval-expired');
+        } else {
+            el.classList.add(approved ? 'approval-allowed' : 'approval-denied');
+        }
         const status = document.createElement('div');
         status.className = 'approval-status';
         if (reason === 'timed_out') {
-            status.textContent = 'Timed out';
+            status.textContent = 'Expired \u2014 the agent moved on';
         } else {
             status.textContent = approved ? 'Allowed' : 'Denied';
         }
         const actionsEl = el.querySelector('.approval-actions');
+        if (actionsEl) actionsEl.replaceWith(status);
+    }
+
+    function resolveAskUserCard(askId, reason) {
+        const el = document.querySelector(`[data-ask-id="${CSS.escape(askId)}"]`);
+        if (!el || el.classList.contains('ask-user-answered') || el.classList.contains('ask-user-cancelled') || el.classList.contains('ask-user-expired')) return;
+        el.classList.add('ask-user-expired');
+        const status = document.createElement('div');
+        status.className = 'ask-user-status';
+        status.textContent = 'Expired \u2014 the agent moved on';
+        const actionsEl = el.querySelector('.ask-user-actions');
         if (actionsEl) actionsEl.replaceWith(status);
     }
 
@@ -2370,7 +2385,7 @@ const Chat = (() => {
         init, sendMessage, loadMessages, stopGeneration, abortStream, setStreaming, escapeHtml,
         streamChatResponse, isRawMode, setRawMode, setConversationType,
         appendRemoteMessage, startRemoteStream, handleRemoteToken, finalizeRemoteStream,
-        showApprovalPrompt, resolveApprovalCard, showAskUserPrompt, showThinkingFromEvent: showThinking,
+        showApprovalPrompt, resolveApprovalCard, showAskUserPrompt, resolveAskUserCard, showThinkingFromEvent: showThinking,
         renderMarkdown, highlightCode, showToast, sendPlanExecution, cleanupPendingPrompts,
     };
 })();

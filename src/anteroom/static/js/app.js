@@ -763,6 +763,12 @@ const App = (() => {
             Chat.resolveApprovalCard(data.approval_id, data.approved, data.reason);
         });
 
+        _eventSource.addEventListener('ask_user_resolved', (e) => {
+            const data = JSON.parse(e.data);
+            _shownApprovalIds.delete(data.ask_id);
+            Chat.resolveAskUserCard(data.ask_id, data.reason);
+        });
+
         _eventSource.addEventListener('approval_executing', (e) => {
             const data = JSON.parse(e.data);
             if (data.conversation_id === state.currentConversationId) {

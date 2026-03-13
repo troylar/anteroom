@@ -17,22 +17,48 @@ from rich.markup import escape
 from rich.status import Status
 from rich.text import Text
 
+from .themes import CliTheme
+
 console = Console(stderr=True)
 # Separate console for stdout markdown rendering (not stderr)
 _stdout_console = Console()
 _stdout = sys.stdout
 
 # ---------------------------------------------------------------------------
-# Color palette — explicit values for readability on dark terminals.
-# Avoids Rich's [dim] (SGR 2 faint) which is nearly invisible on dark bg.
+# Theme — loaded from config, defaults to midnight.
+# All color references go through _theme instead of hardcoded values.
 # ---------------------------------------------------------------------------
 
-GOLD = "#C5A059"  # accents, "Thinking..." text
-SLATE = "#94A3B8"  # labels ("You:", "AI:"), directory display
-BLUE = "#3B82F6"  # logo accent (from docs/logo.svg)
-MUTED = "#8b8b8b"  # secondary text (tool results, approval feedback, version info)
-CHROME = "#6b7280"  # UI chrome (status messages, hints, MCP info)
-ERROR_RED = "#CD6B6B"  # pale red for inline errors (operational, not alarming)
+_theme: CliTheme = CliTheme.load("midnight")
+
+
+def set_theme(theme: CliTheme) -> None:
+    """Set the active theme. Called during REPL/exec startup."""
+    global _theme
+    _theme = theme
+    _refresh_aliases()
+
+
+# Backward-compatible module-level aliases for code that imports these.
+# These are properties that delegate to the active theme.
+GOLD = _theme.accent
+SLATE = _theme.secondary
+BLUE = _theme.logo_blue
+MUTED = _theme.muted
+CHROME = _theme.chrome
+ERROR_RED = _theme.error
+
+
+def _refresh_aliases() -> None:
+    """Update module-level color aliases after a theme change."""
+    global GOLD, SLATE, BLUE, MUTED, CHROME, ERROR_RED
+    GOLD = _theme.accent
+    SLATE = _theme.secondary
+    BLUE = _theme.logo_blue
+    MUTED = _theme.muted
+    CHROME = _theme.chrome
+    ERROR_RED = _theme.error
+
 
 _ESC_HINT_DELAY: float = 3.0  # seconds before showing "esc to cancel" hint
 _STALL_THRESHOLD: float = 15.0  # seconds before showing API stall warning
@@ -209,9 +235,9 @@ def _collapse_plan() -> None:
     total = len(_plan_steps)
 
     if _repl_mode and _stdout:
-        green = "\033[32m"
-        muted = "\033[38;2;139;139;139m"
-        rst = "\033[0m"
+        green = _theme.ansi_fg("success")
+        muted = _theme.ansi_fg("muted")
+        rst = _theme.ansi_reset
         if completed == total:
             line = f"  {green}\u2713 Plan: {completed}/{total} steps complete{rst}"
         else:
@@ -513,8 +539,8 @@ def start_thinking(*, newline: bool = False) -> None:
         # via ANSI escape codes as the timer ticks.
         if newline and _stdout:
             # Atomic \n + initial thinking block prevents prompt_toolkit race (#249).
-            gold = "\033[38;2;197;160;89m"
-            rst = "\033[0m"
+            gold = _theme.ansi_fg("accent")
+            rst = _theme.ansi_reset
             if _plan_visible and _plan_steps:
                 # Write newline then full plan + thinking block
                 _stdout.write("\n")
@@ -549,11 +575,11 @@ def _build_thinking_text(
     cancel_msg: str = "",
 ) -> str:
     """Build the thinking line text (without cursor/clear prefixes)."""
-    gold = "\033[38;2;197;160;89m"
-    timer_c = "\033[38;2;107;114;128m"
-    muted = "\033[38;2;139;139;139m"
-    err_c = "\033[38;2;205;107;107m"  # ERROR_RED #CD6B6B
-    rst = "\033[0m"
+    gold = _theme.ansi_fg("accent")
+    timer_c = _theme.ansi_fg("chrome")
+    muted = _theme.ansi_fg("muted")
+    err_c = _theme.ansi_fg("error")
+    rst = _theme.ansi_reset
 
     if elapsed < 0.5 and not error_msg and not cancel_msg:
         return f"{gold}Thinking...{rst}"
@@ -608,10 +634,10 @@ def _write_thinking_block(
         buf.append(f"\033[{up}A")
 
     # ANSI colors
-    green = "\033[32m"
-    gold_c = "\033[38;2;197;160;89m"
-    muted_c = "\033[38;2;139;139;139m"
-    rst = "\033[0m"
+    green = _theme.ansi_fg("success")
+    gold_c = _theme.ansi_fg("accent")
+    muted_c = _theme.ansi_fg("muted")
+    rst = _theme.ansi_reset
 
     # Plan header
     buf.append(f"\r\033[2K  {muted_c}\U0001f4cb Plan{rst}\n")
@@ -745,9 +771,9 @@ async def stop_thinking(
             else:
                 # Clean final line: just "Thinking... Ns" — no phase, no hint.
                 _thinking_phase = ""
-                gold = "\033[38;2;197;160;89m"
-                timer_c = "\033[38;2;107;114;128m"
-                rst = "\033[0m"
+                gold = _theme.ansi_fg("accent")
+                timer_c = _theme.ansi_fg("chrome")
+                rst = _theme.ansi_reset
                 _stdout.write(f"\r\033[2K{gold}Thinking...{rst} {timer_c}{elapsed:.0f}s{rst}\n")
                 _stdout.flush()
     _thinking_start = 0
@@ -1017,9 +1043,18 @@ def render_newline() -> None:
 # ---------------------------------------------------------------------------
 
 _DIFF_CONTEXT_LINES = 3  # lines of context around each change
-_DIFF_RED_BG = "on #3d1418"  # dark red background for removed lines
-_DIFF_GREEN_BG = "on #132a13"  # dark green background for added lines
-_DIFF_LINE_NO = "#6b7280"  # dim line numbers
+
+
+def _diff_remove_bg() -> str:
+    return f"on {_theme.diff_remove_bg}" if _theme.diff_remove_bg else ""
+
+
+def _diff_add_bg() -> str:
+    return f"on {_theme.diff_add_bg}" if _theme.diff_add_bg else ""
+
+
+def _diff_line_no() -> str:
+    return _theme.chrome
 
 
 def _render_inline_diff(tool_name: str, output: dict[str, Any]) -> None:
@@ -1039,11 +1074,11 @@ def _render_inline_diff(tool_name: str, output: dict[str, Any]) -> None:
     if action == "created":
         lines = output.get("lines", 0)
         header_text = Text()
-        header_text.append("  ● ", style="green")
+        header_text.append("  ● ", style=_theme.success)
         header_text.append(f"Write({short})", style="bold")
         console.print(header_text)
         summary_text = Text()
-        summary_text.append(f"  └ Created, {lines} lines", style=MUTED)
+        summary_text.append(f"  └ Created, {lines} lines", style=_theme.muted)
         console.print(summary_text)
         return
 
@@ -1071,18 +1106,18 @@ def _render_inline_diff(tool_name: str, output: dict[str, Any]) -> None:
     # Header
     label = "Update" if tool_name.lower() in ("edit_file", "file_edit") else "Write"
     header_text = Text()
-    header_text.append("  ● ", style="green")
+    header_text.append("  ● ", style=_theme.success)
     header_text.append(f"{label}({short})", style="bold")
     console.print(header_text)
 
     summary_text = Text()
-    summary_text.append("  └ ", style=MUTED)
-    summary_text.append(f"Added {added} lines", style="green") if added else None
+    summary_text.append("  └ ", style=_theme.muted)
+    summary_text.append(f"Added {added} lines", style=_theme.success) if added else None
     if added and removed:
-        summary_text.append(", ", style=MUTED)
-    summary_text.append(f"removed {removed} lines", style="red") if removed else None
+        summary_text.append(", ", style=_theme.muted)
+    summary_text.append(f"removed {removed} lines", style=_theme.error) if removed else None
     if not added and not removed:
-        summary_text.append("no line changes", style=MUTED)
+        summary_text.append("no line changes", style=_theme.muted)
     console.print(summary_text)
 
     # Parse hunks from unified diff and render with context collapsing
@@ -1130,19 +1165,19 @@ def _render_diff_hunks(diff: list[str], old_lines: list[str], new_lines: list[st
 
             if tag == "-":
                 line_text = Text()
-                line_text.append(f"    {old_num:>4} ", style=_DIFF_LINE_NO)
-                line_text.append(f" {display} ", style=_DIFF_RED_BG)
+                line_text.append(f"    {old_num:>4} ", style=_diff_line_no())
+                line_text.append(f" {display} ", style=_diff_remove_bg())
                 console.print(line_text)
                 old_num += 1
             elif tag == "+":
                 line_text = Text()
-                line_text.append(f"    {new_num:>4} ", style=_DIFF_LINE_NO)
-                line_text.append(f" {display} ", style=_DIFF_GREEN_BG)
+                line_text.append(f"    {new_num:>4} ", style=_diff_line_no())
+                line_text.append(f" {display} ", style=_diff_add_bg())
                 console.print(line_text)
                 new_num += 1
             else:
                 line_text = Text()
-                line_text.append(f"    {new_num:>4} ", style=_DIFF_LINE_NO)
+                line_text.append(f"    {new_num:>4} ", style=_diff_line_no())
                 line_text.append(f" {display}", style=MUTED)
                 console.print(line_text)
                 old_num += 1
@@ -1175,8 +1210,8 @@ async def _tool_ticker() -> None:
                     label = f"  [{MUTED}]{escape(_tool_ticker_summary)}  {elapsed:.0f}s[/{MUTED}]"
                     _tool_spinner.update(label)
                 elif _repl_mode and _stdout:
-                    muted = "\033[38;2;139;139;139m"
-                    rst = "\033[0m"
+                    muted = _theme.ansi_fg("muted")
+                    rst = _theme.ansi_reset
                     _stdout.write(f"\r\033[2K{muted}  {_tool_ticker_summary}  {elapsed:.0f}s{rst}")
                     _stdout.flush()
     except asyncio.CancelledError:
@@ -1294,9 +1329,9 @@ def render_tool_call_end(tool_name: str, status: str, output: Any) -> None:
     if _verbosity == Verbosity.VERBOSE:
         # Legacy-style
         if status == "success":
-            style = "green"
+            style = _theme.success
         else:
-            style = "red"
+            style = _theme.error
         output_str = ""
         if isinstance(output, dict):
             if "error" in output:
@@ -1317,7 +1352,9 @@ def render_tool_call_end(tool_name: str, status: str, output: Any) -> None:
 
     # Build the result line
     global _dedup_key, _dedup_count, _dedup_first_summary, _dedup_summary
-    status_icon = "[green]  ✓[/green]" if status == "success" else "[red]  ✗[/red]"
+    _s = _theme.success
+    _e = _theme.error
+    status_icon = f"[{_s}]  ✓[/{_s}]" if status == "success" else f"[{_e}]  ✗[/{_e}]"
     elapsed_str = f" {elapsed:.1f}s" if elapsed >= 0.1 else ""
 
     # Dedup: collapse consecutive similar tool calls (compact/detailed only)
@@ -1341,7 +1378,7 @@ def render_tool_call_end(tool_name: str, status: str, output: Any) -> None:
         console.print(f"{status_icon} {escape(summary)}{elapsed_str}")
         err = _error_summary(output)
         if err:
-            console.print(f"    [red]{escape(err)}[/red]")
+            console.print(f"    [{_theme.error}]{escape(err)}[/{_theme.error}]")
         _dedup_key = ""
         _dedup_count = 0
         _dedup_summary = ""
@@ -1369,11 +1406,13 @@ def render_tool_call_end(tool_name: str, status: str, output: Any) -> None:
 
 
 def render_error(message: str) -> None:
-    console.print(f"\n[red bold]Error:[/red bold] {escape(message)}")
+    e = _theme.error or "red"
+    console.print(f"\n[{e} bold]Error:[/{e} bold] {escape(message)}")
 
 
 def render_warning(message: str) -> None:
-    console.print(f"\n[yellow bold]Warning:[/yellow bold] {escape(message)}")
+    w = _theme.warning or "yellow"
+    console.print(f"\n[{w} bold]Warning:[/{w} bold] {escape(message)}")
 
 
 def startup_step(message: str) -> Status:
@@ -1677,7 +1716,7 @@ def render_mcp_status(statuses: dict[str, dict[str, Any]]) -> None:
         return
 
     table = Table(title="MCP Servers", show_header=True, header_style="bold")
-    table.add_column("Server", style="cyan")
+    table.add_column("Server", style=_theme.mcp_indicator or "cyan")
     table.add_column("Transport")
     table.add_column("Status")
     table.add_column("Tools", justify="right")
@@ -1685,10 +1724,10 @@ def render_mcp_status(statuses: dict[str, dict[str, Any]]) -> None:
     for name, info in statuses.items():
         status = info.get("status", "unknown")
         if status == "connected":
-            status_text = "[green]● connected[/green]"
+            status_text = f"[{_theme.success}]● connected[/{_theme.success}]"
         elif status == "error":
             err = info.get("error_message", "")
-            status_text = "[red]● error[/red]"
+            status_text = f"[{_theme.error}]● error[/{_theme.error}]"
             if err:
                 # Truncate long error messages in table
                 if len(err) > 40:
@@ -1714,7 +1753,7 @@ def render_mcp_status(statuses: dict[str, dict[str, Any]]) -> None:
 def render_mcp_server_detail(name: str, statuses: dict[str, dict[str, Any]], mcp_manager: Any) -> None:
     """Render detailed diagnostics for a single MCP server."""
     if name not in statuses:
-        console.print(f"\n[red]Unknown server: {escape(name)}[/red]")
+        console.print(f"\n[{_theme.error}]Unknown server: {escape(name)}[/{_theme.error}]")
         known = ", ".join(statuses.keys())
         console.print(f"  [{CHROME}]Available: {known}[/{CHROME}]\n")
         return
@@ -1723,9 +1762,9 @@ def render_mcp_server_detail(name: str, statuses: dict[str, dict[str, Any]], mcp
     status = info.get("status", "unknown")
 
     if status == "connected":
-        status_styled = "[green]● connected[/green]"
+        status_styled = f"[{_theme.success}]● connected[/{_theme.success}]"
     elif status == "error":
-        status_styled = "[red]● error[/red]"
+        status_styled = f"[{_theme.error}]● error[/{_theme.error}]"
     else:
         status_styled = f"[{CHROME}]○ {status}[/{CHROME}]"
 
@@ -1779,7 +1818,9 @@ def render_tool_detail() -> None:
     for i, tc in enumerate(_tool_history, 1):
         status = tc.get("status", "unknown")
         elapsed = tc.get("elapsed", 0)
-        status_icon = "[green]✓[/green]" if status == "success" else "[red]✗[/red]"
+        _s = _theme.success
+        _e = _theme.error
+        status_icon = f"[{_s}]✓[/{_s}]" if status == "success" else f"[{_e}]✗[/{_e}]"
         elapsed_str = f" ({elapsed:.1f}s)" if elapsed >= 0.1 else ""
 
         console.print(f"  {status_icon} [bold]{escape(tc['tool_name'])}[/bold]{elapsed_str}")
@@ -1794,7 +1835,7 @@ def render_tool_detail() -> None:
         if output:
             if isinstance(output, dict):
                 if "error" in output:
-                    console.print(f"    [red]{escape(str(output['error'])[:500])}[/red]")
+                    console.print(f"    [{_theme.error}]{escape(str(output['error'])[:500])}[/{_theme.error}]")
                 elif "content" in output:
                     content = str(output["content"])
                     if len(content) > 500:
@@ -1881,10 +1922,11 @@ def render_subagent_end(agent_id: str, elapsed: float, tool_calls: list[str], er
     tool_count = len(tool_calls)
 
     if error:
-        console.print(f"{indent}[red]■ Agent {escape(agent_id)} failed ({elapsed:.1f}s): {escape(error)}[/red]")
+        e = _theme.error
+        console.print(f"{indent}[{e}]■ Agent {escape(agent_id)} failed ({elapsed:.1f}s): {escape(error)}[/{e}]")
     else:
         console.print(
-            f"{indent}[green]■ Agent {escape(agent_id)}[/green] "
+            f"{indent}[{_theme.success}]■ Agent {escape(agent_id)}[/{_theme.success}] "
             f"[{MUTED}]done in {elapsed:.1f}s · {tool_count} tool call{'s' if tool_count != 1 else ''}[/{MUTED}]"
         )
 
@@ -1941,11 +1983,11 @@ def render_context_footer(
     tokens_remaining = auto_compact_threshold - current_tokens
 
     if pct_full > 75:
-        color = "red"
+        color = _theme.danger
     elif pct_full > 50:
-        color = "yellow"
+        color = _theme.warning
     else:
-        color = CHROME
+        color = _theme.chrome
 
     parts = [f"{_format_tokens(current_tokens)}/{_format_tokens(max_context)} ({pct_full:.0f}%)"]
     if response_tokens:

@@ -46,8 +46,16 @@ from .instructions import (
     find_global_instructions,
     find_project_instructions_path,
 )
-from .renderer import CHROME, GOLD, MUTED
 from .skills import SkillRegistry
+from .themes import CliTheme
+
+# Module-level color aliases — updated by run_cli() after theme is set.
+# These are short names for use in f-strings throughout this module.
+GOLD = "#C5A059"
+MUTED = "#8b8b8b"
+CHROME = "#6b7280"
+_SUCCESS = "#22c55e"
+_ERROR = "#CD6B6B"
 
 logger = logging.getLogger(__name__)
 
@@ -896,13 +904,13 @@ async def _run_mcp_startup_live(
         if st == "connected":
             pending.discard(name)
             count = status.get("tool_count", 0)
-            renderer.console.print(f"  [green]✓[/green] [{MUTED}]{name} ({count} tools)[/{MUTED}]")
+            renderer.console.print(f"  [{_SUCCESS}]✓[/{_SUCCESS}] [{MUTED}]{name} ({count} tools)[/{MUTED}]")
         elif st == "error":
             pending.discard(name)
             err = status.get("error_message", "failed")
             if len(err) > 40:
                 err = err[:37] + "..."
-            renderer.console.print(f"  [red]✗[/red] [{MUTED}]{name} ({err})[/{MUTED}]")
+            renderer.console.print(f"  [{_ERROR}]✗[/{_ERROR}] [{MUTED}]{name} ({err})[/{MUTED}]")
 
     try:
         with renderer.startup_step(f"Connecting {len(server_names)} MCP server(s)..."):
@@ -981,6 +989,17 @@ async def run_cli(
 ) -> None:
     """Main entry point for CLI mode."""
     working_dir = os.getcwd()
+
+    # Initialize CLI theme from config
+    theme = CliTheme.load(config.cli.theme)
+    renderer.set_theme(theme)
+    # Update module-level color aliases from active theme
+    global GOLD, MUTED, CHROME, _SUCCESS, _ERROR
+    GOLD = renderer.GOLD
+    MUTED = renderer.MUTED
+    CHROME = renderer.CHROME
+    _SUCCESS = renderer._theme.success
+    _ERROR = renderer._theme.error
 
     # Init DB (same as web UI)
     db_path = config.app.data_dir / "chat.db"
@@ -1324,6 +1343,36 @@ async def run_cli(
         elif tool_name == "ask_user":
             arguments = {**arguments, "_ask_callback": _ask_user_callback}
         elif tool_name == "introspect":
+            _rt_info: dict[str, Any] = {"interface": "cli"}
+            _rt_space: dict[str, Any] | None = None
+            if conversation_id:
+                try:
+                    _rt_conv = storage.get_conversation(db, conversation_id)
+                except Exception:
+                    _rt_conv = None
+                if _rt_conv:
+                    _rt_info["conversation_id"] = conversation_id
+                    _rt_info["conversation_title"] = _rt_conv.get("title")
+                    _rt_info["slug"] = _rt_conv.get("slug")
+                    try:
+                        _rt_msgs = storage.list_messages(db, conversation_id)
+                        _rt_info["message_count"] = len(_rt_msgs)
+                    except Exception:
+                        _rt_info["message_count"] = 0
+                    try:
+                        _rt_info["token_totals"] = storage.get_conversation_token_total(db, conversation_id)
+                    except Exception:
+                        _rt_info["token_totals"] = 0
+                    _rt_sid = _rt_conv.get("space_id")
+                    if _rt_sid:
+                        from ..services.space_storage import get_space as _get_sp
+
+                        _rt_space = _get_sp(db, _rt_sid)
+            if _rt_space:
+                _rt_info["active_space"] = {
+                    "name": _rt_space.get("name"),
+                    "id": _rt_space.get("id"),
+                }
             arguments = {
                 **arguments,
                 "_config": config,
@@ -1333,6 +1382,9 @@ async def run_cli(
                 "_instructions_info": _introspect_instructions_info,
                 "_tools_openai": tools_openai,
                 "_working_dir": working_dir,
+                "_active_space": _rt_space,
+                "_db": db,
+                "_runtime_info": _rt_info,
             }
         if tool_registry.has_tool(tool_name):
             result = await tool_registry.call_tool(tool_name, arguments)
@@ -2180,8 +2232,8 @@ async def _run_repl(
             renderer.console.print(f"[{CHROME}]Press Ctrl+C again to exit[/{CHROME}]")
 
     # Styled prompt — dim while agent is working to signal "you can type to queue"
-    _prompt_text = HTML("<style fg='#C5A059'>❯</style> ")
-    _prompt_dim = HTML(f"<style fg='{CHROME}'>❯</style> ")
+    _prompt_text = HTML(f"<style fg='{renderer._theme.accent}'>❯</style> ") if renderer._theme.accent else HTML("❯ ")
+    _prompt_dim = HTML(f"<style fg='{renderer._theme.chrome}'>❯</style> ") if renderer._theme.chrome else HTML("❯ ")
     _continuation = "  "  # align with "❯ "
 
     def _prompt() -> HTML:
@@ -2189,21 +2241,21 @@ async def _run_repl(
 
     _repl_style = PtStyle.from_dict(
         {
-            "completion-menu": f"bg:#1a1a2e {CHROME}",
-            "completion-menu.completion": f"bg:#1a1a2e {CHROME}",
-            "completion-menu.completion.current": f"bg:{GOLD} #1a1a2e",
-            "completion-menu.meta.completion": f"bg:#1a1a2e {MUTED}",
-            "completion-menu.meta.completion.current": f"bg:{GOLD} #1a1a2e",
-            "bottom-toolbar": "bg:#1e1e2e #9090a0 noreverse",
+            "completion-menu": f"bg:{renderer._theme.bg_dark} {renderer._theme.chrome}",
+            "completion-menu.completion": f"bg:{renderer._theme.bg_dark} {renderer._theme.chrome}",
+            "completion-menu.completion.current": f"bg:{renderer._theme.accent} {renderer._theme.bg_dark}",
+            "completion-menu.meta.completion": f"bg:{renderer._theme.bg_dark} {renderer._theme.muted}",
+            "completion-menu.meta.completion.current": f"bg:{renderer._theme.accent} {renderer._theme.bg_dark}",
+            "bottom-toolbar": f"bg:{renderer._theme.bg_darker} {renderer._theme.muted} noreverse",
             "bottom-toolbar.text": "noreverse",
-            "bottom-toolbar.model": GOLD,
-            "bottom-toolbar.tokens": "#c0c0d0",
-            "bottom-toolbar.tokens-warn": "#e8b830",
-            "bottom-toolbar.tokens-danger": "#e05050",
-            "bottom-toolbar.dim": "#707888",
-            "bottom-toolbar.dir": "#a0a8b8",
-            "bottom-toolbar.sep": "#505868",
-            "bottom-toolbar.mcp": "#88a0b8",
+            "bottom-toolbar.model": renderer._theme.accent,
+            "bottom-toolbar.tokens": renderer._theme.text_secondary,
+            "bottom-toolbar.tokens-warn": renderer._theme.warning,
+            "bottom-toolbar.tokens-danger": renderer._theme.danger,
+            "bottom-toolbar.dim": renderer._theme.chrome,
+            "bottom-toolbar.dir": renderer._theme.dir_display,
+            "bottom-toolbar.sep": renderer._theme.toolbar_sep,
+            "bottom-toolbar.mcp": renderer._theme.mcp_indicator,
         }
     )
 
@@ -2323,8 +2375,8 @@ async def _run_repl(
         from prompt_toolkit.shortcuts import message_dialog
         from prompt_toolkit.styles import Style
 
-        cmd = "#C5A059 bold"
-        desc = "#94A3B8"
+        cmd = f"{renderer._theme.accent} bold" if renderer._theme.accent else "bold"
+        desc = renderer._theme.secondary or ""
         help_text = FormattedText(
             [
                 ("bold", " Conversations\n"),
@@ -2394,12 +2446,12 @@ async def _run_repl(
         )
         dialog_style = Style.from_dict(
             {
-                "dialog": "bg:#1a1a2e",
-                "dialog frame.label": "bg:#1a1a2e #C5A059 bold",
-                "dialog.body": "bg:#1a1a2e #e0e0e0",
-                "dialog shadow": "bg:#0a0a15",
-                "button": "bg:#C5A059 #1a1a2e",
-                "button.focused": "bg:#e0c070 #1a1a2e bold",
+                "dialog": f"bg:{renderer._theme.bg_dark}",
+                "dialog frame.label": f"bg:{renderer._theme.bg_dark} {renderer._theme.accent} bold",
+                "dialog.body": f"bg:{renderer._theme.bg_dark} {renderer._theme.text_light}",
+                "dialog shadow": f"bg:{renderer._theme.bg_shadow}",
+                "button": f"bg:{renderer._theme.accent} {renderer._theme.bg_dark}",
+                "button.focused": f"bg:{renderer._theme.accent_hover} {renderer._theme.bg_dark} bold",
             }
         )
         await message_dialog(
@@ -2517,18 +2569,18 @@ async def _run_repl(
 
         style = Style.from_dict(
             {
-                "title": "bg:#C5A059 #1a1a2e bold",
-                "hint": "bg:#3a3a4e #94A3B8",
-                "separator": "#3a3a4e",
-                "list.selected": "bg:#2a2a3e #C5A059 bold",
-                "list.selected-meta": "bg:#2a2a3e #94A3B8",
-                "list.item": "#e0e0e0",
-                "list.meta": "#6b7280",
-                "list.badge": "#C5A059 italic",
-                "preview.role-user": "#C5A059 bold",
-                "preview.role-ai": "#94A3B8 bold",
-                "preview.content": "#e0e0e0",
-                "preview.empty": "#6b7280 italic",
+                "title": f"bg:{renderer._theme.accent} {renderer._theme.bg_dark} bold",
+                "hint": f"bg:{renderer._theme.bg_subtle} {renderer._theme.secondary}",
+                "separator": renderer._theme.bg_subtle,
+                "list.selected": f"bg:{renderer._theme.bg_highlight} {renderer._theme.accent} bold",
+                "list.selected-meta": f"bg:{renderer._theme.bg_highlight} {renderer._theme.secondary}",
+                "list.item": renderer._theme.text_light,
+                "list.meta": renderer._theme.chrome,
+                "list.badge": f"{renderer._theme.accent} italic",
+                "preview.role-user": f"{renderer._theme.accent} bold",
+                "preview.role-ai": f"{renderer._theme.secondary} bold",
+                "preview.content": renderer._theme.text_light,
+                "preview.empty": f"{renderer._theme.chrome} italic",
             }
         )
 
@@ -2819,14 +2871,14 @@ async def _run_repl(
                 return True
             except ComplianceError as exc:
                 config = previous
-                renderer.console.print(f"[red]Config rebuild blocked (compliance failure): {exc}[/red]")
+                renderer.console.print(f"[{_ERROR}]Config rebuild blocked (compliance failure): {exc}[/{_ERROR}]")
                 logger.warning("Config rebuild failed after pack change", exc_info=True)
                 if rollback_pack_id and rollback_action:
                     _rollback_pack_mutation(db, rollback_pack_id, rollback_project_path, rollback_action)
                 return False
             except Exception:
                 config = previous
-                renderer.console.print("[red]Config rebuild failed — keeping previous config.[/red]")
+                renderer.console.print(f"[{_ERROR}]Config rebuild failed — keeping previous config.[/{_ERROR}]")
                 logger.warning("Config rebuild failed after pack change", exc_info=True)
                 return False
 
@@ -2854,7 +2906,7 @@ async def _run_repl(
                     renderer.console.print("[yellow]Rolled back: pack re-attached to restore valid config.[/yellow]")
             except Exception:
                 logger.error("Rollback failed", exc_info=True)
-                renderer.console.print("[red]Rollback also failed. Manual intervention required.[/red]")
+                renderer.console.print(f"[{_ERROR}]Rollback also failed. Manual intervention required.[/{_ERROR}]")
 
         # Inject initial space instructions if space is active
         if _active_space[0] and space_instructions:
@@ -3346,7 +3398,7 @@ async def _run_repl(
                         for sp in spaces:
                             cnt = count_space_conversations(db, sp["id"])
                             active = (
-                                " [green](active)[/green]"
+                                f" [{_SUCCESS}](active)[/{_SUCCESS}]"
                                 if (_active_space[0] and _active_space[0]["id"] == sp["id"])
                                 else ""
                             )
@@ -3371,7 +3423,7 @@ async def _run_repl(
                         conv["space_id"] = sp["id"]
                         _update_conv_space(db, conv["id"], sp["id"])
                         _inject_space_instructions(sp)
-                        renderer.console.print(f"[green]Active space: {sp['name']}[/green]\n")
+                        renderer.console.print(f"[{_SUCCESS}]Active space: {sp['name']}[/{_SUCCESS}]\n")
 
                     elif sub == "show":
                         target = parts[2].strip() if len(parts) >= 3 else ""
@@ -3441,7 +3493,7 @@ async def _run_repl(
                                 _active_space[0] = sp_refreshed
                             if cfg.instructions:
                                 _inject_space_instructions(sp_refreshed or sp, cfg.instructions)
-                            renderer.console.print(f"[green]Refreshed: {sp['name']}[/green]\n")
+                            renderer.console.print(f"[{_SUCCESS}]Refreshed: {sp['name']}[/{_SUCCESS}]\n")
                         except Exception:
                             renderer.render_error(f"Failed to refresh space from {fpath}")
                         continue
@@ -3519,7 +3571,7 @@ async def _run_repl(
                         _update_conv_space(db, conv["id"], sp["id"])
                         _inject_space_instructions(sp)
 
-                        renderer.console.print(f"[green]Created local space: {sp['name']}[/green]\n")
+                        renderer.console.print(f"[{_SUCCESS}]Created local space: {sp['name']}[/{_SUCCESS}]\n")
                         renderer.console.print(f"  File: {spath}")
                         renderer.console.print("  Edit the YAML to add instructions, packs, and config.\n")
 
@@ -3566,7 +3618,8 @@ async def _run_repl(
                             model=scfg.config.get("model"),
                         )
                         renderer.console.print(
-                            f"[green]Loaded space: {sp['name']}[/green] [{MUTED}]{sp['id'][:8]}...[/{MUTED}]\n"
+                            f"[{_SUCCESS}]Loaded space: {sp['name']}[/{_SUCCESS}]"
+                            f" [{MUTED}]{sp['id'][:8]}...[/{MUTED}]\n"
                         )
 
                     elif sub == "clone":
@@ -3593,7 +3646,7 @@ async def _run_repl(
                                 for err in result.errors:
                                     renderer.render_error(err)
                             else:
-                                renderer.console.print(f"[green]Cloned space: {_sp_match['name']}[/green]\n")
+                                renderer.console.print(f"[{_SUCCESS}]Cloned space: {_sp_match['name']}[/{_SUCCESS}]\n")
                         except Exception as e:
                             renderer.render_error(str(e))
 
@@ -3623,7 +3676,7 @@ async def _run_repl(
                             existing_paths.append({"local_path": str(_map_path), "repo_url": ""})
                             _sync_sp_paths(db, _active_space[0]["id"], existing_paths)
                             renderer.console.print(
-                                f"[green]Mapped[/green] {_map_path} to space {_active_space[0]['name']}\n"
+                                f"[{_SUCCESS}]Mapped[/{_SUCCESS}] {_map_path} to space {_active_space[0]['name']}\n"
                             )
                         except Exception as e:
                             renderer.render_error(str(e))
@@ -3654,14 +3707,15 @@ async def _run_repl(
                                 _active_space[0] = sp_updated
                             if _edit_value:
                                 _inject_space_instructions(sp_updated or sp, _edit_value)
-                            renderer.console.print(f"[green]Updated instructions for {sp['name']}[/green]\n")
+                            renderer.console.print(f"[{_SUCCESS}]Updated instructions for {sp['name']}[/{_SUCCESS}]\n")
                         elif _edit_field == "model":
                             _update_sp_edit(db, sp["id"], model=_edit_value or None)
                             sp_updated = _get_sp_edit(db, sp["id"])
                             if sp_updated:
                                 _active_space[0] = sp_updated
                             renderer.console.print(
-                                f"[green]Updated model for {sp['name']}: {_edit_value or '(cleared)'}[/green]\n"
+                                f"[{_SUCCESS}]Updated model for {sp['name']}:"
+                                f" {_edit_value or '(cleared)'}[/{_SUCCESS}]\n"
                             )
                         elif _edit_field == "name":
                             if not _edit_value:
@@ -3671,7 +3725,7 @@ async def _run_repl(
                             sp_updated = _get_sp_edit(db, sp["id"])
                             if sp_updated:
                                 _active_space[0] = sp_updated
-                            renderer.console.print(f"[green]Renamed space to: {_edit_value}[/green]\n")
+                            renderer.console.print(f"[{_SUCCESS}]Renamed space to: {_edit_value}[/{_SUCCESS}]\n")
                         else:
                             renderer.console.print(
                                 f"[{CHROME}]Unknown field: {_edit_field}. Use: instructions, model, name[/{CHROME}]\n"
@@ -3711,7 +3765,7 @@ async def _run_repl(
                             renderer.console.print(_yaml_mod.dump(_data, default_flow_style=False, sort_keys=False))
                         else:
                             _wsf(_export_path, cfg)
-                            renderer.console.print(f"[green]Exported space to:[/green] {_export_path}\n")
+                            renderer.console.print(f"[{_SUCCESS}]Exported space to:[/{_SUCCESS}] {_export_path}\n")
 
                     elif sub == "sources":
                         sp = _active_space[0]  # type: ignore[assignment]
@@ -3797,7 +3851,8 @@ async def _run_repl(
                             continue
                         _link_src(db, sp["id"], source_id=match["id"])
                         renderer.console.print(
-                            f"[green]Linked '{match.get('title', 'Untitled')}' to space '{sp['name']}'[/green]\n"
+                            f"[{_SUCCESS}]Linked '{match.get('title', 'Untitled')}'"
+                            f" to space '{sp['name']}'[/{_SUCCESS}]\n"
                         )
 
                     elif sub == "unlink-source":
@@ -3852,7 +3907,8 @@ async def _run_repl(
                             continue
                         _unlink_src(db, sp["id"], source_id=match["id"])
                         renderer.console.print(
-                            f"[green]Unlinked '{match.get('title', 'Untitled')}' from space '{sp['name']}'[/green]\n"
+                            f"[{_SUCCESS}]Unlinked '{match.get('title', 'Untitled')}'"
+                            f" from space '{sp['name']}'[/{_SUCCESS}]\n"
                         )
 
                     else:
@@ -3928,12 +3984,12 @@ async def _run_repl(
                             errors = packs_service.validate_manifest(manifest, pack_path)
                             if errors:
                                 for err in errors:
-                                    renderer.console.print(f"[red]  {err}[/red]")
+                                    renderer.console.print(f"[{_ERROR}]  {err}[/{_ERROR}]")
                                 continue
                             install_result: dict[str, Any] = packs_service.install_pack(db, manifest, pack_path)
                             action_word = "Updated" if install_result.get("action") == "updated" else "Installed"
                             renderer.console.print(
-                                f"[green]{action_word}[/green] @{manifest.namespace}/{manifest.name}"
+                                f"[{_SUCCESS}]{action_word}[/{_SUCCESS}] @{manifest.namespace}/{manifest.name}"
                                 f" v{manifest.version} ({install_result.get('artifact_count', 0)} artifacts)"
                             )
                             _rebuild_pack_config()
@@ -3948,7 +4004,7 @@ async def _run_repl(
                                 _refresh_artifact_prompt()
                                 _refresh_skill_tools()
                         except ValueError as exc:
-                            renderer.console.print(f"[red]{exc}[/red]")
+                            renderer.console.print(f"[{_ERROR}]{exc}[/{_ERROR}]")
                         renderer.console.print()
 
                     elif sub == "remove":
@@ -3965,7 +4021,7 @@ async def _run_repl(
                             continue
                         removed = packs_service.remove_pack_by_id(db, _pm["id"])
                         if removed:
-                            renderer.console.print(f"[green]Removed[/green] @{ns}/{name}\n")
+                            renderer.console.print(f"[{_SUCCESS}]Removed[/{_SUCCESS}] @{ns}/{name}\n")
                             _rebuild_pack_config()
                             if artifact_registry is not None:
                                 artifact_registry.load_from_db(
@@ -3999,7 +4055,7 @@ async def _run_repl(
                             auto_attach = getattr(psc, "auto_attach", True)
                             cached_entry = cached_map.get(url)
                             status = (
-                                f"[green]cached[/green] ({cached_entry.ref[:8]})"
+                                f"[{_SUCCESS}]cached[/{_SUCCESS}] ({cached_entry.ref[:8]})"
                                 if cached_entry
                                 else "[yellow]not cloned[/yellow]"
                             )
@@ -4027,7 +4083,7 @@ async def _run_repl(
                             renderer.console.print(f"  Refreshing {url}...")
                             src_result = ps_mod.ensure_source(url, branch, data_dir)
                             if not src_result.success:
-                                renderer.console.print(f"  [red]Failed: {src_result.error}[/red]")
+                                renderer.console.print(f"  [{_ERROR}]Failed: {src_result.error}[/{_ERROR}]")
                                 continue
                             if src_result.path:
                                 from ..services.pack_refresh import install_from_source
@@ -4045,7 +4101,7 @@ async def _run_repl(
                         parts_msg = f"{total_installed} installed, {total_updated} updated"
                         if total_attached:
                             parts_msg += f", {total_attached} attached"
-                        renderer.console.print(f"[green]Done:[/green] {parts_msg}\n")
+                        renderer.console.print(f"[{_SUCCESS}]Done:[/{_SUCCESS}] {parts_msg}\n")
                         if total_installed > 0 or total_updated > 0 or total_attached > 0:
                             if _rebuild_pack_config():
                                 if artifact_registry is not None:
@@ -4092,12 +4148,12 @@ async def _run_repl(
 
                         add_result = add_pack_source(url)
                         if not add_result.ok:
-                            renderer.console.print(f"[red]{rich_escape(add_result.message)}[/red]\n")
+                            renderer.console.print(f"[{_ERROR}]{rich_escape(add_result.message)}[/{_ERROR}]\n")
                             continue
                         if add_result.message:
                             renderer.console.print(f"[{CHROME}]{rich_escape(add_result.message)}[/{CHROME}]\n")
                             continue
-                        renderer.console.print(f"[green]Added pack source:[/green] {rich_escape(url)}")
+                        renderer.console.print(f"[{_SUCCESS}]Added pack source:[/{_SUCCESS}] {rich_escape(url)}")
                         renderer.console.print(f"[{MUTED}]Run /pack refresh to clone and install packs.[/{MUTED}]\n")
 
                     elif sub == "attach":
@@ -4127,11 +4183,11 @@ async def _run_repl(
                         try:
                             attach_pack(db, _pm["id"], project_path=project_path)
                         except ValueError as exc:
-                            renderer.console.print(f"[red]{rich_escape(str(exc))}[/red]\n")
+                            renderer.console.print(f"[{_ERROR}]{rich_escape(str(exc))}[/{_ERROR}]\n")
                             continue
-                        scope = "project" if project_path else "global"
+                        scope = "directory" if project_path else "global"
                         renderer.console.print(
-                            f"[green]Attached[/green] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
+                            f"[{_SUCCESS}]Attached[/{_SUCCESS}] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
                         )
                         if _rebuild_pack_config(
                             rollback_pack_id=_pm["id"],
@@ -4175,9 +4231,9 @@ async def _run_repl(
                         project_path = str(Path(working_dir)) if _detach_project else None
                         removed = detach_pack(db, _pm["id"], project_path=project_path)
                         if removed:
-                            scope = "project" if project_path else "global"
+                            scope = "directory" if project_path else "global"
                             renderer.console.print(
-                                f"[green]Detached[/green] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
+                                f"[{_SUCCESS}]Detached[/{_SUCCESS}] @{rich_escape(ns)}/{rich_escape(name)} ({scope})\n"
                             )
                             if _rebuild_pack_config(
                                 rollback_pack_id=_pm["id"],
@@ -4214,15 +4270,15 @@ async def _run_repl(
                             errors = packs_service.validate_manifest(manifest, pack_path)
                             if errors:
                                 for err in errors:
-                                    renderer.console.print(f"[red]  {err}[/red]")
+                                    renderer.console.print(f"[{_ERROR}]  {err}[/{_ERROR}]")
                                 continue
                             update_result: dict[str, Any] = packs_service.update_pack(db, manifest, pack_path)
                             renderer.console.print(
-                                f"[green]Updated[/green] @{manifest.namespace}/{manifest.name}"
+                                f"[{_SUCCESS}]Updated[/{_SUCCESS}] @{manifest.namespace}/{manifest.name}"
                                 f" v{manifest.version} ({update_result.get('artifact_count', 0)} artifacts)"
                             )
                         except ValueError as exc:
-                            renderer.console.print(f"[red]{exc}[/red]")
+                            renderer.console.print(f"[{_ERROR}]{exc}[/{_ERROR}]")
                         renderer.console.print()
 
                     else:
@@ -4256,7 +4312,7 @@ async def _run_repl(
                         try:
                             arts = _art_store.list_artifacts(db, artifact_type=_atype, source=_asource)
                         except ValueError as _ve:
-                            renderer.console.print(f"[red]Invalid filter: {_ve}[/red]\n")
+                            renderer.console.print(f"[{_ERROR}]Invalid filter: {_ve}[/{_ERROR}]\n")
                             continue
                         if not arts:
                             renderer.console.print(f"[{CHROME}]No artifacts found.[/{CHROME}]\n")
@@ -4303,7 +4359,7 @@ async def _run_repl(
                             renderer.console.print(f"[{CHROME}]Artifact not found.[/{CHROME}]\n")
                             continue
                         _art_store.delete_artifact(db, art["id"])
-                        renderer.console.print(f"[green]Deleted[/green] {_fqn}\n")
+                        renderer.console.print(f"[{_SUCCESS}]Deleted[/{_SUCCESS}] {_fqn}\n")
 
                     elif sub == "import":
                         renderer.console.print(
@@ -4340,7 +4396,7 @@ async def _run_repl(
                     )
                     renderer.console.print()
                     if not _ahc_report.issues:
-                        renderer.console.print("[green]  ✅ No issues found[/green]\n")
+                        renderer.console.print(f"[{_SUCCESS}]  ✅ No issues found[/{_SUCCESS}]\n")
                     else:
                         for _ahc_issue in _ahc_report.issues:
                             _icon = {"error": "❌", "warn": "⚠️", "info": "💡"}.get(_ahc_issue.severity.value, "•")
@@ -4381,7 +4437,7 @@ async def _run_repl(
                                 await mcp_manager.connect_server(server_name)
                                 srv_status = mcp_manager.get_server_statuses().get(server_name, {})
                                 if srv_status.get("status") == "connected":
-                                    renderer.console.print(f"[green]Connected: {server_name}[/green]\n")
+                                    renderer.console.print(f"[{_SUCCESS}]Connected: {server_name}[/{_SUCCESS}]\n")
                                 else:
                                     err = srv_status.get("error_message", "unknown error")
                                     renderer.render_error(f"Failed to connect '{server_name}': {err}")
@@ -4392,7 +4448,7 @@ async def _run_repl(
                                 await mcp_manager.reconnect_server(server_name)
                                 srv_status = mcp_manager.get_server_statuses().get(server_name, {})
                                 if srv_status.get("status") == "connected":
-                                    renderer.console.print(f"[green]Reconnected: {server_name}[/green]\n")
+                                    renderer.console.print(f"[{_SUCCESS}]Reconnected: {server_name}[/{_SUCCESS}]\n")
                                 else:
                                     err = srv_status.get("error_message", "unknown error")
                                     renderer.render_error(f"Failed to reconnect '{server_name}': {err}")
@@ -4457,7 +4513,7 @@ async def _run_repl(
                                 if steps:
                                     renderer.start_plan(steps)
                                 renderer.console.print(
-                                    "[green]Plan approved.[/green] Full tools restored.\n"
+                                    f"[{_SUCCESS}]Plan approved.[/{_SUCCESS}] Full tools restored.\n"
                                     f"  [{MUTED}]Plan injected into context. "
                                     f"Send a message to start.[/{MUTED}]\n"
                                 )
