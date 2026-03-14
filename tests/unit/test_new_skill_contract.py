@@ -43,9 +43,10 @@ class TestNewSkillContract:
     def test_forbids_content_field(self) -> None:
         """Prompt must explicitly tell the model NOT to use 'content:' for local CLI skills."""
         prompt = _load_prompt()
-        prompt_lower = prompt.lower()
-        assert "content:" in prompt_lower, "Prompt must mention 'content:' to warn against it"
-        assert "not" in prompt_lower or "do not" in prompt_lower, "Prompt must explicitly prohibit using 'content:'"
+        assert "Do NOT use `content:`" in prompt, (
+            "Prompt must contain the explicit prohibition 'Do NOT use `content:`' "
+            "to guard against the common content-vs-prompt mistake"
+        )
 
     def test_requires_block_scalar_for_backslash(self) -> None:
         """Prompt must require block scalar (prompt: |) for backslash/regex content."""
