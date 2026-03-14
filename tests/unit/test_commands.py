@@ -702,6 +702,19 @@ class TestArtifactCommands:
         assert result is not None
         assert result.kind == "show_message"
 
+    def test_artifacts_with_subcommand_not_overridden(self) -> None:
+        """Regression: /artifacts show X must NOT override subcommand to 'list'."""
+        result = execute_slash_command("/artifacts show ns/skill/test", _ctx())
+        assert result is not None
+        assert result.kind == "show_artifact"
+        assert result.artifact_fqn == "ns/skill/test"
+
+    def test_artifacts_delete_not_overridden(self) -> None:
+        """Regression: /artifacts delete X must NOT override subcommand to 'list'."""
+        result = execute_slash_command("/artifacts delete ns/skill/test", _ctx())
+        assert result is not None
+        assert result.kind == "delete_artifact"
+
 
 # ---------------------------------------------------------------------------
 # Pack
@@ -805,6 +818,19 @@ class TestPackCommands:
         result = execute_slash_command("/pack bogus", _ctx())
         assert result is not None
         assert result.kind == "show_message"
+
+    def test_packs_with_subcommand_not_overridden(self) -> None:
+        """Regression: /packs show X must NOT override subcommand to 'list'."""
+        result = execute_slash_command("/packs show ns/name", _ctx())
+        assert result is not None
+        assert result.kind == "show_pack"
+        assert result.pack_ref == "ns/name"
+
+    def test_packs_remove_not_overridden(self) -> None:
+        """Regression: /packs remove X must NOT override subcommand to 'list'."""
+        result = execute_slash_command("/packs remove ns/name", _ctx())
+        assert result is not None
+        assert result.kind == "delete_pack"
 
 
 # ---------------------------------------------------------------------------
@@ -917,6 +943,12 @@ class TestPlanCommands:
         assert result.kind == "edit_plan"
         assert result.plan_edit_arg == "some edits"
 
+    def test_plan_reject(self) -> None:
+        """Regression: /plan reject must dispatch as reject_plan, not fall through to agent."""
+        result = _exec("/plan reject")
+        assert result is not None
+        assert result.kind == "reject_plan"
+
     def test_plan_inline_prompt_returns_none(self) -> None:
         """Inline plan prompts fall through to the agent loop."""
         result = _exec("/plan build a REST API")
@@ -1021,6 +1053,7 @@ class TestMetadataConsistency:
             "sources",
             "link-source",
             "unlink-source",
+            "delete",
         }
         actual = set(SUBCOMMAND_COMPLETIONS["space"])
         assert actual == expected, f"Missing: {expected - actual}, Extra: {actual - expected}"

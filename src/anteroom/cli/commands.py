@@ -277,6 +277,7 @@ SUBCOMMAND_COMPLETIONS: dict[str, list[str]] = {
         "sources",
         "link-source",
         "unlink-source",
+        "delete",
     ],
     "config": ["list", "get", "set", "reset"],
     "mcp": ["status", "connect", "disconnect", "reconnect"],
@@ -771,7 +772,7 @@ def _dispatch_artifact(parsed: ParsedSlashCommand, raw_prompt: str) -> CommandRe
     parts = raw_prompt.split(maxsplit=2)
     subcommand = parts[1].lower() if len(parts) >= 2 else ""
 
-    if parsed.name == "/artifacts":
+    if parsed.name == "/artifacts" and not subcommand:
         subcommand = "list"
 
     if subcommand in {"", "list"}:
@@ -811,7 +812,7 @@ def _dispatch_pack(parsed: ParsedSlashCommand, raw_prompt: str) -> CommandResult
     parts = raw_prompt.split(maxsplit=2)
     subcommand = parts[1].lower() if len(parts) >= 2 else ""
 
-    if parsed.name == "/packs":
+    if parsed.name == "/packs" and not subcommand:
         subcommand = "list"
 
     if subcommand in {"", "list"}:

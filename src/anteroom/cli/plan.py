@@ -6,7 +6,7 @@ import os
 import re
 from pathlib import Path
 
-_PLAN_SUBCOMMANDS = frozenset({"on", "start", "approve", "status", "edit", "off"})
+_PLAN_SUBCOMMANDS = frozenset({"on", "start", "approve", "status", "edit", "off", "reject"})
 
 # Tools allowed during plan mode — read-only exploration plus write_file for the plan itself
 PLAN_MODE_ALLOWED_TOOLS = frozenset(
