@@ -1,0 +1,321 @@
+"""CLI subcommand handlers for `aroom workflow`.
+
+Uses workflow-neutral language throughout. Domain-specific concepts
+(issues, PRs) only appear in built-in workflow definitions, not here.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from rich.console import Console
+from rich.table import Table
+
+if TYPE_CHECKING:
+    from ..config import AppConfig
+
+logger = logging.getLogger(__name__)
+
+console = Console()
+
+
+def _get_builtin_workflow_path(workflow_id: str) -> Path | None:
+    """Resolve a built-in workflow definition by ID."""
+    workflows_dir = Path(__file__).parent.parent / "workflows"
+    path = workflows_dir / f"{workflow_id}.yaml"
+    return path if path.exists() else None
+
+
+def _run_workflow(config: AppConfig, args: argparse.Namespace) -> None:
+    """Dispatch `aroom workflow` subcommands."""
+    action = getattr(args, "workflow_action", None)
+    if not action:
+        console.print("Usage: aroom workflow {run,status,list,history}")
+        return
+
+    from ..db import get_db
+
+    db = get_db(config.app.data_dir / "chat.db")
+
+    if action == "run":
+        _handle_run(config, db, args)
+    elif action == "status":
+        _handle_status(db, args)
+    elif action == "list":
+        _handle_list(db, args)
+    elif action == "history":
+        _handle_history(db, args)
+    else:
+        console.print(f"Unknown workflow action: {action}")
+
+
+def _handle_run(config: AppConfig, db: Any, args: argparse.Namespace) -> None:
+    """Handle `aroom workflow run <workflow_id>`."""
+    from ..services.workflow_engine import WorkflowEngine, load_definition
+    from ..services.workflow_runners import create_default_registry
+
+    workflow_id = getattr(args, "workflow_name", None)
+    if not workflow_id:
+        console.print("[red]Error:[/red] workflow name is required")
+        return
+
+    # Resolve definition: built-in or filesystem path
+    path = _get_builtin_workflow_path(workflow_id)
+    if path is None:
+        candidate = Path(workflow_id)
+        if candidate.exists() and candidate.suffix in (".yaml", ".yml"):
+            path = candidate
+        else:
+            console.print(f"[red]Error:[/red] Unknown workflow: {workflow_id!r}")
+            console.print("Available built-in workflows:")
+            _list_builtin_workflows()
+            return
+
+    try:
+        definition = load_definition(path)
+    except (ValueError, FileNotFoundError) as exc:
+        console.print(f"[red]Error loading workflow:[/red] {exc}")
+        return
+
+    # Collect inputs from CLI args
+    inputs: dict[str, Any] = {}
+    issue_number = getattr(args, "issue", None)
+    if issue_number is not None:
+        inputs["issue_number"] = issue_number
+
+    # Determine target from inputs or definition
+    target_kind = "workflow"
+    target_ref = workflow_id
+    if "issue_number" in inputs:
+        target_kind = "issue"
+        target_ref = str(inputs["issue_number"])
+
+    # Dry run: show plan without executing
+    if getattr(args, "dry_run", False):
+        console.print(f"\n[bold]Workflow:[/bold] {definition.id} v{definition.version}")
+        console.print(f"[bold]Target:[/bold] {target_kind}:{target_ref}")
+        console.print(f"[bold]Inputs:[/bold] {inputs}")
+        console.print(f"\n[bold]Steps ({len(definition.steps)}):[/bold]")
+        for i, step in enumerate(definition.steps, 1):
+            label = f"  {i}. [{step.type}] {step.id}"
+            if step.runner:
+                label += f" ({step.runner})"
+            console.print(label)
+        return
+
+    # Register built-in gates
+    from ..workflows.gates import register_builtin_gates
+
+    register_builtin_gates()
+
+    # Create AI service and tool registry for agent runners
+    ai_service = None
+    tool_executor = None
+    tools_openai = None
+    try:
+        from ..services.ai_service import create_ai_service
+        from ..tools import ToolRegistry, register_default_tools
+
+        ai_service = create_ai_service(config.ai)
+        tool_registry = ToolRegistry()
+        register_default_tools(tool_registry, working_dir=str(Path.cwd()))
+        tool_executor = tool_registry.call_tool
+        tools_openai = tool_registry.get_openai_tools()
+    except Exception as exc:
+        logger.warning("Could not initialize AI service: %s", exc)
+        console.print(
+            "[yellow]Warning:[/yellow] AI service not available."
+            " Agent runner steps will fail. Shell/script steps will work."
+        )
+
+    # Create engine
+    registry = create_default_registry()
+    engine = WorkflowEngine(
+        db,
+        config.workflow,
+        registry,
+        effective_approval_mode=config.safety.approval_mode,
+        ai_service=ai_service,
+        tool_executor=tool_executor,
+        tools_openai=tools_openai,
+    )
+
+    # Execute
+    console.print(f"\n[bold]Starting workflow:[/bold] {definition.id} v{definition.version}")
+    console.print(f"[bold]Target:[/bold] {target_kind}:{target_ref}\n")
+
+    try:
+        run = asyncio.run(engine.start_run(
+            definition,
+            target_kind=target_kind,
+            target_ref=target_ref,
+            inputs=inputs,
+        ))
+    except (ValueError, RuntimeError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        return
+
+    # Report result
+    status = run.get("status", "unknown")
+    if status == "completed":
+        console.print("\n[green]Workflow completed successfully[/green]")
+    elif status == "blocked":
+        console.print(f"\n[yellow]Workflow blocked:[/yellow] {run.get('stop_reason', 'unknown')}")
+    elif status == "failed":
+        console.print(f"\n[red]Workflow failed:[/red] {run.get('stop_reason', 'unknown')}")
+    else:
+        console.print(f"\n[dim]Workflow status:[/dim] {status}")
+
+    console.print(f"[dim]Run ID:[/dim] {run['id']}")
+
+
+def _handle_status(db: Any, args: argparse.Namespace) -> None:
+    """Handle `aroom workflow status <run_id>`."""
+    from ..services.workflow_storage import get_workflow_run, list_workflow_steps
+
+    run_id = getattr(args, "run_id", None)
+    if not run_id:
+        console.print("[red]Error:[/red] run_id is required")
+        return
+
+    run = get_workflow_run(db, run_id)
+    if not run:
+        console.print(f"[red]Error:[/red] Run not found: {run_id}")
+        return
+
+    console.print(f"\n[bold]Run:[/bold] {run['id'][:12]}...")
+    console.print(f"[bold]Workflow:[/bold] {run['workflow_id']} v{run.get('workflow_version', '?')}")
+    console.print(f"[bold]Target:[/bold] {run['target_kind']}:{run['target_ref']}")
+    console.print(f"[bold]Status:[/bold] {run['status']}")
+    if run.get("stop_reason"):
+        console.print(f"[bold]Stop reason:[/bold] {run['stop_reason']}")
+    if run.get("current_step_id"):
+        console.print(f"[bold]Current step:[/bold] {run['current_step_id']}")
+    console.print(f"[bold]Created:[/bold] {run['created_at']}")
+
+    steps = list_workflow_steps(db, run["id"])
+    if steps:
+        console.print(f"\n[bold]Steps ({len(steps)}):[/bold]")
+        table = Table(show_header=True)
+        table.add_column("Step", style="bold")
+        table.add_column("Type")
+        table.add_column("Status")
+        table.add_column("Duration")
+        table.add_column("Summary", max_width=60)
+        for step in steps:
+            dur = f"{step['duration_ms']}ms" if step.get("duration_ms") else "-"
+            table.add_row(
+                step["step_id"],
+                step["step_type"],
+                step["status"],
+                dur,
+                (step.get("result_summary") or "")[:60],
+            )
+        console.print(table)
+
+
+def _handle_list(db: Any, args: argparse.Namespace) -> None:
+    """Handle `aroom workflow list`."""
+    from ..services.workflow_storage import list_workflow_runs
+
+    status_filter = getattr(args, "status", None)
+    workflow_filter = getattr(args, "workflow", None)
+    limit = getattr(args, "limit", 20) or 20
+
+    runs = list_workflow_runs(db, status=status_filter, workflow_id=workflow_filter, limit=limit)
+
+    if not runs:
+        console.print("[dim]No workflow runs found.[/dim]")
+        return
+
+    table = Table(title="Workflow Runs", show_header=True)
+    table.add_column("ID", style="dim", max_width=12)
+    table.add_column("Workflow")
+    table.add_column("Target")
+    table.add_column("Status")
+    table.add_column("Step")
+    table.add_column("Created")
+
+    for run in runs:
+        table.add_row(
+            run["id"][:12],
+            run["workflow_id"],
+            f"{run['target_kind']}:{run['target_ref']}",
+            run["status"],
+            run.get("current_step_id") or "-",
+            run["created_at"][:19],
+        )
+
+    console.print(table)
+
+
+def _handle_history(db: Any, args: argparse.Namespace) -> None:
+    """Handle `aroom workflow history <run_id>`."""
+    from ..services.workflow_storage import get_workflow_run, list_workflow_events, list_workflow_steps
+
+    run_id = getattr(args, "run_id", None)
+    if not run_id:
+        console.print("[red]Error:[/red] run_id is required")
+        return
+
+    run = get_workflow_run(db, run_id)
+    if not run:
+        console.print(f"[red]Error:[/red] Run not found: {run_id}")
+        return
+
+    console.print(f"\n[bold]Run History:[/bold] {run['id'][:12]}...")
+    console.print(f"[bold]Workflow:[/bold] {run['workflow_id']} — Status: {run['status']}")
+
+    steps = list_workflow_steps(db, run["id"])
+    if steps:
+        console.print("\n[bold]Steps:[/bold]")
+        table = Table(show_header=True)
+        table.add_column("Step", style="bold")
+        table.add_column("Type")
+        table.add_column("Runner")
+        table.add_column("Status")
+        table.add_column("Result")
+        table.add_column("Duration")
+        table.add_column("Summary", max_width=50)
+        for step in steps:
+            dur = f"{step['duration_ms']}ms" if step.get("duration_ms") else "-"
+            table.add_row(
+                step["step_id"],
+                step["step_type"],
+                step.get("runner_type") or "-",
+                step["status"],
+                step.get("result_status") or "-",
+                dur,
+                (step.get("result_summary") or "")[:50],
+            )
+        console.print(table)
+
+    events = list_workflow_events(db, run["id"])
+    if events:
+        console.print(f"\n[bold]Events ({len(events)}):[/bold]")
+        table = Table(show_header=True)
+        table.add_column("ID", style="dim")
+        table.add_column("Type")
+        table.add_column("Step")
+        table.add_column("Time")
+        for event in events:
+            table.add_row(
+                str(event["id"]),
+                event["event_type"],
+                event.get("step_id") or "-",
+                event["created_at"][:19],
+            )
+        console.print(table)
+
+
+def _list_builtin_workflows() -> None:
+    """List available built-in workflow definitions."""
+    workflows_dir = Path(__file__).parent.parent / "workflows"
+    if not workflows_dir.exists():
+        return
+    for f in sorted(workflows_dir.glob("*.yaml")):
+        console.print(f"  - {f.stem}")
