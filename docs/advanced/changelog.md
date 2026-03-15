@@ -5,6 +5,44 @@ Release highlights for every Anteroom version. For full details including develo
 
 ---
 
+## March 15, 2026
+
+### v1.116.0 — The Workflow Engine
+
+Anteroom ships a durable, domain-neutral workflow engine that orchestrates multi-step processes defined in YAML. Define steps, gates, and loops — the engine handles execution, state persistence, crash recovery, and monitoring.
+
+#### Workflow Engine
+
+Run multi-step automation workflows from the CLI with durable state, concurrency locks, and crash recovery. Workflows are defined in YAML with three step types: runners (shell commands, Python scripts, or AI agent sessions), gates (boolean conditions that block or continue), and loops (bounded repetition). (#947, #948)
+
+```bash
+aroom workflow run my_pipeline.yaml
+aroom workflow status <run_id>
+aroom workflow list
+```
+
+See [Workflow Overview](../workflows/index.md) for the full guide and [Workflow Definitions](../workflows/definitions.md) for YAML syntax.
+
+#### Crash Recovery and Resume
+
+Workflows survive process crashes and machine reboots. Heartbeat-based stale detection identifies interrupted runs. Resume from the last completed step — no re-running successful work. (#949)
+
+```bash
+aroom workflow resume <run_id>
+```
+
+See [Workflow Commands](../workflows/commands.md) for resume and cancel details.
+
+#### Monitoring: API, SSE, Hooks, and CLI Progress
+
+Real-time workflow observability through four channels: a read-only REST API, SSE streaming, notification hooks (webhook and Unix socket with egress allowlist validation), and Rich CLI progress output during execution. (#951)
+
+See [Monitoring](../workflows/monitoring.md) for hook configuration and [API Reference](../workflows/api-reference.md) for endpoint details.
+
+[GitHub Release](https://github.com/troylar/anteroom/releases/tag/v1.116.0)
+
+---
+
 ## March 14, 2026
 
 ### v1.115.1
