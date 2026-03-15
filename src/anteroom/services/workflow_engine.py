@@ -807,6 +807,11 @@ class WorkflowEngine:
                     stop_reason=f"step_failed:{step_def.id}",
                     completed_at=datetime.now(timezone.utc).isoformat(),
                 )
+                await self._emit_event(
+                    run_id=run["id"],
+                    event_type="run_failed",
+                    payload={"reason": f"step_failed:{step_def.id}"},
+                )
                 return run
 
             ws.update_workflow_step(

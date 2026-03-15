@@ -405,6 +405,15 @@ class TestRunnerFailurePropagation:
         assert "step_failed:will_fail" in (run.get("stop_reason") or "")
 
     @pytest.mark.asyncio
+    async def test_failed_runner_emits_run_failed_event(self, db: Any, engine: WorkflowEngine) -> None:
+        """A failed run must emit a run_failed durable event for SSE/webhook consumers."""
+        defn = load_definition(FAILING_WORKFLOW)
+        run = await engine.start_run(defn, target_kind="task", target_ref="t2")
+        events = list_workflow_events(db, run["id"])
+        event_types = [e["event_type"] for e in events]
+        assert "run_failed" in event_types
+
+    @pytest.mark.asyncio
     async def test_failed_step_stops_subsequent_steps(self, db: Any, engine: WorkflowEngine) -> None:
         """Steps after a failed step should not execute."""
         yaml_str = """\
