@@ -23,11 +23,32 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
-def _get_builtin_workflow_path(workflow_id: str) -> Path | None:
-    """Resolve a built-in workflow definition by ID."""
-    workflows_dir = Path(__file__).parent.parent / "workflows"
-    path = workflows_dir / f"{workflow_id}.yaml"
-    return path if path.exists() else None
+def _resolve_workflow_path(workflow_id: str) -> Path | None:
+    """Resolve a workflow definition by ID or path.
+
+    Search order:
+    1. Exact filesystem path (if it exists and ends in .yaml/.yml)
+    2. examples/workflows/ directory (shipped reference workflows)
+    3. src/anteroom/workflows/ directory (any future built-in generic workflows)
+    """
+    # Direct path
+    candidate = Path(workflow_id)
+    if candidate.exists() and candidate.suffix in (".yaml", ".yml"):
+        return candidate
+
+    # Reference workflows shipped with Anteroom
+    examples_dir = Path(__file__).parent.parent.parent.parent / "examples" / "workflows"
+    ref_path = examples_dir / f"{workflow_id}.yaml"
+    if ref_path.exists():
+        return ref_path
+
+    # Built-in workflows (generic, shipped in package)
+    builtin_dir = Path(__file__).parent.parent / "workflows"
+    builtin_path = builtin_dir / f"{workflow_id}.yaml"
+    if builtin_path.exists():
+        return builtin_path
+
+    return None
 
 
 def _run_workflow(config: AppConfig, args: argparse.Namespace) -> None:
@@ -63,17 +84,12 @@ def _handle_run(config: AppConfig, db: Any, args: argparse.Namespace) -> None:
         console.print("[red]Error:[/red] workflow name is required")
         return
 
-    # Resolve definition: built-in or filesystem path
-    path = _get_builtin_workflow_path(workflow_id)
+    # Resolve definition: filesystem path, reference example, or built-in
+    path = _resolve_workflow_path(workflow_id)
     if path is None:
-        candidate = Path(workflow_id)
-        if candidate.exists() and candidate.suffix in (".yaml", ".yml"):
-            path = candidate
-        else:
-            console.print(f"[red]Error:[/red] Unknown workflow: {workflow_id!r}")
-            console.print("Available built-in workflows:")
-            _list_builtin_workflows()
-            return
+        console.print(f"[red]Error:[/red] Workflow not found: {workflow_id!r}")
+        console.print("Provide a path to a YAML workflow definition.")
+        return
 
     try:
         definition = load_definition(path)
@@ -107,7 +123,9 @@ def _handle_run(config: AppConfig, db: Any, args: argparse.Namespace) -> None:
             console.print(label)
         return
 
-    # Register built-in gates
+    # Register gate conditions for reference workflows (e.g., issue_delivery).
+    # These are GitHub-specific gates — they live in workflows/gates.py,
+    # not in the engine core.
     from ..workflows.gates import register_builtin_gates
 
     register_builtin_gates()
@@ -312,10 +330,3 @@ def _handle_history(db: Any, args: argparse.Namespace) -> None:
         console.print(table)
 
 
-def _list_builtin_workflows() -> None:
-    """List available built-in workflow definitions."""
-    workflows_dir = Path(__file__).parent.parent / "workflows"
-    if not workflows_dir.exists():
-        return
-    for f in sorted(workflows_dir.glob("*.yaml")):
-        console.print(f"  - {f.stem}")
