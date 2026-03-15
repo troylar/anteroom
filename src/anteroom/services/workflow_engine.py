@@ -335,6 +335,9 @@ class WorkflowEngine:
         ai_service: Any | None = None,
         tool_executor: Any | None = None,
         tools_openai: list[dict[str, Any]] | None = None,
+        event_bus: Any | None = None,
+        egress_allowed_domains: list[str] | None = None,
+        egress_block_localhost: bool = False,
     ) -> None:
         self._db = db
         self._config = config
@@ -343,6 +346,87 @@ class WorkflowEngine:
         self._ai_service = ai_service
         self._tool_executor = tool_executor
         self._tools_openai = tools_openai
+        self._event_bus = event_bus
+        self._egress_allowed_domains = egress_allowed_domains or []
+        self._egress_block_localhost = egress_block_localhost
+        self._pending_hook_tasks: list[Any] = []
+        self._progress_callback: Any | None = None  # Callable[[str, str, dict], None]
+
+    def set_progress_callback(self, callback: Any) -> None:
+        """Set a callback for real-time progress reporting.
+
+        callback(event_type: str, step_id: str | None, payload: dict)
+        Called synchronously after each event is emitted. Used by CLI
+        to display live step progress during execution.
+        """
+        self._progress_callback = callback
+
+    async def _emit_event(
+        self,
+        run_id: str,
+        event_type: str,
+        step_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+        *,
+        definition: WorkflowDefinition | None = None,
+    ) -> None:
+        """Persist a durable event AND publish it to the event bus + hooks.
+
+        This replaces direct calls to ws.create_workflow_event() so that
+        every durable event is also published for live monitoring.
+        """
+        from . import workflow_storage as ws
+
+        ws.create_workflow_event(
+            self._db, run_id=run_id, event_type=event_type,
+            step_id=step_id, payload=payload,
+        )
+        await self._publish_event(run_id, event_type, payload, definition=definition)
+
+        if self._progress_callback is not None:
+            try:
+                self._progress_callback(event_type, step_id, payload or {})
+            except Exception:
+                logger.warning("Progress callback error", exc_info=True)
+
+    async def _publish_event(
+        self,
+        run_id: str,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        definition: WorkflowDefinition | None = None,
+    ) -> None:
+        """Publish event to event bus and fire notification hooks."""
+        event_data = {
+            "type": f"workflow_{event_type}",
+            "data": {"run_id": run_id, "event_type": event_type, **(payload or {})},
+        }
+
+        if self._event_bus is not None:
+            try:
+                await self._event_bus.publish(f"workflow:{run_id}", event_data)
+            except Exception:
+                logger.warning("Failed to publish event to bus", exc_info=True)
+
+        if definition and definition.notifications:
+            hooks = definition.notifications.get("hooks", [])
+            if hooks:
+                from .workflow_hooks import deliver_hooks
+
+                try:
+                    tasks = await deliver_hooks(hooks, event_data["data"])
+                    self._pending_hook_tasks.extend(tasks)
+                except Exception:
+                    logger.warning("Failed to deliver hooks", exc_info=True)
+
+    async def _drain_hooks(self) -> None:
+        """Drain pending hook tasks before process exit."""
+        if self._pending_hook_tasks:
+            from .workflow_hooks import drain_pending_hooks
+
+            await drain_pending_hooks(self._pending_hook_tasks)
+            self._pending_hook_tasks.clear()
 
     async def start_run(
         self,
@@ -359,6 +443,18 @@ class WorkflowEngine:
         # Validate approval mode bounded by effective config
         effective_mode = self._config_approval_mode or "ask_for_writes"
         validate_approval_mode(definition, effective_mode)
+
+        # Validate notification hook URLs against egress allowlist at load time
+        if definition.notifications:
+            hooks = definition.notifications.get("hooks", [])
+            if hooks:
+                from .workflow_hooks import validate_hook_config
+
+                validate_hook_config(
+                    hooks,
+                    self._egress_allowed_domains,
+                    block_localhost=self._egress_block_localhost,
+                )
 
         # Validate required inputs
         for name, schema in definition.inputs.items():
@@ -394,9 +490,10 @@ class WorkflowEngine:
             started_at=datetime.now(timezone.utc).isoformat(),
         )
 
-        ws.create_workflow_event(
-            self._db, run_id=run["id"], event_type="run_started",
+        await self._emit_event(
+            run_id=run["id"], event_type="run_started",
             payload={"workflow_id": definition.id, "target": f"{target_kind}:{target_ref}"},
+            definition=definition,
         )
 
         # Write initial heartbeat BEFORE background loop (closes null-heartbeat window)
@@ -408,8 +505,8 @@ class WorkflowEngine:
         except Exception:
             logger.exception("Workflow run %s failed with exception", run["id"])
             run = ws.update_workflow_run(self._db, run["id"], status="failed", stop_reason="unhandled_exception")
-            ws.create_workflow_event(
-                self._db, run_id=run["id"], event_type="run_failed",
+            await self._emit_event(
+                run_id=run["id"], event_type="run_failed",
                 payload={"reason": "exception"},
             )
         finally:
@@ -419,6 +516,7 @@ class WorkflowEngine:
             except asyncio.CancelledError:
                 pass
             ws.release_lock(self._db, run_id=run["id"])
+            await self._drain_hooks()
 
         return run
 
@@ -457,8 +555,8 @@ class WorkflowEngine:
                 stop_reason="process_interrupted",
             )
             ws.release_lock(self._db, run_id=run["id"])
-            ws.create_workflow_event(
-                self._db, run_id=run["id"],
+            await self._emit_event(
+                run_id=run["id"],
                 event_type="run_paused",
                 payload={
                     "reason": "process_interrupted",
@@ -521,8 +619,8 @@ class WorkflowEngine:
         ws.update_workflow_run(self._db, run_id, heartbeat_at=_now())
         heartbeat_task = asyncio.create_task(self._heartbeat_loop(run_id))
 
-        ws.create_workflow_event(
-            self._db, run_id=run_id, event_type="run_resumed",
+        await self._emit_event(
+            run_id=run_id, event_type="run_resumed",
             payload={"skip_completed": list(completed)},
         )
 
@@ -544,6 +642,7 @@ class WorkflowEngine:
             except asyncio.CancelledError:
                 pass
             ws.release_lock(self._db, run_id=run_id)
+            await self._drain_hooks()
 
         return run
 
@@ -592,8 +691,8 @@ class WorkflowEngine:
             )
 
             ws.update_workflow_run(self._db, run["id"], current_step_id=step_def.id)
-            ws.create_workflow_event(
-                self._db, run_id=run["id"], event_type="step_started",
+            await self._emit_event(
+                run_id=run["id"], event_type="step_started",
                 step_id=step_def.id, payload={"step_type": step_def.type},
             )
 
@@ -623,8 +722,8 @@ class WorkflowEngine:
                     duration_ms=duration_ms,
                     completed_at=datetime.now(timezone.utc).isoformat(),
                 )
-                ws.create_workflow_event(
-                    self._db, run_id=run["id"], event_type="step_failed",
+                await self._emit_event(
+                    run_id=run["id"], event_type="step_failed",
                     step_id=step_def.id, payload={"error": str(exc)},
                 )
                 run = ws.update_workflow_run(
@@ -647,8 +746,8 @@ class WorkflowEngine:
                     duration_ms=duration_ms,
                     completed_at=datetime.now(timezone.utc).isoformat(),
                 )
-                ws.create_workflow_event(
-                    self._db, run_id=run["id"], event_type="step_finished",
+                await self._emit_event(
+                    run_id=run["id"], event_type="step_finished",
                     step_id=step_def.id, payload={"result_status": "blocked"},
                 )
                 run = ws.update_workflow_run(
@@ -670,8 +769,8 @@ class WorkflowEngine:
                 duration_ms=duration_ms,
                 completed_at=datetime.now(timezone.utc).isoformat(),
             )
-            ws.create_workflow_event(
-                self._db, run_id=run["id"], event_type="step_finished",
+            await self._emit_event(
+                run_id=run["id"], event_type="step_finished",
                 step_id=step_def.id, payload={"result_status": result.status, "duration_ms": duration_ms},
             )
 
@@ -693,8 +792,8 @@ class WorkflowEngine:
             status="completed",
             completed_at=datetime.now(timezone.utc).isoformat(),
         )
-        ws.create_workflow_event(
-            self._db, run_id=run["id"], event_type="run_completed",
+        await self._emit_event(
+            run_id=run["id"], event_type="run_completed",
             payload={"total_steps": len(steps)},
         )
         return run
@@ -816,8 +915,8 @@ class WorkflowEngine:
                     step_type=nested_step.type,
                     runner_type=nested_step.runner,
                 )
-                ws.create_workflow_event(
-                    self._db, run_id=run["id"], event_type="step_started",
+                await self._emit_event(
+                    run_id=run["id"], event_type="step_started",
                     step_id=nested_step_id,
                     payload={"step_type": nested_step.type, "loop": step_def.id, "round": round_num},
                 )
@@ -843,7 +942,7 @@ class WorkflowEngine:
                         result_summary=str(exc), duration_ms=nested_dur,
                         completed_at=datetime.now(timezone.utc).isoformat(),
                     )
-                    ws.create_workflow_event(
+                    await self._emit_event(
                         self._db, run_id=run["id"], event_type="step_failed",
                         step_id=nested_step_id, payload={"error": str(exc)},
                     )
@@ -861,8 +960,8 @@ class WorkflowEngine:
                     duration_ms=nested_dur,
                     completed_at=datetime.now(timezone.utc).isoformat(),
                 )
-                ws.create_workflow_event(
-                    self._db, run_id=run["id"], event_type="step_finished",
+                await self._emit_event(
+                    run_id=run["id"], event_type="step_finished",
                     step_id=nested_step_id,
                     payload={"result_status": result.status, "duration_ms": nested_dur},
                 )

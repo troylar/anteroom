@@ -52,7 +52,7 @@ def _resolve_workflow_path(workflow_id: str) -> Path | None:
 
 
 def _create_engine(config: AppConfig, db: Any) -> Any:
-    """Create a WorkflowEngine with AI service dependencies wired in."""
+    """Create a WorkflowEngine with AI service and event bus wired in."""
     from ..services.workflow_engine import WorkflowEngine
     from ..services.workflow_runners import create_default_registry
 
@@ -75,6 +75,21 @@ def _create_engine(config: AppConfig, db: Any) -> Any:
             " Agent runner steps will fail. Shell/script steps will work."
         )
 
+    # Create event bus backed by DB change_log for cross-process SSE delivery.
+    # The web app's event poller reads change_log from the same DB, so events
+    # published here will be visible to SSE subscribers.
+    event_bus = None
+    try:
+        from ..db import DatabaseManager
+        from ..services.event_bus import EventBus
+
+        event_bus = EventBus()
+        db_manager = DatabaseManager()
+        db_manager.add("personal", config.app.data_dir / "chat.db")
+        event_bus.start_polling(db_manager)
+    except Exception as exc:
+        logger.warning("Could not initialize event bus: %s", exc)
+
     registry = create_default_registry()
     return WorkflowEngine(
         db,
@@ -84,7 +99,64 @@ def _create_engine(config: AppConfig, db: Any) -> Any:
         ai_service=ai_service,
         tool_executor=tool_executor,
         tools_openai=tools_openai,
+        event_bus=event_bus,
+        egress_allowed_domains=list(config.ai.allowed_domains) if config.ai.allowed_domains else [],
+        egress_block_localhost=config.ai.block_localhost_api,
     )
+
+
+def _print_run_progress(db: Any, run: dict[str, Any]) -> None:
+    """Print step-by-step progress report after a workflow run completes."""
+    from ..services.workflow_storage import list_workflow_steps
+
+    steps = list_workflow_steps(db, run["id"])
+    if steps:
+        console.print("\n[bold]Steps:[/bold]")
+        for step in steps:
+            status = step.get("status", "unknown")
+            step_id = step.get("step_id", "?")
+            duration = step.get("duration_ms")
+            summary = (step.get("result_summary") or "")[:60]
+            dur_str = f" ({duration}ms)" if duration else ""
+
+            if status == "completed":
+                result_status = step.get("result_status", "success")
+                if result_status == "success":
+                    icon = "[green]done[/green]"
+                elif result_status == "blocked":
+                    icon = "[yellow]blocked[/yellow]"
+                else:
+                    icon = f"[dim]{result_status}[/dim]"
+            elif status == "failed":
+                icon = "[red]failed[/red]"
+            elif status == "interrupted":
+                icon = "[yellow]interrupted[/yellow]"
+            elif status == "skipped":
+                icon = "[dim]skipped[/dim]"
+            elif status == "running":
+                icon = "[cyan]running[/cyan]"
+            else:
+                icon = f"[dim]{status}[/dim]"
+
+            line = f"  [{icon}] {step_id}{dur_str}"
+            if summary:
+                line += f"  {summary}"
+            console.print(line)
+
+    # Final status
+    run_status = run.get("status", "unknown")
+    if run_status == "completed":
+        console.print("\n[green]Workflow completed successfully[/green]")
+    elif run_status == "blocked":
+        console.print(
+            f"\n[yellow]Workflow blocked:[/yellow] {run.get('stop_reason', 'unknown')}"
+        )
+    elif run_status == "failed":
+        console.print(
+            f"\n[red]Workflow failed:[/red] {run.get('stop_reason', 'unknown')}"
+        )
+    else:
+        console.print(f"\n[dim]Workflow status:[/dim] {run_status}")
 
 
 def _run_workflow(config: AppConfig, args: argparse.Namespace) -> None:
@@ -172,6 +244,26 @@ def _handle_run(config: AppConfig, db: Any, args: argparse.Namespace) -> None:
     # Create engine with AI service dependencies
     engine = _create_engine(config, db)
 
+    # Set up real-time progress callback for live CLI output
+    def _on_progress(event_type: str, step_id: str | None, payload: dict) -> None:
+        if event_type == "step_started" and step_id:
+            console.print(f"  [cyan]...[/cyan] {step_id}")
+        elif event_type == "step_finished" and step_id:
+            dur = payload.get("duration_ms", "")
+            dur_str = f" ({dur}ms)" if dur else ""
+            status = payload.get("result_status", "success")
+            if status == "success":
+                console.print(f"  [green]done[/green] {step_id}{dur_str}")
+            elif status == "blocked":
+                console.print(f"  [yellow]blocked[/yellow] {step_id}{dur_str}")
+            else:
+                console.print(f"  [dim]{status}[/dim] {step_id}{dur_str}")
+        elif event_type == "step_failed" and step_id:
+            err = payload.get("error", "")[:60]
+            console.print(f"  [red]failed[/red] {step_id}  {err}")
+
+    engine.set_progress_callback(_on_progress)
+
     # Execute
     console.print(f"\n[bold]Starting workflow:[/bold] {definition.id} v{definition.version}")
     console.print(f"[bold]Target:[/bold] {target_kind}:{target_ref}\n")
@@ -187,16 +279,8 @@ def _handle_run(config: AppConfig, db: Any, args: argparse.Namespace) -> None:
         console.print(f"[red]Error:[/red] {exc}")
         return
 
-    # Report result
-    status = run.get("status", "unknown")
-    if status == "completed":
-        console.print("\n[green]Workflow completed successfully[/green]")
-    elif status == "blocked":
-        console.print(f"\n[yellow]Workflow blocked:[/yellow] {run.get('stop_reason', 'unknown')}")
-    elif status == "failed":
-        console.print(f"\n[red]Workflow failed:[/red] {run.get('stop_reason', 'unknown')}")
-    else:
-        console.print(f"\n[dim]Workflow status:[/dim] {status}")
+    # Display step-by-step progress report
+    _print_run_progress(db, run)
 
     console.print(f"[dim]Run ID:[/dim] {run['id']}")
 
@@ -416,15 +500,7 @@ def _handle_resume(config: AppConfig, db: Any, args: argparse.Namespace) -> None
         console.print(f"[red]Error:[/red] {exc}")
         return
 
-    status = result.get("status", "unknown")
-    if status == "completed":
-        console.print("\n[green]Workflow completed successfully[/green]")
-    elif status == "blocked":
-        console.print(f"\n[yellow]Workflow blocked:[/yellow] {result.get('stop_reason', 'unknown')}")
-    elif status == "failed":
-        console.print(f"\n[red]Workflow failed:[/red] {result.get('stop_reason', 'unknown')}")
-    else:
-        console.print(f"\n[dim]Workflow status:[/dim] {status}")
+    _print_run_progress(db, result)
 
 
 def _handle_cancel(db: Any, args: argparse.Namespace) -> None:
