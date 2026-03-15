@@ -51,6 +51,7 @@ _ALLOWED_RUN_UPDATE_COLUMNS: set[str] = {
     "updated_at",
     "started_at",
     "completed_at",
+    "heartbeat_at",
 }
 
 
@@ -176,6 +177,52 @@ def delete_workflow_run(db: ThreadSafeConnection, run_id: str) -> bool:
     db.execute("DELETE FROM workflow_runs WHERE id = ?", (run_id,))
     db.commit()
     return True
+
+
+def find_stale_runs(
+    db: ThreadSafeConnection,
+    stale_threshold_seconds: int = 60,
+) -> list[dict[str, Any]]:
+    """Find runs stuck in 'running' with heartbeat older than threshold."""
+    from datetime import timedelta
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=stale_threshold_seconds)).isoformat()
+    rows = db.execute_fetchall(
+        "SELECT * FROM workflow_runs WHERE status = 'running'"
+        " AND (heartbeat_at IS NULL OR heartbeat_at < ?)",
+        (cutoff,),
+    )
+    results = []
+    for r in rows:
+        d = dict(r)
+        raw = d.pop("inputs_json", None)
+        d["inputs"] = json.loads(raw) if raw else None
+        results.append(d)
+    return results
+
+
+def find_running_steps(
+    db: ThreadSafeConnection,
+    run_id: str,
+) -> list[dict[str, Any]]:
+    """Find step records with status='running' for a given run."""
+    rows = db.execute_fetchall(
+        "SELECT * FROM workflow_steps WHERE run_id = ? AND status = 'running'",
+        (run_id,),
+    )
+    return [_deserialize_step(dict(r)) for r in rows]
+
+
+def list_completed_step_ids(
+    db: ThreadSafeConnection,
+    run_id: str,
+) -> set[str]:
+    """Return step_ids of completed steps for a given run."""
+    rows = db.execute_fetchall(
+        "SELECT step_id FROM workflow_steps WHERE run_id = ? AND status = 'completed'",
+        (run_id,),
+    )
+    return {r["step_id"] for r in rows}
 
 
 # ---------------------------------------------------------------------------

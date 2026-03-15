@@ -310,7 +310,8 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     started_at TEXT,
-    completed_at TEXT
+    completed_at TEXT,
+    heartbeat_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS workflow_steps (
@@ -1347,7 +1348,8 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 started_at TEXT,
-                completed_at TEXT
+                completed_at TEXT,
+                heartbeat_at TEXT
             )"""
         )
     if "workflow_steps" not in wf_tables:
@@ -1414,6 +1416,12 @@ def _run_migrations(conn: sqlite3.Connection, vec_dimensions: int = 384) -> None
                 FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
             )"""
         )
+
+    # Add heartbeat_at column to workflow_runs if missing (#949)
+    if "workflow_runs" in wf_tables:
+        wf_run_cols = {row[1] for row in conn.execute("PRAGMA table_info(workflow_runs)").fetchall()}
+        if "heartbeat_at" not in wf_run_cols:
+            conn.execute("ALTER TABLE workflow_runs ADD COLUMN heartbeat_at TEXT DEFAULT NULL")
 
     # Add message-level and source-chunk-level FTS5 tables for hybrid search (#810)
     try:

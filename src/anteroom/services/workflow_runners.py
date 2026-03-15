@@ -189,7 +189,17 @@ async def execute_opaque_runner(
 
     Domain-neutral — the engine doesn't know or care what the subprocess does.
     """
+    from pathlib import Path
+
     start = time.monotonic()
+
+    # Generic preflight: check working_dir exists if specified
+    if working_dir and not Path(working_dir).is_dir():
+        return RunnerResult(
+            status="failed",
+            summary=f"Working directory does not exist: {working_dir}",
+            duration_ms=0,
+        )
 
     merged_env: dict[str, str] | None = None
     if env:

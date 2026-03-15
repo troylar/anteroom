@@ -8,6 +8,7 @@ workflow definitions, gate conditions, and runner adapters — not here.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shlex
 import time
@@ -24,6 +25,10 @@ if TYPE_CHECKING:
     from .workflow_runners import RunnerRegistry, RunnerResult
 
 logger = logging.getLogger(__name__)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +399,10 @@ class WorkflowEngine:
             payload={"workflow_id": definition.id, "target": f"{target_kind}:{target_ref}"},
         )
 
+        # Write initial heartbeat BEFORE background loop (closes null-heartbeat window)
+        ws.update_workflow_run(self._db, run["id"], heartbeat_at=_now())
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop(run["id"]))
+
         try:
             run = await self._execute_steps(run, definition.steps, inputs or {}, definition)
         except Exception:
@@ -404,9 +413,155 @@ class WorkflowEngine:
                 payload={"reason": "exception"},
             )
         finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
             ws.release_lock(self._db, run_id=run["id"])
 
         return run
+
+    async def _heartbeat_loop(self, run_id: str) -> None:
+        """Periodically update heartbeat_at while a run is active."""
+        from . import workflow_storage as ws
+
+        try:
+            while True:
+                await asyncio.sleep(self._config.heartbeat_interval)
+                ws.update_workflow_run(self._db, run_id, heartbeat_at=_now())
+        except asyncio.CancelledError:
+            pass
+
+    async def recover_interrupted_runs(self) -> list[dict[str, Any]]:
+        """Find stale running runs, mark as paused, repair step state, release locks.
+
+        Called on-demand by list/resume CLI commands, not on generic startup.
+        """
+        from . import workflow_storage as ws
+
+        stale = ws.find_stale_runs(self._db, self._config.stale_threshold)
+        recovered: list[dict[str, Any]] = []
+        for run in stale:
+            running_steps = ws.find_running_steps(self._db, run["id"])
+            for step in running_steps:
+                ws.update_workflow_step(
+                    self._db, step["id"],
+                    status="interrupted",
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                )
+
+            ws.update_workflow_run(
+                self._db, run["id"],
+                status="paused",
+                stop_reason="process_interrupted",
+            )
+            ws.release_lock(self._db, run_id=run["id"])
+            ws.create_workflow_event(
+                self._db, run_id=run["id"],
+                event_type="run_paused",
+                payload={
+                    "reason": "process_interrupted",
+                    "interrupted_steps": [s["step_id"] for s in running_steps],
+                },
+            )
+            recovered.append(run)
+        return recovered
+
+    async def resume_run(
+        self,
+        run_id: str,
+        definition: WorkflowDefinition,
+        *,
+        from_step: str | None = None,
+    ) -> dict[str, Any]:
+        """Resume a paused or waiting_for_approval run from the last completed step.
+
+        The definition must be provided by the caller (built-in or custom path).
+        Each step gets a fresh session (session isolation preserved on resume).
+        """
+        from . import workflow_storage as ws
+
+        run = ws.get_workflow_run(self._db, run_id)
+        if not run:
+            raise ValueError(f"Run not found: {run_id}")
+        if run["status"] not in ("paused", "waiting_for_approval"):
+            raise ValueError(
+                f"Run {run_id} is not resumable (status: {run['status']}). "
+                f"Only paused or waiting_for_approval runs can be resumed."
+            )
+
+        # Re-acquire lock
+        if not ws.acquire_lock(
+            self._db,
+            target_kind=run["target_kind"],
+            target_ref=run["target_ref"],
+            run_id=run_id,
+        ):
+            raise RuntimeError(
+                f"Target {run['target_kind']}:{run['target_ref']} is still locked"
+            )
+
+        # Rebuild completed step set
+        completed = ws.list_completed_step_ids(self._db, run_id)
+        if from_step:
+            # Override: skip everything before from_step
+            all_step_ids = [s.id for s in _all_steps(definition.steps)]
+            if from_step not in all_step_ids:
+                ws.release_lock(self._db, run_id=run_id)
+                raise ValueError(f"Step {from_step!r} not found in workflow definition")
+            idx = all_step_ids.index(from_step)
+            completed = set(all_step_ids[:idx])
+
+        # Rebuild step_results from persisted data
+        step_results = self._rebuild_step_results(run_id)
+
+        # Mark running, write initial heartbeat
+        run = ws.update_workflow_run(self._db, run_id, status="running", stop_reason=None)
+        ws.update_workflow_run(self._db, run_id, heartbeat_at=_now())
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop(run_id))
+
+        ws.create_workflow_event(
+            self._db, run_id=run_id, event_type="run_resumed",
+            payload={"skip_completed": list(completed)},
+        )
+
+        try:
+            inputs = run.get("inputs") or {}
+            run = await self._execute_steps(
+                run, definition.steps, inputs, definition,
+                skip_completed=completed, step_results=step_results,
+            )
+        except Exception:
+            logger.exception("Resumed workflow run %s failed with exception", run_id)
+            run = ws.update_workflow_run(
+                self._db, run_id, status="failed", stop_reason="unhandled_exception",
+            )
+        finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            ws.release_lock(self._db, run_id=run_id)
+
+        return run
+
+    def _rebuild_step_results(self, run_id: str) -> dict[str, dict[str, Any]]:
+        """Rebuild step_results dict from persisted step records."""
+        from . import workflow_storage as ws
+
+        steps = ws.list_workflow_steps(self._db, run_id)
+        results: dict[str, dict[str, Any]] = {}
+        for step in steps:
+            if step["status"] == "completed" and step.get("result_status"):
+                results[step["step_id"]] = {
+                    "result_status": step["result_status"],
+                    "result_summary": step.get("result_summary"),
+                    "result_artifacts": step.get("result_artifacts"),
+                    "result_findings": step.get("result_findings"),
+                }
+        return results
 
     async def _execute_steps(
         self,
@@ -414,12 +569,20 @@ class WorkflowEngine:
         steps: list[WorkflowStepDef],
         inputs: dict[str, Any],
         definition: WorkflowDefinition,
+        *,
+        skip_completed: set[str] | None = None,
+        step_results: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         from . import workflow_storage as ws
 
-        step_results: dict[str, dict[str, Any]] = {}
+        if step_results is None:
+            step_results = {}
 
         for step_def in steps:
+            if skip_completed and step_def.id in skip_completed:
+                logger.info("Skipping completed step %r on resume", step_def.id)
+                continue
+
             step_record = ws.create_workflow_step(
                 self._db,
                 run_id=run["id"],

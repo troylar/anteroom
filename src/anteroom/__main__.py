@@ -2594,6 +2594,12 @@ def main() -> None:
     workflow_list_parser.add_argument("--limit", type=int, default=20, help="Max results")
     workflow_history_parser = workflow_subparsers.add_parser("history", help="Show run step history")
     workflow_history_parser.add_argument("run_id", help="Run identifier")
+    workflow_resume_parser = workflow_subparsers.add_parser("resume", help="Resume a paused workflow run")
+    workflow_resume_parser.add_argument("run_id", help="Run identifier")
+    workflow_resume_parser.add_argument("--from-step", help="Override resume point (step ID)")
+    workflow_resume_parser.add_argument("--definition", help="Path to workflow YAML (for custom workflows)")
+    workflow_cancel_parser = workflow_subparsers.add_parser("cancel", help="Cancel a paused workflow run")
+    workflow_cancel_parser.add_argument("run_id", help="Run identifier")
 
     # `aroom start` subcommand
     start_parser = subparsers.add_parser("start", help="Start the web UI server in the background")

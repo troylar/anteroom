@@ -51,11 +51,47 @@ def _resolve_workflow_path(workflow_id: str) -> Path | None:
     return None
 
 
+def _create_engine(config: AppConfig, db: Any) -> Any:
+    """Create a WorkflowEngine with AI service dependencies wired in."""
+    from ..services.workflow_engine import WorkflowEngine
+    from ..services.workflow_runners import create_default_registry
+
+    ai_service = None
+    tool_executor = None
+    tools_openai = None
+    try:
+        from ..services.ai_service import create_ai_service
+        from ..tools import ToolRegistry, register_default_tools
+
+        ai_service = create_ai_service(config.ai)
+        tool_reg = ToolRegistry()
+        register_default_tools(tool_reg, working_dir=str(Path.cwd()))
+        tool_executor = tool_reg.call_tool
+        tools_openai = tool_reg.get_openai_tools()
+    except Exception as exc:
+        logger.warning("Could not initialize AI service: %s", exc)
+        console.print(
+            "[yellow]Warning:[/yellow] AI service not available."
+            " Agent runner steps will fail. Shell/script steps will work."
+        )
+
+    registry = create_default_registry()
+    return WorkflowEngine(
+        db,
+        config.workflow,
+        registry,
+        effective_approval_mode=config.safety.approval_mode,
+        ai_service=ai_service,
+        tool_executor=tool_executor,
+        tools_openai=tools_openai,
+    )
+
+
 def _run_workflow(config: AppConfig, args: argparse.Namespace) -> None:
     """Dispatch `aroom workflow` subcommands."""
     action = getattr(args, "workflow_action", None)
     if not action:
-        console.print("Usage: aroom workflow {run,status,list,history}")
+        console.print("Usage: aroom workflow {run,status,list,history,resume,cancel}")
         return
 
     from ..db import get_db
@@ -67,17 +103,20 @@ def _run_workflow(config: AppConfig, args: argparse.Namespace) -> None:
     elif action == "status":
         _handle_status(db, args)
     elif action == "list":
-        _handle_list(db, args)
+        _handle_list(config, db, args)
     elif action == "history":
         _handle_history(db, args)
+    elif action == "resume":
+        _handle_resume(config, db, args)
+    elif action == "cancel":
+        _handle_cancel(db, args)
     else:
         console.print(f"Unknown workflow action: {action}")
 
 
 def _handle_run(config: AppConfig, db: Any, args: argparse.Namespace) -> None:
     """Handle `aroom workflow run <workflow_id>`."""
-    from ..services.workflow_engine import WorkflowEngine, load_definition
-    from ..services.workflow_runners import create_default_registry
+    from ..services.workflow_engine import load_definition
 
     workflow_id = getattr(args, "workflow_name", None)
     if not workflow_id:
@@ -130,37 +169,8 @@ def _handle_run(config: AppConfig, db: Any, args: argparse.Namespace) -> None:
 
     register_builtin_gates()
 
-    # Create AI service and tool registry for agent runners
-    ai_service = None
-    tool_executor = None
-    tools_openai = None
-    try:
-        from ..services.ai_service import create_ai_service
-        from ..tools import ToolRegistry, register_default_tools
-
-        ai_service = create_ai_service(config.ai)
-        tool_registry = ToolRegistry()
-        register_default_tools(tool_registry, working_dir=str(Path.cwd()))
-        tool_executor = tool_registry.call_tool
-        tools_openai = tool_registry.get_openai_tools()
-    except Exception as exc:
-        logger.warning("Could not initialize AI service: %s", exc)
-        console.print(
-            "[yellow]Warning:[/yellow] AI service not available."
-            " Agent runner steps will fail. Shell/script steps will work."
-        )
-
-    # Create engine
-    registry = create_default_registry()
-    engine = WorkflowEngine(
-        db,
-        config.workflow,
-        registry,
-        effective_approval_mode=config.safety.approval_mode,
-        ai_service=ai_service,
-        tool_executor=tool_executor,
-        tools_openai=tools_openai,
-    )
+    # Create engine with AI service dependencies
+    engine = _create_engine(config, db)
 
     # Execute
     console.print(f"\n[bold]Starting workflow:[/bold] {definition.id} v{definition.version}")
@@ -236,9 +246,15 @@ def _handle_status(db: Any, args: argparse.Namespace) -> None:
         console.print(table)
 
 
-def _handle_list(db: Any, args: argparse.Namespace) -> None:
+def _handle_list(config: AppConfig, db: Any, args: argparse.Namespace) -> None:
     """Handle `aroom workflow list`."""
     from ..services.workflow_storage import list_workflow_runs
+
+    # Recover stale runs before listing (on-demand recovery)
+    engine = _create_engine(config, db)
+    recovered = asyncio.run(engine.recover_interrupted_runs())
+    if recovered:
+        console.print(f"[yellow]Recovered {len(recovered)} interrupted run(s)[/yellow]")
 
     status_filter = getattr(args, "status", None)
     workflow_filter = getattr(args, "workflow", None)
@@ -330,3 +346,124 @@ def _handle_history(db: Any, args: argparse.Namespace) -> None:
         console.print(table)
 
 
+def _handle_resume(config: AppConfig, db: Any, args: argparse.Namespace) -> None:
+    """Handle `aroom workflow resume <run_id>`."""
+    from ..services.workflow_engine import load_definition
+    from ..services.workflow_storage import get_workflow_run
+
+    run_id = getattr(args, "run_id", None)
+    if not run_id:
+        console.print("[red]Error:[/red] run_id is required")
+        return
+
+    # Create engine with full AI/tool wiring (same as _handle_run)
+    engine = _create_engine(config, db)
+
+    # Recover any stale runs first (on-demand recovery)
+    asyncio.run(engine.recover_interrupted_runs())
+
+    run = get_workflow_run(db, run_id)
+    if not run:
+        console.print(f"[red]Error:[/red] Run not found: {run_id}")
+        return
+
+    if run["status"] not in ("paused", "waiting_for_approval"):
+        console.print(
+            f"[red]Error:[/red] Run is not resumable (status: {run['status']}). "
+            "Only paused or waiting_for_approval runs can be resumed."
+        )
+        return
+
+    # Resolve definition
+    definition_path = getattr(args, "definition", None)
+    workflow_id = run.get("workflow_id", "")
+
+    if definition_path:
+        path = Path(definition_path)
+    else:
+        path = _resolve_workflow_path(workflow_id)
+
+    if not path:
+        console.print(
+            f"[red]Error:[/red] Cannot find workflow definition for '{workflow_id}'. "
+            "Pass --definition <path> for custom workflows."
+        )
+        return
+
+    try:
+        definition = load_definition(path)
+    except (ValueError, FileNotFoundError) as exc:
+        console.print(f"[red]Error loading workflow:[/red] {exc}")
+        return
+
+    from_step = getattr(args, "from_step", None)
+
+    # Register gates
+    from ..workflows.gates import register_builtin_gates
+
+    register_builtin_gates()
+
+    console.print(f"\n[bold]Resuming workflow:[/bold] {definition.id}")
+    console.print(f"[bold]Run:[/bold] {run_id[:12]}...")
+    if from_step:
+        console.print(f"[bold]From step:[/bold] {from_step}")
+
+    try:
+        result = asyncio.run(engine.resume_run(
+            run_id, definition, from_step=from_step,
+        ))
+    except (ValueError, RuntimeError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        return
+
+    status = result.get("status", "unknown")
+    if status == "completed":
+        console.print("\n[green]Workflow completed successfully[/green]")
+    elif status == "blocked":
+        console.print(f"\n[yellow]Workflow blocked:[/yellow] {result.get('stop_reason', 'unknown')}")
+    elif status == "failed":
+        console.print(f"\n[red]Workflow failed:[/red] {result.get('stop_reason', 'unknown')}")
+    else:
+        console.print(f"\n[dim]Workflow status:[/dim] {status}")
+
+
+def _handle_cancel(db: Any, args: argparse.Namespace) -> None:
+    """Handle `aroom workflow cancel <run_id>`. Paused runs only in V1."""
+    from ..services.workflow_storage import (
+        create_workflow_event,
+        get_workflow_run,
+        release_lock,
+        update_workflow_run,
+    )
+
+    run_id = getattr(args, "run_id", None)
+    if not run_id:
+        console.print("[red]Error:[/red] run_id is required")
+        return
+
+    run = get_workflow_run(db, run_id)
+    if not run:
+        console.print(f"[red]Error:[/red] Run not found: {run_id}")
+        return
+
+    if run["status"] == "running":
+        console.print(
+            "[red]Error:[/red] Cannot cancel an active run from another terminal. "
+            "Use Ctrl-C in the terminal running the workflow."
+        )
+        return
+
+    if run["status"] not in ("paused", "waiting_for_approval"):
+        console.print(
+            f"[red]Error:[/red] Run is not cancellable (status: {run['status']}). "
+            "Only paused or waiting_for_approval runs can be cancelled."
+        )
+        return
+
+    update_workflow_run(db, run_id, status="cancelled")
+    release_lock(db, run_id=run_id)
+    create_workflow_event(
+        db, run_id=run_id, event_type="run_cancelled",
+        payload={"cancelled_from_status": run["status"]},
+    )
+    console.print(f"[green]Run {run_id[:12]}... cancelled[/green]")
