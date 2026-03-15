@@ -79,11 +79,17 @@ Recent conversations:
 
 ### /search
 
-Search conversation titles and content using full-text search:
+Search conversation titles and content. Defaults to semantic search (when available), falls back to keyword search:
 
 ```
 you> /search database migration
+you> /search --keyword database migration
+you> /search --type note my query
 ```
+
+Flags:
+- `--keyword` — force keyword (FTS5) search, skip semantic search
+- `--type <chat|note|document>` — filter results by conversation type
 
 ### /resume
 

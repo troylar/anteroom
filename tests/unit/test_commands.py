@@ -272,6 +272,61 @@ class TestSearchCommand:
         assert result is not None
         assert result.kind == "search_conversations"
         assert result.search_query == "hello world"
+        assert result.search_keyword_mode is False
+        assert result.search_type_filter is None
+
+    def test_search_keyword_mode(self) -> None:
+        """Regression: /search --keyword preserves keyword mode flag."""
+        result = _exec("/search --keyword foo bar")
+        assert result is not None
+        assert result.kind == "search_conversations"
+        assert result.search_query == "foo bar"
+        assert result.search_keyword_mode is True
+        assert result.search_type_filter is None
+
+    def test_search_keyword_no_query(self) -> None:
+        result = _exec("/search --keyword")
+        assert result is not None
+        assert result.kind == "show_message"
+        assert "Usage" in (result.message or "")
+
+    def test_search_keyword_whitespace_only(self) -> None:
+        result = _exec("/search --keyword   ")
+        assert result is not None
+        assert result.kind == "show_message"
+
+    def test_search_type_filter_chat(self) -> None:
+        """Regression: /search --type chat preserves type filter."""
+        result = _exec("/search --type chat my query")
+        assert result is not None
+        assert result.kind == "search_conversations"
+        assert result.search_query == "my query"
+        assert result.search_type_filter == "chat"
+        assert result.search_keyword_mode is False
+
+    def test_search_type_filter_note(self) -> None:
+        result = _exec("/search --type note stuff")
+        assert result is not None
+        assert result.search_type_filter == "note"
+        assert result.search_query == "stuff"
+
+    def test_search_type_filter_document(self) -> None:
+        result = _exec("/search --type document things")
+        assert result is not None
+        assert result.search_type_filter == "document"
+        assert result.search_query == "things"
+
+    def test_search_type_filter_invalid(self) -> None:
+        result = _exec("/search --type invalid query")
+        assert result is not None
+        assert result.kind == "show_message"
+        assert "Invalid type" in (result.message or "")
+
+    def test_search_type_filter_no_query(self) -> None:
+        result = _exec("/search --type chat")
+        assert result is not None
+        assert result.kind == "show_message"
+        assert "Usage" in (result.message or "")
 
 
 class TestDeleteCommand:
@@ -669,11 +724,44 @@ class TestArtifactCommands:
         result = _exec("/artifact list")
         assert result is not None
         assert result.kind == "show_artifacts"
+        assert result.artifact_type_filter is None
+        assert result.artifact_source_filter is None
 
     def test_artifact_no_arg(self) -> None:
         result = _exec("/artifact")
         assert result is not None
         assert result.kind == "show_artifacts"
+
+    def test_artifact_list_type_filter(self) -> None:
+        """Regression: /artifact list --type=skill preserves type filter."""
+        result = _exec("/artifact list --type=skill")
+        assert result is not None
+        assert result.kind == "show_artifacts"
+        assert result.artifact_type_filter == "skill"
+        assert result.artifact_source_filter is None
+
+    def test_artifact_list_source_filter(self) -> None:
+        """Regression: /artifact list --source=built_in preserves source filter."""
+        result = _exec("/artifact list --source=built_in")
+        assert result is not None
+        assert result.kind == "show_artifacts"
+        assert result.artifact_source_filter == "built_in"
+        assert result.artifact_type_filter is None
+
+    def test_artifact_list_both_filters(self) -> None:
+        """Regression: both --type= and --source= preserved together."""
+        result = _exec("/artifact list --type=rule --source=project")
+        assert result is not None
+        assert result.kind == "show_artifacts"
+        assert result.artifact_type_filter == "rule"
+        assert result.artifact_source_filter == "project"
+
+    def test_artifacts_shorthand_type_filter(self) -> None:
+        """Regression: /artifacts --type=skill (bare /artifacts with flags)."""
+        result = _exec("/artifacts --type=skill")
+        assert result is not None
+        assert result.kind == "show_artifacts"
+        assert result.artifact_type_filter == "skill"
 
     def test_artifact_show(self) -> None:
         result = execute_slash_command("/artifact show ns/skill/test", _ctx())
@@ -948,6 +1036,21 @@ class TestPlanCommands:
         result = _exec("/plan reject")
         assert result is not None
         assert result.kind == "reject_plan"
+        assert result.plan_reject_reason is None
+
+    def test_plan_reject_with_reason(self) -> None:
+        """Regression: /plan reject <reason> preserves the rejection reason."""
+        result = _exec("/plan reject the approach is too complex")
+        assert result is not None
+        assert result.kind == "reject_plan"
+        assert result.plan_reject_reason == "the approach is too complex"
+
+    def test_plan_reject_reason_whitespace(self) -> None:
+        """Reason is stripped of leading/trailing whitespace."""
+        result = _exec("/plan reject   needs more detail   ")
+        assert result is not None
+        assert result.kind == "reject_plan"
+        assert result.plan_reject_reason == "needs more detail"
 
     def test_plan_inline_prompt_returns_none(self) -> None:
         """Inline plan prompts fall through to the agent loop."""

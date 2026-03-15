@@ -162,6 +162,8 @@ class CommandResult:
     resume_target: str | None = None
     delete_target: str | None = None
     search_query: str | None = None
+    search_keyword_mode: bool = False
+    search_type_filter: str | None = None
     list_limit: int | None = None
     rewind_arg: str | None = None
     # Model / slug
@@ -173,6 +175,8 @@ class CommandResult:
     space_edit_value: str | None = None
     # Artifact
     artifact_fqn: str | None = None
+    artifact_type_filter: str | None = None
+    artifact_source_filter: str | None = None
     # Pack
     pack_ref: str | None = None
     pack_path: str | None = None
@@ -186,6 +190,7 @@ class CommandResult:
     # Plan
     plan_mode_enabled: bool | None = None
     plan_edit_arg: str | None = None
+    plan_reject_reason: str | None = None
     # Tools / skills display data
     tool_names: tuple[str, ...] = ()
     skill_entries: tuple[SkillDescription, ...] = ()
@@ -461,9 +466,45 @@ def execute_slash_command(prompt: str, context: CommandContext) -> CommandResult
             return CommandResult(
                 kind="show_message",
                 command=parsed,
-                message="Usage: `/search <query>`",
+                message="Usage: `/search <query>` | `/search --keyword <query>` | `/search --type <type> <query>`",
             )
-        return CommandResult(kind="search_conversations", command=parsed, search_query=parsed.arg)
+        search_arg = parsed.arg
+        search_keyword = False
+        search_type: str | None = None
+        if search_arg == "--keyword" or search_arg.startswith("--keyword "):
+            search_keyword = True
+            search_arg = search_arg[len("--keyword") :].strip()
+            if not search_arg:
+                return CommandResult(
+                    kind="show_message",
+                    command=parsed,
+                    message="Usage: `/search --keyword <query>`",
+                )
+        elif search_arg.startswith("--type "):
+            rest = search_arg[len("--type ") :].strip()
+            type_parts = rest.split(maxsplit=1)
+            if type_parts and type_parts[0] in ("chat", "note", "document"):
+                search_type = type_parts[0]
+                search_arg = type_parts[1] if len(type_parts) > 1 else ""
+            else:
+                return CommandResult(
+                    kind="show_message",
+                    command=parsed,
+                    message="Invalid type. Use: chat, note, or document",
+                )
+            if not search_arg:
+                return CommandResult(
+                    kind="show_message",
+                    command=parsed,
+                    message="Usage: `/search --type <type> <query>`",
+                )
+        return CommandResult(
+            kind="search_conversations",
+            command=parsed,
+            search_query=search_arg,
+            search_keyword_mode=search_keyword,
+            search_type_filter=search_type,
+        )
 
     # -- Delete --
     if parsed.name == "/delete":
@@ -771,11 +812,29 @@ def _dispatch_artifact(parsed: ParsedSlashCommand, raw_prompt: str) -> CommandRe
     parts = raw_prompt.split(maxsplit=2)
     subcommand = parts[1].lower() if len(parts) >= 2 else ""
 
-    if parsed.name == "/artifacts" and not subcommand:
+    if parsed.name == "/artifacts" and (not subcommand or subcommand.startswith("--")):
         subcommand = "list"
 
     if subcommand in {"", "list"}:
-        return CommandResult(kind="show_artifacts", command=parsed)
+        # Parse --type= and --source= filters from remaining args
+        rest = ""
+        if parsed.name == "/artifacts":
+            rest = " ".join(parts[1:]) if len(parts) >= 2 else ""
+        else:
+            rest = parts[2] if len(parts) >= 3 else ""
+        a_type: str | None = None
+        a_source: str | None = None
+        for tok in rest.split():
+            if tok.startswith("--type="):
+                a_type = tok.split("=", 1)[1]
+            elif tok.startswith("--source="):
+                a_source = tok.split("=", 1)[1]
+        return CommandResult(
+            kind="show_artifacts",
+            command=parsed,
+            artifact_type_filter=a_type,
+            artifact_source_filter=a_source,
+        )
 
     if subcommand == "show":
         target = parts[2].strip() if len(parts) >= 3 else ""
@@ -959,7 +1018,15 @@ def _dispatch_plan(parsed: ParsedSlashCommand, context: CommandContext) -> Comma
         )
 
     if subcommand == "reject":
-        return CommandResult(kind="reject_plan", command=parsed, echo_user=False)
+        # Extract reason: "/plan reject <reason>"
+        reject_parts = parsed.raw.split(maxsplit=2)
+        reason = reject_parts[2].strip() if len(reject_parts) >= 3 else None
+        return CommandResult(
+            kind="reject_plan",
+            command=parsed,
+            plan_reject_reason=reason,
+            echo_user=False,
+        )
 
     if inline_prompt:
         return None
